@@ -253,6 +253,9 @@ VARIANT=test scripts/build.sh     # build/AgentNotch-Test.app 만 만들기
 | `AgentNotch --demo` | 데모 시나리오로 시작 (`open <앱> --args --demo`) |
 | `AgentNotch --dump-changelog [경로]` | 변경 내역 JSON (`source scripts/lib.sh && dump_changelog` 로 docs/changelog.json 갱신) |
 | `AgentNotch --probe-upgrade` | brew 위치와 업데이트 스크립트 문법만 점검 (실행하지 않음) |
+| `AgentNotch --install-hooks` | Claude Code 훅 설치 (settings.json 백업 후 AgentNotch 항목만 추가, `--no-message-display` 로 응답 스트리밍 훅 제외) |
+| `AgentNotch --uninstall-hooks` | AgentNotch 훅만 제거 (다른 훅은 그대로) |
+| `AgentNotch --hook-status` | 훅 설치 상태 확인 |
 | `AgentNotch --version` | `agent-notch 0.1.0` |
 
 - 테스트판은 번들 ID 가 `com.ldg.agent-notch-test` 라 설정을 정식판과 나눠 쓰고, 새 버전 확인 · 자체 업데이트를 하지 않아요.

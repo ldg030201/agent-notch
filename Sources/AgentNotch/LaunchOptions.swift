@@ -6,6 +6,9 @@
 /// | `--dump-changelog [경로]` | 변경 내역 JSON 출력 (경로가 없으면 stdout) |
 /// | `--render-island <장면\|all> <폴더> [--style notch\|menubar\|both]` | 아일랜드 장면을 PNG 로 저장 |
 /// | `--probe-upgrade` | brew 위치와 업데이트 스크립트 문법 점검 (실행하지 않음) |
+/// | `--install-hooks [--no-message-display]` | Claude Code 훅 설치 (settings.json 백업 후 AgentNotch 항목만 추가) |
+/// | `--uninstall-hooks` | AgentNotch 훅만 제거 |
+/// | `--hook-status` | 훅 설치 상태 출력 |
 /// | `--demo` | 데모 시나리오로 시작 |
 struct LaunchOptions {
     /// `--render-island <장면|all> <폴더> [--style notch|menubar|both]`
@@ -26,11 +29,13 @@ struct LaunchOptions {
     var probeUpgrade = false
     var dumpChangelog: DumpChangelog?
     var renderIsland: RenderIsland?
+    var hookAction: HookCommand.Action?
     /// 인자 형식 오류 (값이 빠진 경우 등)
     var usageError: String?
 
     init(arguments: [String]) {
         var style: String?
+        var includeMessageDisplay = true
         var index = arguments.index(after: arguments.startIndex)
         // 값을 하나 받는 인자: 다음 인자를 꺼내고, 없으면 nil
         func nextValue() -> String? {
@@ -52,6 +57,10 @@ struct LaunchOptions {
             case "--demo": demo = true
             case "--version", "-v": printVersion = true
             case "--probe-upgrade": probeUpgrade = true
+            case "--install-hooks": hookAction = .install(includeMessageDisplay: true)
+            case "--no-message-display": includeMessageDisplay = false
+            case "--uninstall-hooks": hookAction = .uninstall
+            case "--hook-status": hookAction = .status
             case "--dump-changelog":
                 dumpChangelog = DumpChangelog(path: optionalValue())
             case "--render-island":
@@ -71,5 +80,6 @@ struct LaunchOptions {
             index = arguments.index(after: index)
         }
         if let style { renderIsland?.style = style }
+        if case .install = hookAction { hookAction = .install(includeMessageDisplay: includeMessageDisplay) }
     }
 }

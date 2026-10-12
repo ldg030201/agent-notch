@@ -42,6 +42,11 @@ if options.probeUpgrade {
     exit(Upgrader.probe() ? 0 : 1)
 }
 
+// 훅 관리: agent-notch --install-hooks | --uninstall-hooks | --hook-status
+if let action = options.hookAction {
+    exit(HookCommand.run(action))
+}
+
 if let request = options.renderIsland {
     exit(MainActor.assumeIsolated { RenderIslandCommand.run(request) })
 }
