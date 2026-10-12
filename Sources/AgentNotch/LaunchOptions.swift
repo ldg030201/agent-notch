@@ -10,6 +10,7 @@
 /// | `--uninstall-hooks` | AgentNotch 훅만 제거 |
 /// | `--hook-status` | 훅 설치 상태 출력 |
 /// | `--demo` | 데모 시나리오로 시작 |
+/// | `--dock` | (개발용) Dock 아이콘을 보이게 띄움 — 화면 캡처 도구가 앱으로 인식하게 |
 struct LaunchOptions {
     /// `--render-island <장면|all> <폴더> [--style notch|menubar|both]`
     struct RenderIsland: Equatable {
@@ -25,6 +26,8 @@ struct LaunchOptions {
     }
 
     var demo = false
+    /// 개발용: Dock 아이콘을 보이게 (일반 앱으로) 띄운다
+    var showInDock = false
     var printVersion = false
     var probeUpgrade = false
     var dumpChangelog: DumpChangelog?
@@ -55,6 +58,7 @@ struct LaunchOptions {
             let argument = arguments[index]
             switch argument {
             case "--demo": demo = true
+            case "--dock": showInDock = true
             case "--version", "-v": printVersion = true
             case "--probe-upgrade": probeUpgrade = true
             case "--install-hooks": hookAction = .install(includeMessageDisplay: true)

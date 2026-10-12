@@ -56,7 +56,8 @@ MainActor.assumeIsolated {
     // NSApplication.delegate 는 약한 참조라 run() 이 끝날 때까지 여기서 붙잡아 둔다
     let delegate = AppDelegate(options: options)
     app.delegate = delegate
-    app.setActivationPolicy(.accessory)
+    // 메뉴바 앱(Dock 아이콘 없음). --dock 이면 개발 중 화면 캡처 도구가 인식하도록 일반 앱으로
+    app.setActivationPolicy(options.showInDock ? .regular : .accessory)
     app.run()
     withExtendedLifetime(delegate) {}
 }
