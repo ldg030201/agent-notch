@@ -21,6 +21,24 @@ public enum FullscreenBehavior: String, CaseIterable, Codable, Sendable {
     case hide
 }
 
+/// 노치 없는 화면(외부 모니터)에서 접힌 아일랜드를 어디에 둘지
+public enum ExternalDisplayStyle: String, CaseIterable, Codable, Sendable {
+    /// 메뉴바 안의 빈 구간 (아래 내용을 가리지 않음)
+    case inMenuBar
+    /// 메뉴바 바로 아래
+    case belowMenuBar
+    /// 표시하지 않음 (알림 카드만)
+    case hidden
+}
+
+/// 노치 양옆이 메뉴바 아이템으로 막혔을 때 접힌 아일랜드 표시 방식
+public enum CompactOverlapStyle: String, CaseIterable, Codable, Sendable {
+    /// 노치 바로 아래로 띠를 내려 표시
+    case belowNotch
+    /// 노치 아래 가장자리에 상태 색 선만 표시
+    case minimal
+}
+
 /// 사용자 설정 (UserDefaults 에 저장, 비밀 정보 없음)
 @MainActor
 @Observable
@@ -35,6 +53,9 @@ public final class AppPreferences {
         static let permissionTimeout = "permissionTimeout"
         static let staleSessionTimeout = "staleSessionTimeout"
         static let passthroughWhenTerminalFrontmost = "passthroughWhenTerminalFrontmost"
+        static let externalDisplayStyle = "externalDisplayStyle"
+        static let compactOverlapStyle = "compactOverlapStyle"
+        static let checksForUpdates = "checksForUpdates"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -83,6 +104,19 @@ public final class AppPreferences {
         didSet { defaults.set(passthroughWhenTerminalFrontmost, forKey: Key.passthroughWhenTerminalFrontmost) }
     }
 
+    public var externalDisplayStyle: ExternalDisplayStyle {
+        didSet { defaults.set(externalDisplayStyle.rawValue, forKey: Key.externalDisplayStyle) }
+    }
+
+    public var compactOverlapStyle: CompactOverlapStyle {
+        didSet { defaults.set(compactOverlapStyle.rawValue, forKey: Key.compactOverlapStyle) }
+    }
+
+    /// 하루 한 번 GitHub 의 변경 내역으로 새 버전 확인 (앱의 유일한 네트워크 통신)
+    public var checksForUpdates: Bool {
+        didSet { defaults.set(checksForUpdates, forKey: Key.checksForUpdates) }
+    }
+
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         displayPolicy = defaults.string(forKey: Key.displayPolicy).flatMap(DisplayPolicy.init(rawValue:)) ?? .allScreens
@@ -94,5 +128,8 @@ public final class AppPreferences {
         permissionTimeout = defaults.object(forKey: Key.permissionTimeout) as? Double ?? 120
         staleSessionTimeout = defaults.object(forKey: Key.staleSessionTimeout) as? Double ?? 2 * 60 * 60
         passthroughWhenTerminalFrontmost = defaults.object(forKey: Key.passthroughWhenTerminalFrontmost) as? Bool ?? true
+        externalDisplayStyle = defaults.string(forKey: Key.externalDisplayStyle).flatMap(ExternalDisplayStyle.init(rawValue:)) ?? .inMenuBar
+        compactOverlapStyle = defaults.string(forKey: Key.compactOverlapStyle).flatMap(CompactOverlapStyle.init(rawValue:)) ?? .belowNotch
+        checksForUpdates = defaults.object(forKey: Key.checksForUpdates) as? Bool ?? true
     }
 }

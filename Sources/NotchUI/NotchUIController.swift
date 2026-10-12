@@ -29,6 +29,9 @@ public final class NotchUIController {
     private var settingsWindow: SettingsWindowController?
     private var started = false
 
+    /// 업데이트 상태 (App 이 주입. 없으면 버전 탭에 업데이트 기능을 숨긴다)
+    public var updateProvider: UpdateProvider?
+
     public init(store: SessionStore, preferences: AppPreferences, actions: IslandActions, settings: SettingsProvider) {
         self.store = store
         self.preferences = preferences
