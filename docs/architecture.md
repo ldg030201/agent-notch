@@ -29,7 +29,7 @@ Claude Code (CLI · 데스크톱 앱)
 | `NotchShared` | 와이어 프로토콜(`HookEnvelope`, `HookReply`, `NotchWire`), `JSONValue` | - |
 | `notch-hook` | 훅 헬퍼 실행 파일 | NotchShared |
 | `NotchCore` | 모델, `SessionStore`, 이벤트 해석, 포커스 엔진, diff 계산, 툴 요약, 설정(`AppPreferences`), `IslandActions` 프로토콜 | NotchShared |
-| `NotchServices` | 소켓 서버, 훅 설치/제거, 터미널 점프, 사운드, 앞에 있는 앱 감지, 로그인 시 실행 | NotchShared, NotchCore |
+| `NotchServices` | 소켓 서버, 훅 설치/제거, 터미널 점프, 앞에 있는 앱 감지, 로그인 시 실행, 업데이트 확인 · 업그레이드 | NotchShared, NotchCore |
 | `NotchUI` | 노치 기하 계산, `NSPanel`, 화면 관리, 표시 모드 컨트롤러, 아일랜드 SwiftUI 뷰, 설정 화면 | NotchCore |
 | `AgentNotch` | 앱 진입점, 메뉴바 아이템, 모듈 조립, 데모 모드 | 전부 |
 
@@ -233,8 +233,10 @@ brew tap ldg030201/agent-notch https://github.com/ldg030201/agent-notch && brew 
 - cask 로 빌드된 .app 을 배포하면 quarantine 속성 때문에 공증되지 않은 앱이 Gatekeeper 에 막힌다.
   formula 는 사용자 맥에서 빌드(또는 CI 가 만든 bottle 을 설치)하므로 quarantine 이 붙지 않는다.
 - `Formula/agent-notch.rb` (저장소 루트), `.github/workflows/bottle.yml` 이 릴리스마다 macOS 판별 bottle 을 올리고 formula 에 기록.
-- `scripts/build.sh` 가 `.app` 번들을 만든다. 버전은 `Sources/AgentNotch/Version.swift` 의 `agentNotchVersion` 과
-  `Resources/Info.plist` 두 곳에 있고, 다르면 빌드 실패. `agent-notch --version` → `agent-notch 0.1.0`.
+- `scripts/build.sh` 가 `.app` 번들을 만든다. 버전은 `Sources/AgentNotch/Version.swift` 의 `agentNotchVersion`,
+  `Resources/Info.plist`, `notch-hook` 의 버전 상수 세 곳에 있고, 다르면 빌드 실패. `agent-notch --version` → `agent-notch 0.1.0`.
+- 번들 ID `com.ldg.agent-notch` (테스트판 `AgentNotch-Test` / `com.ldg.agent-notch-test`, `scripts/dev.sh`).
+  두 판은 소켓·헬퍼 경로를 같이 쓰므로 동시에 띄우려면 `AGENT_NOTCH_SOCKET` 으로 소켓을 나눈다.
 - 서명: 자체 서명 인증서(`scripts/make-signing-cert.sh`)가 있으면 그걸로, 없으면 ad-hoc.
   자동화(iTerm2 AppleScript) · 손쉬운 사용 권한은 서명 신원에 묶이므로, ad-hoc 이면 업데이트마다 권한을 다시 물을 수 있다.
 - `scripts/release.sh <버전>`: 버전 반영 → 빌드 검증 → 변경 내역 날짜 기록 → 태그 `v<버전>` → tarball sha256 → formula 갱신 → GitHub 릴리스.
