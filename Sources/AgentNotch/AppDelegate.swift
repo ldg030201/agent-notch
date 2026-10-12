@@ -10,7 +10,7 @@ import os
 final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
     /// 오래된 세션 정리 주기
     private static let pruneInterval: TimeInterval = 5 * 60
-    private static let log = Logger(subsystem: "dev.agentnotch.AgentNotch", category: "app")
+    private static let log = Logger(subsystem: NotchServices.logSubsystem, category: "app")
 
     private let options: LaunchOptions
     private let preferences: AppPreferences
@@ -21,12 +21,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
     private let settings: AppSettingsProvider
     private let actions: AppActions
     private let uiController: NotchUIController
+    private let updates: AppUpdateProvider
     private let demo: DemoScenario
 
     private var statusMenu: StatusMenuController?
     private var hotKey: GlobalHotKey?
     private var pruneTimer: Timer?
-    /// SIGTERM(`brew services stop`, launchd) · SIGINT 에도 정상 종료 경로를 타게 한다 (소켓 파일 정리)
+    /// SIGTERM(launchd, 업데이트 교체 스크립트) · SIGINT 에도 정상 종료 경로를 타게 한다 (소켓 파일 정리)
     private var signalSources: [DispatchSourceSignal] = []
 
     init(options: LaunchOptions) {
@@ -38,14 +39,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
         hookInstaller = HookInstaller()
         settings = AppSettingsProvider(
             installer: hookInstaller,
-            loginItem: LoginItemManager(executablePath: AppInfo.stableExecutablePath()),
+            loginItem: MainAppLoginItem(),
             preferences: preferences
         )
         actions = AppActions(store: store, terminalJumper: TerminalJumper(), fileOpener: FileOpener())
         uiController = NotchUIController(store: store, preferences: preferences, actions: actions, settings: settings)
+        updates = AppUpdateProvider(preferences: preferences)
         demo = DemoScenario(store: store)
         super.init()
         actions.uiController = uiController
+        // 버전 탭 · 아일랜드 헤더가 처음 그려질 때부터 업데이트 상태가 있어야 한다
+        uiController.updateProvider = updates
     }
 
     // MARK: - 생명주기
@@ -57,6 +61,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
         guard startSocketServer() else { return }
 
         uiController.start()
+        // 하루 한 번 새 버전 확인 (설정에서 끄면 멈춤, 테스트판은 확인하지 않음)
+        updates.start()
         statusMenu = StatusMenuController(store: store, settings: settings, actions: actions, host: self)
         hotKey = GlobalHotKey(keyCode: GlobalHotKey.toggleKeyCode, modifiers: GlobalHotKey.toggleModifiers) { [weak self] in
             self?.toggleIsland()
@@ -77,6 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        updates.stop()
         demo.stop()
         pruneTimer?.invalidate()
         hotKey?.invalidate()

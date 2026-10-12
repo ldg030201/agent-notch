@@ -1,7 +1,13 @@
-// AgentNotch 앱 진입점: 메뉴바(액세서리) 앱으로 띄우고 AppDelegate 가 모듈을 조립한다.
+// AgentNotch 앱 진입점: 명령줄 도구 인자를 먼저 처리하고, 아니면 메뉴바(액세서리) 앱으로 띄운다.
+// 인자 목록은 LaunchOptions 참고.
 import AppKit
+import NotchServices
 
 let options = LaunchOptions(arguments: CommandLine.arguments)
+
+func printToStandardError(_ message: String) {
+    FileHandle.standardError.write(Data((message + "\n").utf8))
+}
 
 if options.printVersion {
     print("agent-notch \(AppInfo.version)")
@@ -9,8 +15,31 @@ if options.printVersion {
 }
 
 if let message = options.usageError {
-    RenderIslandCommand.printError(message)
+    printToStandardError(message)
     exit(64)
+}
+
+// 변경 내역 JSON: agent-notch --dump-changelog [경로]
+// docs/changelog.json 은 이걸로만 만든다 (`source scripts/lib.sh && dump_changelog`).
+if let dump = options.dumpChangelog {
+    do {
+        let data = try Changelog.jsonData()
+        if let path = dump.path {
+            try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+            print(path)
+        } else {
+            FileHandle.standardOutput.write(data)
+        }
+        exit(0)
+    } catch {
+        printToStandardError("변경 내역을 쓰지 못했어요: \(error.localizedDescription)")
+        exit(1)
+    }
+}
+
+// 업데이트 점검: brew 위치와 두 스크립트의 문법만 본다 (실행하지 않음)
+if options.probeUpgrade {
+    exit(Upgrader.probe() ? 0 : 1)
 }
 
 if let request = options.renderIsland {

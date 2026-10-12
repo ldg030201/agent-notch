@@ -7,16 +7,16 @@ import NotchUI
 @MainActor
 final class AppSettingsProvider: SettingsProvider {
     private let installer: HookInstaller
-    private let loginItem: LoginItemManager
+    private let loginItem: MainAppLoginItem
     private let preferences: AppPreferences
 
-    init(installer: HookInstaller, loginItem: LoginItemManager, preferences: AppPreferences) {
+    init(installer: HookInstaller, loginItem: MainAppLoginItem, preferences: AppPreferences) {
         self.installer = installer
         self.loginItem = loginItem
         self.preferences = preferences
     }
 
-    var appVersion: String { AppInfo.version }
+    var appVersion: String { AppInfo.displayVersion }
 
     var hookStatus: HookInstallStatus { installer.status() }
 
@@ -54,9 +54,11 @@ final class AppSettingsProvider: SettingsProvider {
         _ = try? installer.refreshHelperIfInstalled(helperSource: helper)
     }
 
+    /// 시스템 설정 > 로그인 항목의 실제 상태 (`SMAppService.mainApp`)
     var launchAtLoginEnabled: Bool { loginItem.isEnabled }
 
-    var launchAtLoginManagedByHomebrew: Bool { loginItem.isManagedByHomebrew }
+    /// 예전 `brew services` LaunchAgent 가 남아 있으면 true (설정 스위치를 잠가 두 번 뜨지 않게 한다)
+    var launchAtLoginManagedByHomebrew: Bool { loginItem.isManagedByHomebrewServices }
 
     func setLaunchAtLogin(_ enabled: Bool) throws {
         try loginItem.setEnabled(enabled)
