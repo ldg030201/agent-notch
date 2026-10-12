@@ -169,3 +169,34 @@ final class TestClient: @unchecked Sendable {
         _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &value, socklen_t(MemoryLayout<timeval>.size))
     }
 }
+
+/// 소켓 파일과 그 옆 인스턴스 잠금 파일(`<소켓>.lock`)을 지운다 (서버는 잠금 파일을 남겨 두므로 테스트가 정리)
+func removeSocketFiles(_ path: String) {
+    unlink(path)
+    unlink(path + ".lock")
+}
+
+/// 다른 프로세스처럼 인스턴스 잠금을 직접 쥔다. 이미 잠겨 있으면 -1.
+func holdInstanceLock(_ socketPath: String) -> Int32 {
+    open(socketPath + ".lock", O_RDWR | O_CREAT | O_CLOEXEC | O_EXLOCK | O_NONBLOCK, 0o600)
+}
+
+/// bind 만 하고 listen 없이 닫은 소켓 파일 (지난 실행의 찌꺼기, 또는 bind~listen 사이의 다른 인스턴스)
+func bindUnlistenedSocket(_ path: String) -> Bool {
+    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard fd >= 0 else { return false }
+    defer { Darwin.close(fd) }
+    var address = sockaddr_un()
+    address.sun_family = sa_family_t(AF_UNIX)
+    let bytes = Array(path.utf8)
+    withUnsafeMutableBytes(of: &address.sun_path) { raw in
+        raw.copyBytes(from: bytes)
+        raw[bytes.count] = 0
+    }
+    let bound = withUnsafePointer(to: &address) { pointer in
+        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+        }
+    }
+    return bound == 0
+}

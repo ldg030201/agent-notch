@@ -6,7 +6,7 @@ import os
 public enum SocketServerError: Error, Equatable, LocalizedError {
     /// 소켓 경로가 `sun_path` 한도(104바이트)를 넘음
     case pathTooLong
-    /// 같은 소켓에서 다른 AgentNotch 가 이미 연결을 받고 있음 (단일 인스턴스)
+    /// 다른 AgentNotch 가 이미 실행 중 (인스턴스 잠금을 쥐고 있거나 같은 소켓에서 연결을 받고 있음)
     case alreadyRunning
     /// 소켓 경로에 소켓이 아닌 파일이 있음 (지우지 않는다)
     case pathOccupied
@@ -45,6 +45,8 @@ public final class SocketServer: @unchecked Sendable {
     static let maxConnections = 128
 
     public let socketPath: String
+    /// 인스턴스 사이 시작을 직렬화하는 잠금 파일 (지우지 않는다: 지우면 다른 inode 로 잠금이 갈라질 수 있음)
+    var lockPath: String { socketPath + ".lock" }
 
     // MARK: - 콜백 (설정은 아무 스레드에서나, 호출은 항상 메인 액터)
 
@@ -77,6 +79,8 @@ public final class SocketServer: @unchecked Sendable {
     private let log = NotchServices.logger("socket")
     private var listenSource: DispatchSourceRead?
     private var listenFD: Int32 = -1
+    /// 단일 인스턴스 잠금 파일 fd (`<소켓>.lock`, 서버가 도는 동안 쥐고 있음)
+    private var lockFD: Int32 = -1
     /// 우리가 bind 한 소켓 파일 (stop 시 다른 인스턴스의 소켓을 지우지 않도록 확인)
     private var socketIdentity: (device: dev_t, inode: ino_t)?
     private var connections: [ObjectIdentifier: Connection] = [:]
@@ -137,11 +141,14 @@ public final class SocketServer: @unchecked Sendable {
         }
 
         try prepareDirectory()
+        // 잠금을 쥔 인스턴스만 stale 판정 → unlink → bind → listen 을 진행한다 (프로세스 사이 경쟁 차단)
+        try acquireInstanceLock()
+        var started = false
+        defer { if !started { releaseInstanceLock() } }
         try removeStaleSocket(address: address)
 
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw SocketServerError.systemCall(name: "socket", code: errno) }
-        var started = false
         defer { if !started { _ = Darwin.close(fd) } }
         _ = fcntl(fd, F_SETFD, FD_CLOEXEC)
 
@@ -213,7 +220,29 @@ public final class SocketServer: @unchecked Sendable {
         }
     }
 
+    /// `<소켓>.lock` 에 배타 잠금을 건다. 다른 인스턴스가 쥐고 있으면 `alreadyRunning`.
+    /// 잠금은 커널이 fd 에 묶어 관리하므로 앱이 죽어도 저절로 풀린다 (stale 잠금 없음).
+    private func acquireInstanceLock() throws {
+        guard lockFD < 0 else { return }
+        // O_NOFOLLOW: 잠금 파일 자리에 심어 둔 링크는 따라가지 않는다. O_CLOEXEC: 자식 프로세스로 잠금이 새지 않게.
+        let fd = Darwin.open(lockPath, O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW | O_EXLOCK | O_NONBLOCK, 0o600)
+        guard fd >= 0 else {
+            let code = errno
+            if code == EWOULDBLOCK { throw SocketServerError.alreadyRunning }
+            throw SocketServerError.systemCall(name: "open(lock)", code: code)
+        }
+        lockFD = fd
+    }
+
+    /// 잠금을 푼다 (fd 를 닫으면 풀림). 잠금 파일은 남겨 둔다.
+    private func releaseInstanceLock() {
+        guard lockFD >= 0 else { return }
+        _ = Darwin.close(lockFD)
+        lockFD = -1
+    }
+
     /// 남아 있는 소켓 파일 처리: 누군가 연결을 받으면 이미 실행 중, 아니면 지난 실행의 찌꺼기라 지운다.
+    /// 인스턴스 잠금을 쥔 상태에서만 부른다.
     private func removeStaleSocket(address: sockaddr_un) throws {
         var info = stat()
         guard lstat(socketPath, &info) == 0 else { return }
@@ -247,6 +276,8 @@ public final class SocketServer: @unchecked Sendable {
             finish(connection)
         }
         earlyReplies.removeAll()
+        // 소켓 파일을 정리한 뒤에 잠금을 넘긴다
+        releaseInstanceLock()
     }
 
     private func removeOwnSocketFile() {

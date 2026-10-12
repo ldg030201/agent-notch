@@ -11,6 +11,28 @@ final class SocketRecorder {
     var cancelled: [UUID] = []
 }
 
+/// 동시 시작 결과 기록용 (인덱스별 오류, nil 이면 시작 성공)
+final class StartOutcomes: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [SocketServerError?]
+
+    init(count: Int) {
+        storage = Array(repeating: nil, count: count)
+    }
+
+    func set(_ index: Int, _ error: SocketServerError) {
+        lock.lock()
+        defer { lock.unlock() }
+        storage[index] = error
+    }
+
+    var values: [SocketServerError?] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+}
+
 @MainActor
 @Suite("SocketServer")
 struct SocketServerTests {
@@ -28,6 +50,7 @@ struct SocketServerTests {
 
     @Test func fireAndForgetIsDelivered() async throws {
         let path = shortSocketPath()
+        defer { removeSocketFiles(path) }
         let recorder = SocketRecorder()
         let server = makeServer(path: path, recorder: recorder)
         try server.start()
@@ -47,6 +70,7 @@ struct SocketServerTests {
 
     @Test func socketFileIsOwnerOnly() async throws {
         let path = shortSocketPath()
+        defer { removeSocketFiles(path) }
         let server = SocketServer(socketPath: path)
         try server.start()
         #expect(server.isRunning)
@@ -59,6 +83,7 @@ struct SocketServerTests {
 
     @Test func replyIsDeliveredToWaitingClient() async throws {
         let path = shortSocketPath()
+        defer { removeSocketFiles(path) }
         let recorder = SocketRecorder()
         let id = UUID()
         let server = makeServer(path: path, recorder: recorder, replyID: id)
@@ -91,6 +116,7 @@ struct SocketServerTests {
 
     @Test func replyFromInsideOnEnvelopeIsNotLost() async throws {
         let path = shortSocketPath()
+        defer { removeSocketFiles(path) }
         let server = SocketServer(socketPath: path)
         let output: JSONValue = .object(["decided": .bool(true)])
         // onEnvelope 안에서 바로 결정하는 경우 (예: 터미널이 앞에 있어 즉시 넘김)
@@ -113,6 +139,7 @@ struct SocketServerTests {
 
     @Test func expectsReplyWithoutIDRepliesNullImmediately() async throws {
         let path = shortSocketPath()
+        defer { removeSocketFiles(path) }
         let recorder = SocketRecorder()
         let server = makeServer(path: path, recorder: recorder, replyID: nil)
         try server.start()
@@ -130,6 +157,7 @@ struct SocketServerTests {
 
     @Test func clientDisconnectCancelsPending() async throws {
         let path = shortSocketPath()
+        defer { removeSocketFiles(path) }
         let recorder = SocketRecorder()
         let id = UUID()
         let server = makeServer(path: path, recorder: recorder, replyID: id)
@@ -152,6 +180,7 @@ struct SocketServerTests {
 
     @Test func timeoutRepliesNullAndCancels() async throws {
         let path = shortSocketPath()
+        defer { removeSocketFiles(path) }
         let recorder = SocketRecorder()
         let id = UUID()
         let server = makeServer(path: path, recorder: recorder, replyID: id)
@@ -174,6 +203,7 @@ struct SocketServerTests {
 
     @Test func stopRepliesNullToPendingAndCancels() async throws {
         let path = shortSocketPath()
+        defer { removeSocketFiles(path) }
         let recorder = SocketRecorder()
         let id = UUID()
         let server = makeServer(path: path, recorder: recorder, replyID: id)
@@ -196,6 +226,7 @@ struct SocketServerTests {
 
     @Test func secondInstanceIsRejected() async throws {
         let path = shortSocketPath()
+        defer { removeSocketFiles(path) }
         let recorder = SocketRecorder()
         let first = makeServer(path: path, recorder: recorder)
         try first.start()
@@ -218,22 +249,9 @@ struct SocketServerTests {
 
     @Test func staleSocketFileIsReplaced() async throws {
         let path = shortSocketPath()
-        // 지난 실행이 남긴 소켓 파일 (bind 후 listen 없이 닫음)
-        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        var address = sockaddr_un()
-        address.sun_family = sa_family_t(AF_UNIX)
-        let bytes = Array(path.utf8)
-        withUnsafeMutableBytes(of: &address.sun_path) { raw in
-            raw.copyBytes(from: bytes)
-            raw[bytes.count] = 0
-        }
-        let bound = withUnsafePointer(to: &address) { pointer in
-            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
-            }
-        }
-        Darwin.close(fd)
-        #expect(bound == 0)
+        defer { removeSocketFiles(path) }
+        // 지난 실행이 남긴 소켓 파일 (bind 후 listen 없이 닫음, 잠금은 이미 풀림)
+        #expect(bindUnlistenedSocket(path))
         #expect(FileManager.default.fileExists(atPath: path))
 
         let recorder = SocketRecorder()
@@ -251,14 +269,96 @@ struct SocketServerTests {
 
     @Test func regularFileAtSocketPathIsNotDeleted() throws {
         let path = shortSocketPath()
+        defer { removeSocketFiles(path) }
         FileManager.default.createFile(atPath: path, contents: Data("keep".utf8))
-        defer { unlink(path) }
 
         let server = SocketServer(socketPath: path)
         #expect(throws: SocketServerError.pathOccupied) {
             try server.start()
         }
         #expect(FileManager.default.contents(atPath: path) == Data("keep".utf8))
+        // 시작에 실패하면 잠금을 바로 놓는다 (다음 시도가 alreadyRunning 으로 막히지 않음)
+        #expect(throws: SocketServerError.pathOccupied) {
+            try server.start()
+        }
+        let lock = holdInstanceLock(path)
+        #expect(lock >= 0)
+        if lock >= 0 { Darwin.close(lock) }
+    }
+
+    @Test func instanceLockIsHeldWhileRunning() throws {
+        let path = shortSocketPath()
+        defer { removeSocketFiles(path) }
+        let server = SocketServer(socketPath: path)
+        try server.start()
+        #expect(server.lockPath == path + ".lock")
+        #expect(posixPermissions(server.lockPath) == 0o600)
+        // 도는 동안은 다른 쪽이 잠금을 잡을 수 없다
+        #expect(holdInstanceLock(path) == -1)
+
+        server.stop()
+        // 정지하면 잠금을 놓는다 (잠금 파일 자체는 남김)
+        #expect(FileManager.default.fileExists(atPath: server.lockPath))
+        let lock = holdInstanceLock(path)
+        #expect(lock >= 0)
+        if lock >= 0 { Darwin.close(lock) }
+    }
+
+    @Test func lockedInstanceSocketIsNotTreatedAsStale() throws {
+        // 다른 인스턴스가 잠금을 쥐고 bind 만 했고 아직 listen 전인 순간 (연결 확인은 실패한다)
+        let path = shortSocketPath()
+        defer { removeSocketFiles(path) }
+        let lock = holdInstanceLock(path)
+        try #require(lock >= 0)
+        #expect(bindUnlistenedSocket(path))
+
+        let server = SocketServer(socketPath: path)
+        #expect(throws: SocketServerError.alreadyRunning) {
+            try server.start()
+        }
+        // 그 인스턴스의 소켓 파일을 찌꺼기로 보고 지우면 안 된다
+        #expect(FileManager.default.fileExists(atPath: path))
+        #expect(!server.isRunning)
+
+        // 그 인스턴스가 사라져 잠금이 풀리면 찌꺼기로 보고 대신 시작한다
+        Darwin.close(lock)
+        try server.start()
+        defer { server.stop() }
+        #expect(server.isRunning)
+    }
+
+    @Test func concurrentStartsOnSamePathAllowOnlyOne() async throws {
+        for _ in 0..<25 {
+            let path = shortSocketPath()
+            defer { removeSocketFiles(path) }
+            let servers = [SocketServer(socketPath: path), SocketServer(socketPath: path)]
+            defer { servers.forEach { $0.stop() } }
+
+            // 두 서버를 서로 다른 스레드에서 동시에 시작
+            let errors = await runBlocking { () -> [SocketServerError?] in
+                let outcomes = StartOutcomes(count: servers.count)
+                DispatchQueue.concurrentPerform(iterations: servers.count) { index in
+                    do {
+                        try servers[index].start()
+                    } catch let error as SocketServerError {
+                        outcomes.set(index, error)
+                    } catch {
+                        outcomes.set(index, .systemCall(name: "unexpected", code: -1))
+                    }
+                }
+                return outcomes.values
+            }
+            #expect(errors.filter { $0 == nil }.count == 1, "\(errors)")
+            #expect(errors.contains(.alreadyRunning), "\(errors)")
+            #expect(servers.filter(\.isRunning).count == 1)
+            // 살아남은 쪽이 실제로 연결을 받는다
+            let reachable = await runBlocking { () -> Bool in
+                guard let client = TestClient(path: path) else { return false }
+                client.close()
+                return true
+            }
+            #expect(reachable)
+        }
     }
 
     @Test func tooLongPathIsRejected() {
@@ -271,6 +371,7 @@ struct SocketServerTests {
 
     @Test func emptyAndInvalidConnectionsAreTolerated() async throws {
         let path = shortSocketPath()
+        defer { removeSocketFiles(path) }
         let recorder = SocketRecorder()
         let server = makeServer(path: path, recorder: recorder)
         try server.start()
@@ -302,6 +403,7 @@ struct SocketServerTests {
 
     @Test func oversizedEnvelopeClosesConnection() async throws {
         let path = shortSocketPath()
+        defer { removeSocketFiles(path) }
         let recorder = SocketRecorder()
         let server = makeServer(path: path, recorder: recorder)
         try server.start()
