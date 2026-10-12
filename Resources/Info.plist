@@ -9,7 +9,7 @@
 	<key>CFBundleExecutable</key>
 	<string>AgentNotch</string>
 	<key>CFBundleIdentifier</key>
-	<string>dev.agentnotch.AgentNotch</string>
+	<string>com.ldg.agent-notch</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
@@ -17,9 +17,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>__SHORT_VERSION__</string>
+	<string>0.1.0</string>
 	<key>CFBundleVersion</key>
-	<string>__BUNDLE_VERSION__</string>
+	<string>1</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.developer-tools</string>
 	<key>LSMinimumSystemVersion</key>

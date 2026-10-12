@@ -73,7 +73,7 @@ public final class SocketServer: @unchecked Sendable {
 
     // MARK: - 큐 전용 상태
 
-    private let queue = DispatchQueue(label: "dev.agentnotch.socket-server")
+    private let queue = DispatchQueue(label: "com.ldg.agent-notch.socket-server")
     private let log = NotchServices.logger("socket")
     private var listenSource: DispatchSourceRead?
     private var listenFD: Int32 = -1

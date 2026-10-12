@@ -6,7 +6,7 @@
 #   --fast              이벤트 사이 대기를 줄인다
 #   --keep              마지막 SessionEnd 를 보내지 않는다 (세션을 노치에 남김)
 #   --reply-timeout SEC 권한 요청에 대한 노치 응답을 기다리는 최대 시간 (기본 60)
-#   --helper PATH       notch-hook 경로 (기본: build/AgentNotch.app 안 → .build/debug → .build/release)
+#   --helper PATH       notch-hook 경로 (기본: build/AgentNotch-Test.app → build/AgentNotch.app → .build/debug → .build/release)
 #   AGENT_NOTCH_SOCKET  소켓 경로를 바꿀 때 (앱도 같은 값으로 실행해야 함)
 set -euo pipefail
 
@@ -54,6 +54,7 @@ done
 
 if [[ -z "$HELPER" ]]; then
   for candidate in \
+    "$ROOT/build/AgentNotch-Test.app/Contents/MacOS/notch-hook" \
     "$ROOT/build/AgentNotch.app/Contents/MacOS/notch-hook" \
     "$ROOT/.build/debug/notch-hook" \
     "$ROOT/.build/release/notch-hook"; do
@@ -63,7 +64,7 @@ if [[ -z "$HELPER" ]]; then
     fi
   done
 fi
-[[ -n "$HELPER" && -x "$HELPER" ]] || die "notch-hook 을 찾지 못했어요. scripts/build-app.sh 또는 swift build 를 먼저 실행하세요."
+[[ -n "$HELPER" && -x "$HELPER" ]] || die "notch-hook 을 찾지 못했어요. VARIANT=test scripts/build.sh 또는 swift build 를 먼저 실행하세요."
 
 if ! "$HELPER" --ping; then
   die "AgentNotch 가 실행 중이 아니에요 (소켓: ${AGENT_NOTCH_SOCKET:-기본 경로})"
