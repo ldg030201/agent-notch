@@ -33,8 +33,9 @@ public enum ExternalDisplayStyle: String, CaseIterable, Codable, Sendable {
 
 /// 노치 화면(맥북 내장)에서 접힌 아일랜드를 그리는 방식
 public enum NotchStyle: String, CaseIterable, Codable, Sendable {
-    /// 카메라(노치)를 가운데 두고 양옆 메뉴바 자리를 날개로 사용.
-    /// 아래에 있는 메뉴바 아이콘 · 메뉴는 덮되, 마우스를 가져가면 그쪽 날개가 노치 안으로 들어가 비켜준다.
+    /// 카메라(노치)를 가운데 두고 양옆 메뉴바 자리를 검은 날개로 사용.
+    /// 손쉬운 사용 권한이 있으면 날개 아래 메뉴바 아이콘 자리만 뚫어 아이콘이 날개 위에 보이게 하고,
+    /// 없으면 마우스를 가져갈 때 그쪽 날개가 노치 안으로 들어가 비켜준다.
     case wings
     /// 노치 바로 아래로 띠를 내려 표시 (메뉴바를 전혀 가리지 않음)
     case belowNotch
