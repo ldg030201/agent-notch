@@ -16,6 +16,10 @@ final class ScreenManager {
     private var lastModes: [ScreenID: IslandMode] = [:]
     /// 화면별 클릭 영역 (Cocoa 전역). 마우스 이동마다 레이아웃을 다시 계산하지 않도록 상태가 바뀔 때만 갱신한다.
     private var hitRectCache: [ScreenID: [CGRect]] = [:]
+    /// 화면별 클릭 통과 영역 (아이콘 구멍, Cocoa 전역). 클릭 영역보다 우선한다.
+    private var passThroughCache: [ScreenID: [CGRect]] = [:]
+    /// 넓은 노치 날개 비켜주기 (아이콘 위치를 모를 때)
+    private let wingRetract = WingRetractTracker()
     private var eventMonitors: [Any] = []
     private var notificationTokens: [(NotificationCenter, NSObjectProtocol)] = []
     private var fullscreenTask: Task<Void, Never>?
@@ -41,6 +45,9 @@ final class ScreenManager {
         running = true
         generation += 1
         presentation.onRequestKey = { [weak self] id in self?.makeKey(id) }
+        wingRetract.onChange = { [weak self] id, sides in
+            self?.presentation.setRetractedWings(sides, on: id)
+        }
         rebuildPanels()
         installEventMonitors()
         installNotifications()
@@ -64,6 +71,7 @@ final class ScreenManager {
         fullscreenRefreshTask = nil
         spaceMonitor.stop()
         overlapMonitor.stop()
+        wingRetract.reset()
         for panel in panels.values {
             panel.orderOut(nil)
             panel.contentView = nil
@@ -71,6 +79,7 @@ final class ScreenManager {
         panels.removeAll()
         lastModes.removeAll()
         hitRectCache.removeAll()
+        passThroughCache.removeAll()
     }
 
     /// 마우스가 있는 화면(또는 정책상 대상 화면)에서 펼침 토글
@@ -92,6 +101,7 @@ final class ScreenManager {
             panels.removeValue(forKey: id)
             lastModes.removeValue(forKey: id)
             hitRectCache.removeValue(forKey: id)
+            passThroughCache.removeValue(forKey: id)
         }
 
         presentation.updateScreens(geometries)
@@ -135,11 +145,12 @@ final class ScreenManager {
 
     // MARK: - 모드 변화 감시 (키 윈도우 반납, 클릭 영역 갱신)
 
-    /// 화면별 표시 상태 (모드 · 레이아웃 · 투명 숨김)
+    /// 화면별 표시 상태 (모드 · 레이아웃 · 투명 숨김 · 비켜줄 날개 자리)
     private struct ScreenState {
         var mode: IslandMode
         var layout: IslandLayout
         var concealed: Bool
+        var bands: WingBands
     }
 
     private func armModeObservation() {
@@ -152,7 +163,8 @@ final class ScreenManager {
                 return (id, ScreenState(
                     mode: mode,
                     layout: presentation.layout(for: id, mode: mode),
-                    concealed: presentation.isConcealed(id)
+                    concealed: presentation.isConcealed(id),
+                    bands: presentation.retractBands(for: id, mode: mode)
                 ))
             })
         } onChange: { [weak self] in
@@ -166,8 +178,17 @@ final class ScreenManager {
 
     private func applyModes(_ states: [ScreenID: ScreenState]) {
         var becameCompact = false
+        var bands: [ScreenID: WingRetractTracker.Bands] = [:]
         for (id, state) in states {
-            hitRectCache[id] = hitRects(state, geometry: presentation.geometries[id])
+            let geometry = presentation.geometries[id]
+            hitRectCache[id] = hitRects(state, geometry: geometry)
+            passThroughCache[id] = passThroughRects(state, geometry: geometry)
+            if let geometry, !state.bands.isEmpty {
+                bands[id] = WingRetractTracker.Bands(
+                    left: state.bands.left.map(geometry.screenRect(fromPanel:)),
+                    right: state.bands.right.map(geometry.screenRect(fromPanel:))
+                )
+            }
             let previous = lastModes[id]
             guard previous != state.mode else { continue }
             let wasCompact = previous.map { $0 == .idle || $0 == .working } ?? false
@@ -181,6 +202,7 @@ final class ScreenManager {
                 panel.orderFrontRegardless()
             }
         }
+        wingRetract.setBands(bands)
         updateMouseState()
         // 접힌 상태가 새로 보이기 시작하면 메뉴바 빈 공간을 바로 다시 잰다
         if becameCompact { spaceMonitor.refresh() }
@@ -235,14 +257,21 @@ final class ScreenManager {
         // 마우스가 있는 화면의 아일랜드만 판정한다 (위아래로 붙은 화면 경계에서 오판 방지)
         var hovered: ScreenID?
         for (id, panel) in panels {
-            let inside = id == active?.screenID
-                && (hitRectCache[id] ?? []).contains { Self.containsInclusive($0, location) }
-            if inside { hovered = id }
+            let inside = id == active?.screenID && isInside(location, screen: id)
+            // 비켜줄 날개 위에서는 커지는 효과를 주지 않는다 (곧 들어가므로)
+            if inside, !wingRetract.isInBand(location, screen: id) { hovered = id }
             if panel.ignoresMouseEvents == inside {
                 panel.ignoresMouseEvents = !inside
             }
         }
         presentation.setHoveredScreen(hovered)
+        wingRetract.update(location: location, activeScreen: active?.screenID)
+    }
+
+    /// 아일랜드가 클릭을 받는 자리인지 (아이콘 구멍은 아래 메뉴바 아이템으로 통과)
+    private func isInside(_ location: CGPoint, screen id: ScreenID) -> Bool {
+        guard (hitRectCache[id] ?? []).contains(where: { Self.containsInclusive($0, location) }) else { return false }
+        return !(passThroughCache[id] ?? []).contains { Self.containsInclusive($0, location) }
     }
 
     /// 아일랜드가 클릭을 받는 영역들 (Cocoa 전역 좌표). 숨김 · 투명 숨김이면 빈 배열.
@@ -254,11 +283,18 @@ final class ScreenManager {
         }
     }
 
+    /// 클릭 통과 영역 (아이콘 구멍, Cocoa 전역)
+    private func passThroughRects(_ state: ScreenState, geometry: NotchGeometry?) -> [CGRect] {
+        guard let geometry, state.mode != .hidden, !state.concealed else { return [] }
+        let layout = state.layout
+        return layout.passThroughRects.map { rect in
+            geometry.screenRect(fromPanel: rect.offsetBy(dx: layout.origin.x, dy: layout.origin.y))
+        }
+    }
+
     /// 화면 좌표가 아일랜드 위인지
     func isIslandHit(_ location: CGPoint) -> Bool {
-        hitRectCache.values.contains { rects in
-            rects.contains { Self.containsInclusive($0, location) }
-        }
+        hitRectCache.keys.contains { isInside(location, screen: $0) }
     }
 
     /// 화면 맨 위 픽셀(y == maxY)도 포함하는 판정

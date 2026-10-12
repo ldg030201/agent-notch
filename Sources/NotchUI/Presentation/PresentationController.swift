@@ -42,6 +42,8 @@ final class PresentationController {
     private(set) var occludedScreenIDs: Set<ScreenID> = []
     /// 노치를 쓰는 다른 앱 (화면 → 앱 이름)
     private(set) var notchConflicts: [ScreenID: String] = [:]
+    /// 넓은 노치에서 마우스를 올려 비켜준 날개 (아이콘 위치를 모를 때)
+    private(set) var retractedWings: [ScreenID: WingSides] = [:]
     /// 업데이트 상태 (없으면 배지 · 버전 탭 숨김)
     var updateProvider: UpdateProvider?
 
@@ -121,6 +123,8 @@ final class PresentationController {
         if let expanded = expandedScreenID, map[expanded] == nil { expandedScreenID = nil }
         if let active = activeScreenID, map[active] == nil { activeScreenID = nil }
         if let hovered = hoveredScreenID, map[hovered] == nil { hoveredScreenID = nil }
+        let validRetracted = retractedWings.filter { map[$0.key] != nil }
+        if validRetracted != retractedWings { retractedWings = validRetracted }
         let validFullscreen = fullscreenScreenIDs.filter { map[$0] != nil }
         if validFullscreen != fullscreenScreenIDs { fullscreenScreenIDs = validFullscreen }
     }
@@ -147,6 +151,13 @@ final class PresentationController {
 
     func setNotchConflicts(_ value: [ScreenID: String]) {
         if notchConflicts != value { notchConflicts = value }
+    }
+
+    /// 비켜준 날개 (ScreenManager 의 날개 비켜주기가 호출)
+    func setRetractedWings(_ sides: WingSides, on id: ScreenID) {
+        let current = retractedWings[id] ?? []
+        guard current != sides else { return }
+        retractedWings[id] = sides.isEmpty ? nil : sides
     }
 
     /// 열린 메뉴와 겹친 화면. 겹치기 시작하면 일시 펼침(피크/완료)은 바로 접는다.
@@ -310,8 +321,16 @@ final class PresentationController {
             externalStyle: preferences.externalDisplayStyle,
             notchStyle: preferences.notchStyle,
             overlapStyle: preferences.compactOverlapStyle,
-            notchConflict: notchConflicts[id] != nil
+            notchConflict: notchConflicts[id] != nil,
+            retracted: retractedWings[id] ?? []
         )
+    }
+
+    /// 마우스를 올리면 비켜줄 날개 자리 (패널 기준). 접힌 날개가 아이콘을 덮을 때만 (아이콘 구멍을 쓰면 없음).
+    /// 비켜준 자리의 아이템 메뉴가 열려 투명하게 숨은 동안에도 유지한다 (메뉴가 닫히자마자 다시 덮지 않게).
+    func retractBands(for id: ScreenID, mode: IslandMode) -> WingBands {
+        guard mode == .idle || mode == .working, let engine = layoutEngine(for: id) else { return .none }
+        return engine.retractBands(for: compactContent(for: mode))
     }
 
     /// 접힌 상태 내용 (레이아웃 선택용 폭 측정)

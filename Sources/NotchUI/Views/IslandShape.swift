@@ -5,6 +5,7 @@ import SwiftUI
 /// 모양은 위쪽 "목"(메뉴바 높이 구간)과 아래쪽 "몸통"으로 나뉜다.
 /// - 목: 메뉴바 아이템을 가리지 않도록 좁게 (노치 + 허용된 날개, 또는 메뉴바 안 알약).
 /// - 몸통: 메뉴바 아래에서만 넓어진다. 목과 만나는 곳은 오목하게 이어진다.
+///   넓은 노치에서 내용만 노치 아래 띠로 내릴 때는 몸통이 목보다 좁다 (목 아래 모서리가 볼록, 만나는 곳이 오목).
 /// - 목 높이가 프레임 높이 이상이면 목만 있는 모양 (접힌 상태).
 /// - 노치 화면은 목 위쪽 모서리에 바깥으로 휘는 "귀"를 둬서 하드웨어 노치와 자연스럽게 잇는다.
 struct IslandShapeSpec: Equatable {
@@ -13,7 +14,7 @@ struct IslandShapeSpec: Equatable {
     var neckRight: CGFloat = 0
     /// 목 높이
     var neckHeight: CGFloat = 0
-    /// 프레임 왼쪽/오른쪽 끝에서 몸통 옆면까지 거리 (목보다 넓거나 같아야 함)
+    /// 프레임 왼쪽/오른쪽 끝에서 몸통 옆면까지 거리 (목보다 넓거나 좁을 수 있음)
     var bodyLeft: CGFloat = 0
     var bodyRight: CGFloat = 0
     /// 목 위쪽 바깥으로 휘는 귀 반경 (노치 화면)
@@ -21,9 +22,9 @@ struct IslandShapeSpec: Equatable {
     var rightEar: CGFloat = 0
     /// 목 위쪽 모서리 반경 (귀가 없는 쪽, 알약)
     var topRadius: CGFloat = 0
-    /// 몸통이 목보다 넓을 때 몸통 위쪽 바깥 모서리 반경
+    /// 몸통이 목보다 넓을 때 몸통 위쪽 바깥 모서리 반경 (좁을 때는 목과 만나는 오목한 모서리)
     var bodyTopRadius: CGFloat = 0
-    /// 목과 몸통이 만나는 오목한 모서리 반경
+    /// 목과 몸통이 만나는 오목한 모서리 반경 (몸통이 좁을 때는 목 아래 볼록한 모서리)
     var shoulderRadius: CGFloat = 0
     var bottomRadius: CGFloat = 0
 }
@@ -79,9 +80,13 @@ struct IslandShape: Shape {
         let neckHeight = min(max(0, spec.neckHeight), rect.height)
         let hasBody = neckHeight < rect.height - eps
 
-        // 몸통 (목보다 좁아지지 않는다)
-        let bx0 = hasBody ? min(rect.minX + max(0, spec.bodyLeft), nx0) : nx0
-        let bx1 = hasBody ? max(rect.maxX - max(0, spec.bodyRight), nx1) : nx1
+        // 몸통 (목보다 넓거나 좁을 수 있다)
+        var bx0 = hasBody ? rect.minX + max(0, spec.bodyLeft) : nx0
+        var bx1 = hasBody ? rect.maxX - max(0, spec.bodyRight) : nx1
+        if bx1 - bx0 < 2 {
+            bx0 = nx0
+            bx1 = nx1
+        }
         let neckBottom = top + (hasBody ? neckHeight : rect.height)
 
         // 귀와 위쪽 모서리
@@ -97,9 +102,9 @@ struct IslandShape: Shape {
         let bodyHeight = hasBody ? rect.height - neckHeight : rect.height - max(earL, earR, topRL, topRR)
         let bottomR = clamp(spec.bottomRadius, 0, min(bodyWidth / 2, bodyHeight))
 
-        // 어깨 (목 → 몸통)
-        let widenL = nx0 - bx0
-        let widenR = bx1 - nx1
+        // 어깨 (목 → 몸통). 몸통이 좁으면 넓어지는 폭이 음수
+        let widenL = abs(nx0 - bx0)
+        let widenR = abs(bx1 - nx1)
         let shoulderLimit = max(0, neckHeight - max(earL, topRL, earR, topRR))
         let shoulderL = clamp(spec.shoulderRadius, 0, min(widenL / 2, shoulderLimit))
         let shoulderR = clamp(spec.shoulderRadius, 0, min(widenR / 2, shoulderLimit))

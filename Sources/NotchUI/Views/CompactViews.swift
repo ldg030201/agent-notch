@@ -13,9 +13,13 @@ struct IdleCompactView: View {
         let sessions = Array(store.rankedSessions.prefix(IslandMetrics.maxIdleDots))
         Group {
             switch layout.compact {
-            case let .wings(left, right, _):
-                CompactWings(layout: layout, left: left, right: right) {
-                    if right > 0 {
+            case let .wings(spec) where spec.arrangement == .strip:
+                CompactStrip(layout: layout) {
+                    dots(sessions)
+                }
+            case let .wings(spec):
+                CompactWings(layout: layout, spec: spec) {
+                    if spec.arrangement == .split {
                         // 양쪽 날개면 왼쪽엔 작은 점만
                         Circle()
                             .fill(Palette.muted)
@@ -84,33 +88,32 @@ struct CompactSessionView: View {
     @ViewBuilder
     private func content(_ session: AgentSession) -> some View {
         switch layout.compact {
-        case let .wings(left, right, items):
-            if left > 0, right > 0 {
-                CompactWings(layout: layout, left: left, right: right) {
+        case let .wings(spec) where spec.arrangement == .strip:
+            stripContent(session)
+
+        case let .wings(spec):
+            if spec.arrangement == .split {
+                CompactWings(layout: layout, spec: spec) {
                     HStack(spacing: 6) {
                         StatusIndicator(session: session, reduceMotion: reduceMotion)
-                        Text(session.projectName)
-                            .truncationMode(.tail)
+                        if spec.items.contains(.project) {
+                            Text(session.projectName)
+                                .truncationMode(.tail)
+                        }
                     }
                 } trailing: {
-                    trailing(session, toolTitle: IslandFormat.shortToolTitle(session))
+                    trailing(session, toolTitle: spec.items.contains(.tool) ? IslandFormat.shortToolTitle(session) : "")
                 }
             } else {
-                CompactWings(layout: layout, left: left, right: right) {
-                    singleWing(session, items: items)
+                CompactWings(layout: layout, spec: spec) {
+                    singleWing(session, items: spec.items)
                 } trailing: {
-                    singleWing(session, items: items)
+                    singleWing(session, items: spec.items)
                 }
             }
 
         case .strip:
-            CompactStrip(layout: layout) {
-                HStack(spacing: 5) {
-                    StatusIndicator(session: session, reduceMotion: reduceMotion, size: 12)
-                    trailing(session, toolTitle: IslandFormat.shortToolTitle(session))
-                }
-                .font(IslandFont.caption)
-            }
+            stripContent(session)
 
         case .line:
             StatusLine(layout: layout, color: Self.toneColor(session))
@@ -138,6 +141,17 @@ struct CompactSessionView: View {
 
         case nil:
             Color.clear
+        }
+    }
+
+    /// 노치 아래 띠: 상태 + 짧은 툴 이름 + `+N −M`
+    private func stripContent(_ session: AgentSession) -> some View {
+        CompactStrip(layout: layout) {
+            HStack(spacing: 5) {
+                StatusIndicator(session: session, reduceMotion: reduceMotion, size: 12)
+                trailing(session, toolTitle: IslandFormat.shortToolTitle(session))
+            }
+            .font(IslandFont.caption)
         }
     }
 
@@ -209,46 +223,54 @@ struct CompactSessionView: View {
 
 // MARK: - 자리별 틀
 
-/// 노치 양옆 날개 틀. 양쪽이면 바깥쪽 정렬, 한쪽이면 노치 쪽으로 붙인다.
+/// 노치 양옆 날개 틀. 내용은 노치 가장자리부터 `WingsSpec` 의 내용 자리 폭 안에 둔다
+/// (아이콘 구멍이 있으면 첫 구멍 앞까지). 양쪽이면 바깥쪽 정렬, 한쪽이면 노치 쪽으로 붙인다.
+/// 비켜준 쪽 내용은 날개가 들어가는 동안 흐려진다.
 struct CompactWings<Leading: View, Trailing: View>: View {
     let layout: IslandLayout
-    let left: CGFloat
-    let right: CGFloat
+    let spec: WingsSpec
     @ViewBuilder var leading: Leading
     @ViewBuilder var trailing: Trailing
 
     var body: some View {
         let earL = layout.shape.neckLeft
         let earR = layout.shape.neckRight
+        let left = spec.visibleLeft
+        let right = spec.visibleRight
+        let notchX = earL + left
         let notchWidth = max(0, layout.size.width - earL - earR - left - right)
-        let both = left > 0 && right > 0
-        let pad = IslandMetrics.wingPadding
+        let split = spec.arrangement == .split
+        let height = layout.size.height
+        let showsLeft = (split || spec.arrangement == .left) && spec.leftSpan > 0
+        let showsRight = (split || spec.arrangement == .right) && spec.rightSpan > 0
 
-        HStack(spacing: 0) {
-            if left > 0 {
+        ZStack(alignment: .topLeading) {
+            if showsLeft {
                 leading
-                    .padding(.leading, pad)
-                    .padding(.trailing, both ? 4 : 6)
-                    .frame(width: left, alignment: both ? .leading : .trailing)
+                    .padding(.leading, spec.leftOuterPad)
+                    .padding(.trailing, split ? 4 : 6)
+                    .frame(width: spec.leftSpan, height: height, alignment: split ? .leading : .trailing)
+                    .offset(x: notchX - spec.leftSpan)
+                    .opacity(spec.hidden.contains(.left) ? 0 : 1)
             }
-            Color.clear.frame(width: notchWidth)
-            if right > 0 {
+            if showsRight {
                 trailing
-                    .padding(.leading, both ? 4 : 6)
-                    .padding(.trailing, pad)
-                    .frame(width: right, alignment: both ? .trailing : .leading)
+                    .padding(.leading, split ? 4 : 6)
+                    .padding(.trailing, spec.rightOuterPad)
+                    .frame(width: spec.rightSpan, height: height, alignment: split ? .trailing : .leading)
+                    .offset(x: notchX + notchWidth)
+                    .opacity(spec.hidden.contains(.right) ? 0 : 1)
             }
         }
-        .padding(.leading, earL)
-        .padding(.trailing, earR)
-        .frame(height: layout.size.height)
+        .frame(width: layout.size.width, height: height, alignment: .topLeading)
         .font(IslandFont.body)
         .foregroundStyle(Palette.text)
         .lineLimit(1)
     }
 }
 
-/// 노치 아래 띠 틀: 목(노치) 높이만큼 비우고 그 아래 한 줄
+/// 노치 아래 띠 틀: 목(노치) 높이만큼 비우고 그 아래 한 줄.
+/// 넓은 노치에서 내용만 띠로 내린 경우 몸통(노치 폭) 안에 둔다.
 struct CompactStrip<Content: View>: View {
     let layout: IslandLayout
     @ViewBuilder var content: Content
@@ -260,6 +282,8 @@ struct CompactStrip<Content: View>: View {
                 .padding(.horizontal, 10)
                 .frame(maxWidth: .infinity)
                 .frame(height: max(0, layout.size.height - layout.shape.neckHeight))
+                .padding(.leading, layout.shape.bodyLeft)
+                .padding(.trailing, layout.shape.bodyRight)
         }
         .font(IslandFont.caption)
         .foregroundStyle(Palette.text)

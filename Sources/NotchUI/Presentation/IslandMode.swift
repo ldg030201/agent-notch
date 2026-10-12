@@ -110,6 +110,10 @@ enum IslandMetrics {
     static let minWideWing: CGFloat = 64
     static let wideWingProjectCap: CGFloat = 76
     static let wideWingToolCap: CGFloat = 56
+    /// 넓은 노치: 아이콘을 반으로 자르지 않게 날개를 늘릴 때 한쪽 최대 폭
+    static let iconWingMax: CGFloat = 200
+    /// 넓은 노치: 노치 ~ 첫 아이콘 구멍 사이가 이보다 좁으면 그쪽엔 내용을 두지 않는다
+    static let wingContentMinRoom: CGFloat = 28
     /// 노치 아래 띠 (폭은 노치 폭)
     static let stripHeight: CGFloat = 22
     /// 노치 아래 선

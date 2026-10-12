@@ -66,6 +66,9 @@ enum SnapshotScenario: String, CaseIterable {
     case idleWings = "idle-wings"
     case working
     case workingWings = "working-wings"
+    case workingWingsIcons = "working-wings-icons"
+    case workingWingsRetracted = "working-wings-retracted"
+    case workingWingsIconsStrip = "working-wings-icons-strip"
     case workingRightWing = "working-right-wing"
     case workingBelowNotch = "working-below-notch"
     case workingMinimal = "working-minimal"
@@ -108,11 +111,15 @@ enum SnapshotScenario: String, CaseIterable {
         switch self {
         case .workingRightWing: return .leftBlocked
         case .workingBelowNotch, .workingMinimal: return .bothBlocked
-        case .idleWings, .workingWings: return .iconsToNotch
+        case .idleWings, .workingWings, .workingWingsIcons, .workingWingsRetracted: return .iconsToNotch
+        case .workingWingsIconsStrip: return .menusAndIconsToNotch
         case .menubarDot: return .narrowGap
         default: return .roomy
         }
     }
+
+    /// 손쉬운 사용으로 메뉴바 아이콘 위치를 잰 상태 (넓은 노치가 아이콘 구멍을 뚫음)
+    var measuresMenuBarItems: Bool { self == .workingWingsIcons || self == .workingWingsIconsStrip }
 }
 
 // MARK: - 가짜 메뉴바
@@ -128,6 +135,8 @@ struct SnapshotMenuBar {
         case bothBlocked
         /// 앱 메뉴는 짧고, 상태 아이콘이 노치 바로 옆부터 꽉 참 (넓은 노치가 아이콘을 덮는 모습)
         case iconsToNotch
+        /// 앱 메뉴와 상태 아이콘이 모두 노치 바로 옆까지 (넓은 노치 내용이 노치 아래 띠로)
+        case menusAndIconsToNotch
         /// 노치 없는 화면: 앱 메뉴와 상태 아이콘 사이가 좁음
         case narrowGap
     }
@@ -141,8 +150,15 @@ struct SnapshotMenuBar {
     static let menuFont = NSFont.systemFont(ofSize: 13)
     static let menuBoldFont = NSFont.boldSystemFont(ofSize: 13)
     static let clockText = "1월 15일 (목) 오전 10:44"
-    static let iconSize = CGSize(width: 16, height: 12)
+    static let iconSize = CGSize(width: 16, height: 14)
     static let iconStep: CGFloat = 28
+    /// 아이콘 사각형(손쉬운 사용으로 읽히는 크기) 좌우 여백
+    static let iconItemPadding: CGFloat = 6
+    /// 가짜 상태 아이콘 (SF Symbols)
+    static let iconSymbols = [
+        "wifi", "battery.75percent", "magnifyingglass", "switch.2", "speaker.wave.2.fill",
+        "moon.fill", "airplayaudio", "keyboard", "cloud.fill", "bell.fill",
+    ]
 
     let geometry: NotchGeometry
     let space: MenuBarSpace
@@ -153,7 +169,7 @@ struct SnapshotMenuBar {
     let canvasHeight: CGFloat
 
     @MainActor
-    init(style: IslandSnapshotRenderer.Style, crowding: Crowding) {
+    init(style: IslandSnapshotRenderer.Style, crowding: Crowding, measuresItems: Bool = false) {
         let hasNotch = style == .notch
         let width: CGFloat = hasNotch ? 1000 : 1100
         let menuBarHeight: CGFloat = hasNotch ? 33 : 24
@@ -179,7 +195,7 @@ struct SnapshotMenuBar {
         switch crowding {
         case .roomy, .iconsToNotch:
             menus = Self.layoutMenus(shortMenus, limit: .greatestFiniteMagnitude)
-        case .leftBlocked, .bothBlocked:
+        case .leftBlocked, .bothBlocked, .menusAndIconsToNotch:
             menus = Self.layoutMenus(longMenus, limit: notchMinX - 6)
         case .narrowGap:
             menus = Self.layoutMenus(longMenus, limit: width * 0.46)
@@ -193,7 +209,7 @@ struct SnapshotMenuBar {
         case .roomy: statusStart = hasNotch ? 760 : 800
         case .leftBlocked: statusStart = notchMaxX + 210
         case .bothBlocked: statusStart = notchMaxX + 38
-        case .iconsToNotch: statusStart = notchMaxX + 8
+        case .iconsToNotch, .menusAndIconsToNotch: statusStart = notchMaxX + 8
         case .narrowGap: statusStart = appMenuEnd + 92
         }
         clockX = width - 12 - Self.textWidth(Self.clockText, bold: false)
@@ -205,13 +221,19 @@ struct SnapshotMenuBar {
         }
         statusIconXs = icons
 
+        // 손쉬운 사용이 돌려주는 아이템 사각형: 아이콘 좌우 여백 포함, 메뉴바 높이 전체
+        let itemFrames = icons.map {
+            CGRect(x: $0 - Self.iconItemPadding, y: 0, width: Self.iconSize.width + Self.iconItemPadding * 2, height: menuBarHeight)
+        }
         space = MenuBarSpace(
             menuBarVisible: true,
             menuBarHeight: menuBarHeight,
             appMenuEnd: appMenuEnd,
             appMenuMeasured: true,
             statusStart: statusStart,
-            statusMeasured: true
+            statusMeasured: true,
+            itemFrames: measuresItems ? itemFrames : [],
+            itemsMeasured: measuresItems
         )
     }
 
@@ -263,11 +285,13 @@ private struct SnapshotMenuBarStrip: View {
                     .offset(x: item.x)
             }
 
-            ForEach(Array(bar.statusIconXs.enumerated()), id: \.offset) { _, x in
-                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .fill(Color.black.opacity(0.3))
-                    .frame(width: SnapshotMenuBar.iconSize.width, height: SnapshotMenuBar.iconSize.height)
-                    .offset(x: x, y: (height - SnapshotMenuBar.iconSize.height) / 2)
+            ForEach(Array(bar.statusIconXs.enumerated()), id: \.offset) { index, x in
+                let symbols = SnapshotMenuBar.iconSymbols
+                Image(systemName: symbols[index % symbols.count])
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(text)
+                    .frame(width: SnapshotMenuBar.iconSize.width, height: height)
+                    .offset(x: x)
             }
 
             Text(SnapshotMenuBar.clockText)
@@ -323,7 +347,7 @@ enum SnapshotStage {
         }
 
         let style: IslandSnapshotRenderer.Style = scene.forcesMenuBar ? .menuBar : style
-        let bar = SnapshotMenuBar(style: style, crowding: scene.crowding)
+        let bar = SnapshotMenuBar(style: style, crowding: scene.crowding, measuresItems: scene.measuresMenuBarItems)
         let screenID = bar.geometry.screenID
         presentation.updateScreens([bar.geometry])
         presentation.setActiveScreen(screenID)
@@ -333,9 +357,14 @@ enum SnapshotStage {
         switch scene {
         case .idle, .idleWings:
             break
-        case .working, .workingWings, .workingRightWing, .workingBelowNotch, .menubarWorking, .menubarDot:
+        case .working, .workingWings, .workingWingsIcons, .workingWingsIconsStrip, .workingRightWing, .workingBelowNotch, .menubarWorking, .menubarDot:
             world.apiServerEdits()
             world.apiServerRunsTests()
+        case .workingWingsRetracted:
+            // 아이콘 위치를 모를 때: 마우스를 올린 오른쪽 날개가 노치 안으로 들어간 모습
+            world.apiServerEdits()
+            world.apiServerRunsTests()
+            presentation.setRetractedWings(.right, on: screenID)
         case .workingMinimal:
             preferences.compactOverlapStyle = .minimal
             world.apiServerEdits()

@@ -50,12 +50,16 @@ struct IslandContainer: View {
             .opacity(viewState.contentVisible ? 1 : 0)
         }
         .frame(width: layout.size.width, height: layout.size.height, alignment: .topLeading)
-        .background(shape.fill(Palette.background))
+        .background {
+            IslandBackground(shape: shape, holes: layout.holes)
+        }
         .clipShape(shape)
-        .contentShape(shape)
+        // 아이콘 구멍 위는 클릭을 받지 않는다 (마우스 상태 갱신 전에 눌려도 펼쳐지지 않게)
+        .contentShape(IslandHitShape(shape: shape, cutouts: layout.passThroughRects))
         .opacity(invisible ? 0 : 1)
         .allowsHitTesting(!invisible)
-        .scaleEffect(hovered && !reduceMotion ? 1.02 : 1, anchor: .top)
+        // 아이콘 구멍이 있으면 커지는 효과를 주지 않는다 (구멍이 진짜 아이콘과 어긋나므로)
+        .scaleEffect(hovered && !reduceMotion && layout.holes.isEmpty ? 1.02 : 1, anchor: .top)
         .offset(x: layout.origin.x, y: layout.origin.y)
         .animation(IslandMotion.resize(reduceMotion: reduceMotion), value: layout)
         .animation(IslandMotion.hover, value: hovered)
@@ -111,6 +115,42 @@ struct IslandContainer: View {
                 state.contentVisible = true
             }
         }
+    }
+}
+
+/// 아일랜드 검은 배경. 메뉴바 아이콘 자리에 둥근 구멍을 뚫어 아래 진짜 아이콘이 날개 위에 보이게 한다.
+/// 구멍은 프레임 · 위치로 그려서 날개 폭이 바뀔 때 함께 애니메이션된다.
+struct IslandBackground: View {
+    let shape: IslandShape
+    let holes: [CGRect]
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            shape.fill(Palette.background)
+            ForEach(Array(holes.enumerated()), id: \.offset) { _, hole in
+                RoundedRectangle(cornerRadius: WingCutouts.cornerRadius, style: .continuous)
+                    .fill(Color.black)
+                    .frame(width: hole.width, height: hole.height)
+                    .offset(x: hole.minX, y: hole.minY)
+                    .blendMode(.destinationOut)
+            }
+        }
+        .compositingGroup()
+        .accessibilityHidden(true)
+    }
+}
+
+/// 클릭을 받는 모양: 아일랜드 모양에서 클릭 통과 영역(아이콘 구멍)을 뺀 것
+struct IslandHitShape: Shape {
+    let shape: IslandShape
+    let cutouts: [CGRect]
+
+    func path(in rect: CGRect) -> Path {
+        let base = shape.path(in: rect)
+        guard !cutouts.isEmpty else { return base }
+        var holes = Path()
+        for cutout in cutouts { holes.addRect(cutout) }
+        return base.subtracting(holes)
     }
 }
 

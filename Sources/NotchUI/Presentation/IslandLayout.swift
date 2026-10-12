@@ -5,8 +5,8 @@ import NotchCore
 
 /// 접힌 상태 표시 방식 (뷰가 그대로 따라 그린다)
 enum CompactVariant: Equatable {
-    /// 노치 양옆 날개. 한쪽 폭이 0 이면 그쪽 날개는 없고, 한쪽 날개에 `items` 를 모은다.
-    case wings(left: CGFloat, right: CGFloat, items: CompactItems)
+    /// 노치 양옆 날개 (폭 · 내용 자리 · 아이콘 구멍 · 비켜준 쪽)
+    case wings(WingsSpec)
     /// 노치 바로 아래로 내린 띠
     case strip
     /// 노치 아래 가장자리의 상태 색 선
@@ -50,6 +50,10 @@ struct IslandLayout: Equatable {
     var cardWidth: CGFloat = 0
     /// 클릭을 받는 영역 (프레임 기준). 목 옆 메뉴바 아이템 위에서는 클릭을 통과시키기 위해 목과 몸통을 따로 둔다.
     var hitRects: [CGRect] = []
+    /// 메뉴바 아이콘이 비쳐 보이도록 검은 배경에 뚫은 구멍 (프레임 기준)
+    var holes: [CGRect] = []
+    /// 클릭 · 마우스를 아래 메뉴바 아이템으로 통과시키는 영역 (프레임 기준, `hitRects` 보다 우선)
+    var passThroughRects: [CGRect] = []
 
     private var hasBody: Bool { shape.neckHeight < size.height - 0.5 }
 
@@ -141,7 +145,7 @@ enum CompactText {
 
 /// 접힌 상태가 놓일 자리
 enum CompactPlacement: Equatable {
-    case wings(left: CGFloat, right: CGFloat, items: CompactItems)
+    case wings(WingsSpec)
     case strip(width: CGFloat)
     case line
     case menuBarPill(centerX: CGFloat, width: CGFloat, items: CompactItems)
@@ -162,8 +166,11 @@ struct IslandLayoutEngine {
     let overlapStyle: CompactOverlapStyle
     /// 다른 노치 앱이 노치를 쓰는 중
     let notchConflict: Bool
+    /// 넓은 노치에서 마우스를 올려 비켜준 날개 (아이콘 위치를 모를 때만 쓴다)
+    var retracted: WingSides = []
 
     private typealias M = IslandMetrics
+    private typealias C = WingCutouts
 
     // MARK: 화면 정보 (화면 왼쪽 기준 상대 x)
 
@@ -189,6 +196,18 @@ struct IslandLayoutEngine {
 
     /// 넓은 노치(날개) 방식을 쓰는지. 다른 노치 앱이 있으면 노치 아래 방식으로 물러난다.
     var usesWings: Bool { geometry.hasNotch && notchStyle == .wings && !notchConflict }
+
+    /// 넓은 노치에서 메뉴바 아이콘 위치를 알아(손쉬운 사용) 날개에 아이콘 구멍을 뚫는지.
+    /// 모르면 날개가 아이콘을 덮고, 마우스를 올리면 비켜준다.
+    var cutsIconHoles: Bool { usesWings && (space?.itemsMeasured ?? false) }
+
+    /// 노치 오른쪽 · 왼쪽 메뉴바 아이템 (노치에서 가까운 순)
+    private var rightItems: [WingCutouts.Item] {
+        C.items(space?.itemFrames ?? [], side: .right, notchMinX: notchMinX, notchMaxX: notchMaxX)
+    }
+    private var leftItems: [WingCutouts.Item] {
+        C.items(space?.itemFrames ?? [], side: .left, notchMinX: notchMinX, notchMaxX: notchMaxX)
+    }
 
     /// 넓은 노치: 한쪽 날개가 쓸 수 있는 최대 폭.
     /// 메뉴바 아이템이 있어도 덮으므로 화면의 노치 옆 영역까지 쓰되,
@@ -238,20 +257,20 @@ struct IslandLayoutEngine {
             let dots = M.idleDotsWidth(count: count)
             let both = max(28, dots + M.wingPadding + 8)
             if free.left >= both, free.right >= both {
-                return .wings(left: both, right: both, items: .all)
+                return .wings(.plain(left: both, right: both, items: .all))
             }
             let single = dots + M.wingPadding + 6
-            if free.right >= single { return .wings(left: 0, right: single, items: []) }
-            if appMenuMeasured, free.left >= single { return .wings(left: single, right: 0, items: []) }
+            if free.right >= single { return .wings(.plain(left: 0, right: single, items: [])) }
+            if appMenuMeasured, free.left >= single { return .wings(.plain(left: single, right: 0, items: [])) }
 
         case let .session(metrics):
             let both = min(M.workingWing, free.left, free.right)
-            if both >= M.minBothWing { return .wings(left: both, right: both, items: .all) }
+            if both >= M.minBothWing { return .wings(.plain(left: both, right: both, items: .all)) }
             if let wing = singleWing(available: free.right, metrics) {
-                return .wings(left: 0, right: wing.width, items: wing.items)
+                return .wings(.plain(left: 0, right: wing.width, items: wing.items))
             }
             if appMenuMeasured, let wing = singleWing(available: free.left, metrics) {
-                return .wings(left: wing.width, right: 0, items: wing.items)
+                return .wings(.plain(left: wing.width, right: 0, items: wing.items))
             }
         }
 
@@ -261,18 +280,26 @@ struct IslandLayoutEngine {
         }
     }
 
-    /// 넓은 노치: 빈 공간 측정과 관계없이 양쪽 날개 (목업 기본형).
-    /// 폭은 내용에 맞추되 한쪽 `wideWingMax` 이하, 노치를 가운데 두도록 양쪽을 같게.
-    /// 왼쪽이 앞 앱 메뉴로 모자라면 왼쪽 날개를 없애고 내용을 오른쪽 날개에 모은다. 그것도 안 되면 nil (노치 아래 방식).
+    /// 넓은 노치: 빈 공간 측정과 관계없이 양쪽 날개 (목업 기본형). 그것도 안 되면 nil (노치 아래 방식).
+    /// - 아이콘 위치를 모르면 날개가 아이콘을 덮고, 마우스를 올린 쪽(`retracted`)은 비켜준다.
+    /// - 아이콘 위치를 알면 날개에 아이콘 구멍을 뚫고 내용은 구멍을 피해 둔다 (`iconWings`).
     private func wingsPlacement(_ content: CompactContent) -> CompactPlacement? {
+        guard let base = baseWings(content) else { return nil }
+        if cutsIconHoles { return .wings(iconWings(content, base: base)) }
+        return .wings(.plain(left: base.left, right: base.right, items: base.items, hidden: retracted))
+    }
+
+    /// 넓은 노치 기본 폭: 내용에 맞추되 한쪽 `wideWingMax` 이하, 노치를 가운데 두도록 양쪽을 같게.
+    /// 왼쪽이 앞 앱 메뉴로 모자라면 왼쪽 날개를 없애고 내용을 오른쪽 날개에 모은다.
+    private func baseWings(_ content: CompactContent) -> (left: CGFloat, right: CGFloat, items: CompactItems)? {
         let limit = wingLimit
         switch content {
         case let .idle(count):
             let dots = M.idleDotsWidth(count: count)
             let both = max(28, dots + M.wingPadding + 8)
-            if limit.left >= both, limit.right >= both { return .wings(left: both, right: both, items: .all) }
+            if limit.left >= both, limit.right >= both { return (both, both, .all) }
             let single = dots + M.wingPadding + 6
-            if limit.right >= single { return .wings(left: 0, right: single, items: []) }
+            if limit.right >= single { return (0, single, []) }
 
         case let .session(metrics):
             let pad = M.wingPadding
@@ -289,13 +316,131 @@ struct IslandLayoutEngine {
             // 프로젝트명은 줄일 수 있으니 왼쪽은 앞 몇 글자만 들어가도 된다
             let leftMin = pad + 14 + 6 + min(project, 40) + 4
             if limit.left >= leftMin, limit.right >= min(both, rightNeed) {
-                return .wings(left: min(both, limit.left), right: min(both, limit.right), items: .all)
+                return (min(both, limit.left), min(both, limit.right), .all)
             }
             if let wing = singleWing(available: limit.right, metrics) {
-                return .wings(left: 0, right: wing.width, items: wing.items)
+                return (0, wing.width, wing.items)
             }
         }
         return nil
+    }
+
+    /// 아이콘 구멍을 뚫는 넓은 노치.
+    /// - 검은 날개 폭은 기본 폭 그대로 두되, 걸친 아이콘은 반으로 자르지 않게 품도록 늘린다 (한쪽 최대 `iconWingMax`).
+    /// - 내용은 노치 ~ 첫 구멍 사이에 둔다. 한쪽이 28pt 미만이면 다른 쪽에 모으고, 양쪽 다 모자라면 노치 아래 띠에 둔다
+    ///   (이때도 검은 날개와 구멍은 그대로 둬서 넓은 노치 모양을 유지).
+    private func iconWings(
+        _ content: CompactContent,
+        base: (left: CGFloat, right: CGFloat, items: CompactItems)
+    ) -> WingsSpec {
+        let limit = wingLimit
+        let rightItems = rightItems
+        let leftItems = leftItems
+        let cap = (left: min(M.iconWingMax, limit.left), right: min(M.iconWingMax, limit.right))
+        // 노치 가장자리 ~ 첫 구멍 앞 (날개를 쓸 수 있는 폭 이내)
+        let room = (left: min(limit.left, C.room(leftItems)), right: min(limit.right, C.room(rightItems)))
+        let minRoom = M.wingContentMinRoom
+
+        func fitted(_ width: CGFloat, _ side: WingCutouts.Side) -> CGFloat {
+            guard width > 0 else { return 0 }
+            return side == .left
+                ? C.fitEdge(width, items: leftItems, cap: cap.left)
+                : C.fitEdge(width, items: rightItems, cap: cap.right)
+        }
+
+        var spec = WingsSpec(
+            left: fitted(base.left, .left),
+            right: fitted(base.right, .right),
+            items: base.items,
+            arrangement: .strip,
+            leftSpan: 0,
+            rightSpan: 0,
+            leftOuterPad: M.wingPadding,
+            rightOuterPad: M.wingPadding
+        )
+
+        /// 내용을 한쪽에 모은다 (그쪽 날개는 내용을 품을 만큼 넓힌다)
+        func single(_ side: WingCutouts.Side, width: CGFloat, items: CompactItems) {
+            spec.items = items
+            switch side {
+            case .left:
+                spec.arrangement = .left
+                spec.left = max(fitted(max(base.left, width), .left), width)
+                spec.leftSpan = width
+            case .right:
+                spec.arrangement = .right
+                spec.right = max(fitted(max(base.right, width), .right), width)
+                spec.rightSpan = width
+            }
+        }
+
+        switch content {
+        case let .idle(count):
+            let dots = M.idleDotsWidth(count: count)
+            let singleWidth = dots + M.wingPadding + 6
+            // 양쪽: 왼쪽엔 작은 점, 오른쪽엔 세션 점
+            if base.left > 0, base.right > 0, room.left >= minRoom, room.right >= max(minRoom, dots + 4 + 6) {
+                spec.arrangement = .split
+            } else {
+                let order: [WingCutouts.Side] = room.left >= room.right ? [.left, .right] : [.right, .left]
+                if let side = order.first(where: { (side: WingCutouts.Side) in
+                    side == .left ? room.left >= singleWidth : room.right >= singleWidth
+                }) {
+                    single(side, width: singleWidth, items: [])
+                }
+            }
+
+        case let .session(metrics):
+            // 양쪽: 왼쪽 상태(+ 프로젝트) · 오른쪽 (툴 +) `+N −M`
+            let leftMin: CGFloat = 4 + 14 + 6
+            let main = metrics.trailing > 0 ? metrics.trailing : min(metrics.shortTool, 40)
+            let rightMin = 4 + main + 6
+            if base.left > 0, base.right > 0,
+               room.left >= max(minRoom, leftMin), room.right >= max(minRoom, rightMin) {
+                spec.arrangement = .split
+                var items = CompactItems.all
+                if room.left < leftMin + 6 + min(metrics.project, 24) { items.remove(.project) }
+                if metrics.trailing > 0, room.right < rightMin + 6 + min(metrics.shortTool, 28) { items.remove(.tool) }
+                spec.items = items
+            } else {
+                let order: [WingCutouts.Side] = room.left >= room.right ? [.left, .right] : [.right, .left]
+                for side in order {
+                    let available = side == .left ? room.left : room.right
+                    guard available >= minRoom, let wing = singleWing(available: available, metrics) else { continue }
+                    single(side, width: wing.width, items: wing.items)
+                    break
+                }
+            }
+        }
+
+        // 내용 자리: 양쪽이면 노치 ~ 첫 구멍(또는 날개 끝)
+        if spec.arrangement == .split {
+            spec.leftSpan = min(spec.left, room.left)
+            spec.rightSpan = min(spec.right, room.right)
+        }
+        if spec.leftSpan > 0, spec.leftSpan < spec.left - 0.5 { spec.leftOuterPad = 4 }
+        if spec.rightSpan > 0, spec.rightSpan < spec.right - 0.5 { spec.rightOuterPad = 4 }
+
+        let band = spec.arrangement == .strip ? neckHeight : geometry.headerHeight
+        spec.holes = C.holes(leftItems, side: .left, wing: spec.left, bandHeight: band, notchMinX: notchMinX, notchMaxX: notchMaxX)
+            + C.holes(rightItems, side: .right, wing: spec.right, bandHeight: band, notchMinX: notchMinX, notchMaxX: notchMaxX)
+        return spec
+    }
+
+    /// 넓은 노치에서 마우스를 올리면 비켜줄 날개 자리 (패널 기준).
+    /// 아이콘 위치를 몰라 날개가 아이콘을 덮을 때만 있다 (아이콘 구멍을 쓰면 비켜줄 필요 없음).
+    func retractBands(for content: CompactContent) -> WingBands {
+        guard usesWings, !cutsIconHoles, case let .wings(spec) = compactPlacement(for: content), spec.arrangement != .strip
+        else { return .none }
+        let ear: CGFloat = 6
+        var bands = WingBands()
+        if spec.left > 0 {
+            bands.left = CGRect(x: notchMinX - spec.left - ear, y: 0, width: spec.left + ear, height: neckHeight)
+        }
+        if spec.right > 0 {
+            bands.right = CGRect(x: notchMaxX, y: 0, width: spec.right + ear, height: neckHeight)
+        }
+        return bands
     }
 
     /// 날개 하나에 모을 때 폭과 요소 (프로젝트명 → 툴 이름 순으로 생략)
@@ -400,21 +545,50 @@ struct IslandLayoutEngine {
         if case .idle = content { isIdle = true } else { isIdle = false }
 
         switch placement {
-        case let .wings(left, right, items):
-            let height = geometry.headerHeight
+        case let .wings(spec):
+            // 비켜준 쪽은 폭 0 (내용은 뷰에서 숨김)
+            let left = spec.visibleLeft
+            let right = spec.visibleRight
             let earL: CGFloat = left > 0 ? 6 : 0
             let earR: CGFloat = right > 0 ? 6 : 0
             let width = earL + left + notchWidth + right + earR
-            var layout = IslandLayout(
-                size: CGSize(width: width, height: height),
-                origin: CGPoint(x: notchMinX - left - earL, y: 0),
-                shape: IslandShapeSpec(
-                    neckLeft: earL, neckRight: earR, neckHeight: height,
-                    leftEar: earL, rightEar: earR, bottomRadius: isIdle ? 10 : 12
-                ),
-                compact: .wings(left: left, right: right, items: items)
-            )
-            layout.hitRects = [CGRect(x: earL, y: 0, width: left + notchWidth + right, height: height)]
+            let originX = notchMinX - left - earL
+            let band: CGFloat
+            var layout: IslandLayout
+            if spec.arrangement == .strip {
+                // 검은 날개(목)는 그대로 두고 노치 폭만큼 아래로 띠를 내린다 (몸통이 목보다 좁은 모양)
+                band = neckHeight
+                let height = band + M.stripHeight
+                layout = IslandLayout(
+                    size: CGSize(width: width, height: height),
+                    origin: CGPoint(x: originX, y: 0),
+                    shape: IslandShapeSpec(
+                        neckLeft: earL, neckRight: earR, neckHeight: band,
+                        bodyLeft: earL + left, bodyRight: earR + right,
+                        leftEar: earL, rightEar: earR,
+                        bodyTopRadius: 6, shoulderRadius: 12, bottomRadius: M.stripHeight / 2
+                    ),
+                    compact: .wings(spec)
+                )
+                layout.hitRects = [
+                    CGRect(x: earL, y: 0, width: left + notchWidth + right, height: band),
+                    CGRect(x: earL + left, y: band, width: notchWidth, height: M.stripHeight),
+                ]
+            } else {
+                band = geometry.headerHeight
+                layout = IslandLayout(
+                    size: CGSize(width: width, height: band),
+                    origin: CGPoint(x: originX, y: 0),
+                    shape: IslandShapeSpec(
+                        neckLeft: earL, neckRight: earR, neckHeight: band,
+                        leftEar: earL, rightEar: earR, bottomRadius: isIdle ? 10 : 12
+                    ),
+                    compact: .wings(spec)
+                )
+                layout.hitRects = [CGRect(x: earL, y: 0, width: left + notchWidth + right, height: band)]
+            }
+            layout.holes = spec.holes.map { $0.offsetBy(dx: -originX, dy: 0) }
+            layout.passThroughRects = C.passThrough(layout.holes, bandHeight: band)
             return layout
 
         case let .strip(width):
@@ -510,8 +684,18 @@ struct IslandLayoutEngine {
     }
 
     private func notchCard(preferredWidth: CGFloat, radius: CGFloat, bodyHeight: (CGFloat) -> CGFloat) -> IslandLayout {
-        // 넓은 노치면 접힌 날개처럼 목(메뉴바 높이)도 메뉴바 아이템 위로 넓힌다
-        let free = usesWings ? wingLimit : notchFree
+        // 넓은 노치면 접힌 날개처럼 목(메뉴바 높이)도 메뉴바 아이템 위로 넓힌다.
+        // 아이콘 위치를 알면 목은 아이콘 앞에서 멈춘다 (카드 상단 행이 아이콘을 덮지 않게)
+        let free: (left: CGFloat, right: CGFloat)
+        if cutsIconHoles {
+            let limit = wingLimit
+            free = (
+                min(limit.left, max(0, C.room(leftItems) - 4)),
+                min(limit.right, max(0, C.room(rightItems) - 4))
+            )
+        } else {
+            free = usesWings ? wingLimit : notchFree
+        }
         let cardWidth = max(preferredWidth, notchWidth + 80)
         let neck = neckHeight
         let allowed = min(free.left, free.right)
