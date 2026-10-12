@@ -31,6 +31,15 @@ public enum ExternalDisplayStyle: String, CaseIterable, Codable, Sendable {
     case hidden
 }
 
+/// 노치 화면(맥북 내장)에서 접힌 아일랜드를 그리는 방식
+public enum NotchStyle: String, CaseIterable, Codable, Sendable {
+    /// 카메라(노치)를 가운데 두고 양옆 메뉴바 자리를 날개로 사용.
+    /// 아래에 있는 메뉴바 아이콘 · 메뉴는 덮되, 마우스를 가져가면 그쪽 날개가 노치 안으로 들어가 비켜준다.
+    case wings
+    /// 노치 바로 아래로 띠를 내려 표시 (메뉴바를 전혀 가리지 않음)
+    case belowNotch
+}
+
 /// 노치 양옆이 메뉴바 아이템으로 막혔을 때 접힌 아일랜드 표시 방식
 public enum CompactOverlapStyle: String, CaseIterable, Codable, Sendable {
     /// 노치 바로 아래로 띠를 내려 표시
@@ -56,6 +65,7 @@ public final class AppPreferences {
         static let externalDisplayStyle = "externalDisplayStyle"
         static let compactOverlapStyle = "compactOverlapStyle"
         static let checksForUpdates = "checksForUpdates"
+        static let notchStyle = "notchStyle"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -108,6 +118,11 @@ public final class AppPreferences {
         didSet { defaults.set(externalDisplayStyle.rawValue, forKey: Key.externalDisplayStyle) }
     }
 
+    /// 노치 화면 표시 방식 (날개 / 노치 아래)
+    public var notchStyle: NotchStyle {
+        didSet { defaults.set(notchStyle.rawValue, forKey: Key.notchStyle) }
+    }
+
     public var compactOverlapStyle: CompactOverlapStyle {
         didSet { defaults.set(compactOverlapStyle.rawValue, forKey: Key.compactOverlapStyle) }
     }
@@ -129,6 +144,7 @@ public final class AppPreferences {
         staleSessionTimeout = defaults.object(forKey: Key.staleSessionTimeout) as? Double ?? 2 * 60 * 60
         passthroughWhenTerminalFrontmost = defaults.object(forKey: Key.passthroughWhenTerminalFrontmost) as? Bool ?? true
         externalDisplayStyle = defaults.string(forKey: Key.externalDisplayStyle).flatMap(ExternalDisplayStyle.init(rawValue:)) ?? .inMenuBar
+        notchStyle = defaults.string(forKey: Key.notchStyle).flatMap(NotchStyle.init(rawValue:)) ?? .wings
         compactOverlapStyle = defaults.string(forKey: Key.compactOverlapStyle).flatMap(CompactOverlapStyle.init(rawValue:)) ?? .belowNotch
         checksForUpdates = defaults.object(forKey: Key.checksForUpdates) as? Bool ?? true
     }
