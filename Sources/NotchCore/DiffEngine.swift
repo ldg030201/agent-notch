@@ -42,6 +42,12 @@ public enum DiffEngine {
                 return single(path: path, parsed: parseHunks(hunks), isNewFile: false)
             }
             guard let old = input["old_string"]?.stringValue, let new = input["new_string"]?.stringValue else { return nil }
+            let edit = TextEdit(old: old, new: new, replaceAll: input.bool("replace_all") == true || response.bool("replaceAll") == true)
+            // 원본이 있으면 실제로 바꾼 결과와 비교 (replace_all 은 바뀐 곳이 여러 군데)
+            if edit.replaceAll, let original = response["originalFile"]?.stringValue,
+               let parsed = diffApplying([edit], to: original) {
+                return single(path: path, parsed: parsed, isNewFile: false)
+            }
             return single(path: path, parsed: diffTexts(old: old, new: new), isNewFile: false)
 
         case "MultiEdit":
@@ -49,10 +55,17 @@ public enum DiffEngine {
             if let hunks = nonEmptyHunks(response["structuredPatch"]) {
                 return single(path: path, parsed: parseHunks(hunks), isNewFile: false)
             }
+            let edits = (input["edits"]?.arrayValue ?? []).compactMap { edit -> TextEdit? in
+                guard let old = edit["old_string"]?.stringValue, let new = edit["new_string"]?.stringValue else { return nil }
+                return TextEdit(old: old, new: new, replaceAll: edit["replace_all"]?.boolValue == true)
+            }
+            if edits.contains(where: \.replaceAll), let original = response["originalFile"]?.stringValue,
+               let parsed = diffApplying(edits, to: original) {
+                return single(path: path, parsed: parsed, isNewFile: false)
+            }
             var total = ParsedDiff()
-            for edit in input["edits"]?.arrayValue ?? [] {
-                guard let old = edit["old_string"]?.stringValue, let new = edit["new_string"]?.stringValue else { continue }
-                total.merge(diffTexts(old: old, new: new))
+            for edit in edits {
+                total.merge(diffTexts(old: edit.old, new: edit.new))
             }
             return single(path: path, parsed: total, isNewFile: false)
 
@@ -64,7 +77,7 @@ public enum DiffEngine {
             }
             let content = input["content"]?.stringValue ?? ""
             if let original = response["originalFile"]?.stringValue {
-                return single(path: path, parsed: diffTexts(old: original, new: content), isNewFile: false)
+                return single(path: path, parsed: diffTexts(old: original, new: content, wholeFile: true), isNewFile: false)
             }
             guard input["content"] != nil else { return nil }
             // 새 파일 (원본 정보 없음 → 전부 추가로 본다)
@@ -207,17 +220,16 @@ public enum DiffEngine {
             var cursor: Int?
             if let text = hunk.stringValue {
                 lines = []
-                for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+                for line in TextUtils.splitLines(text) {
                     if line.hasPrefix("@@") {
                         cursor = cursor ?? newStart(fromHeader: line)
                     } else if !line.hasPrefix("+++"), !line.hasPrefix("---") {
                         lines.append(line)
                     }
                 }
-                if lines.last?.isEmpty == true { lines.removeLast() }
             } else {
                 lines = (hunk["lines"]?.arrayValue ?? []).compactMap { $0.stringValue.map { Substring($0) } }
-                cursor = hunk["newStart"]?.intValue
+                cursor = hunk["newStart"]?.intValue.flatMap(saneLineNumber)
             }
 
             for line in lines {
@@ -246,13 +258,19 @@ public enum DiffEngine {
     private static func newStart(fromHeader header: Substring) -> Int? {
         guard let plus = header.firstIndex(of: "+") else { return nil }
         let digits = header[header.index(after: plus)...].prefix(while: \.isNumber)
-        return Int(digits)
+        return Int(digits).flatMap(saneLineNumber)
+    }
+
+    /// 줄 번호로 쓸 수 있는 값만 (음수 · 비정상적으로 큰 값은 버린다 → 이후 `+ 1` 이 넘치지 않는다)
+    private static func saneLineNumber(_ value: Int) -> Int? {
+        (0...Int(Int32.max)).contains(value) ? value : nil
     }
 
     // MARK: - 텍스트 diff
 
-    /// 두 텍스트의 줄 단위 diff (CollectionDifference)
-    static func diffTexts(old: String, new: String) -> ParsedDiff {
+    /// 두 텍스트의 줄 단위 diff (CollectionDifference).
+    /// `wholeFile` 이면 두 텍스트가 파일 전체라서 첫 변경 줄 번호(`startLine`)도 알 수 있다.
+    static func diffTexts(old: String, new: String, wholeFile: Bool = false) -> ParsedDiff {
         var result = ParsedDiff()
         guard old != new else { return result }
         let tooLarge = old.utf8.count > maxTextBytes || new.utf8.count > maxTextBytes
@@ -274,6 +292,7 @@ public enum DiffEngine {
             // 큰 파일: 줄 수만 (근사치)
             result.removed = oldMiddle.count
             result.added = newMiddle.count
+            if wholeFile, result.added + result.removed > 0 { result.startLine = prefix + 1 }
             return result
         }
 
@@ -294,6 +313,9 @@ public enum DiffEngine {
         var j = 0
         while i < oldMiddle.count || j < newMiddle.count {
             if result.preview.count >= DiffSnippet.maxStoredLines { break }
+            let changed = (i < oldMiddle.count && removedOffsets.contains(i))
+                || (j < newMiddle.count && insertedOffsets.contains(j))
+            if wholeFile, changed, result.startLine == nil { result.startLine = prefix + j + 1 }
             if i < oldMiddle.count, removedOffsets.contains(i) {
                 result.appendPreview(.removed, oldMiddle[i])
                 i += 1
@@ -306,5 +328,54 @@ public enum DiffEngine {
             }
         }
         return result
+    }
+
+    // MARK: - 편집 다시 적용 (replace_all)
+
+    /// Edit/MultiEdit 한 건 (old → new, replace_all 이면 모든 곳)
+    struct TextEdit {
+        var old: String
+        var new: String
+        var replaceAll: Bool
+    }
+
+    /// 원본 파일에 편집을 순서대로 적용한 결과와 원본을 비교한다. 적용할 수 없으면(못 찾음) nil.
+    /// 원본이 커서 정밀 diff 를 못 하면 (바뀐 곳 수 × 한 곳의 diff) 로 줄 수를 어림한다.
+    static func diffApplying(_ edits: [TextEdit], to original: String) -> ParsedDiff? {
+        guard !edits.isEmpty, !edits.contains(where: { $0.old.isEmpty }) else { return nil }
+        if original.utf8.count > maxTextBytes || TextUtils.countLines(original) > maxDiffedLines {
+            var total = ParsedDiff()
+            for edit in edits {
+                let count = edit.replaceAll ? occurrences(of: edit.old, in: original) : 1
+                guard count > 0 else { return nil }
+                var one = diffTexts(old: edit.old, new: edit.new)
+                one.added *= count
+                one.removed *= count
+                total.merge(one)
+            }
+            return total
+        }
+        var updated = original
+        for edit in edits {
+            guard let range = updated.range(of: edit.old, options: .literal) else { return nil }
+            if edit.replaceAll {
+                updated = updated.replacingOccurrences(of: edit.old, with: edit.new, options: .literal)
+            } else {
+                updated.replaceSubrange(range, with: edit.new)
+            }
+        }
+        return diffTexts(old: original, new: updated, wholeFile: true)
+    }
+
+    /// 겹치지 않게 센 등장 횟수
+    static func occurrences(of needle: String, in haystack: String) -> Int {
+        guard !needle.isEmpty else { return 0 }
+        var count = 0
+        var searchStart = haystack.startIndex
+        while let found = haystack.range(of: needle, options: .literal, range: searchStart..<haystack.endIndex) {
+            count += 1
+            searchStart = found.upperBound
+        }
+        return count
     }
 }

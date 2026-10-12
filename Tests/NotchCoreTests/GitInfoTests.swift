@@ -62,6 +62,39 @@ import Testing
         #expect(GitInfo.branch(forDirectory: "\(root)/broken") == nil)
     }
 
+    /// FIFO 로 된 HEAD · .git 은 열다가 멈추지 않고 바로 nil (#5)
+    @Test(.timeLimit(.minutes(1))) func fifoDoesNotBlock() throws {
+        let root = try makeTempRoot()
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        try FileManager.default.createDirectory(atPath: "\(root)/repo/.git", withIntermediateDirectories: true)
+        #expect(mkfifo("\(root)/repo/.git/HEAD", 0o600) == 0)
+        try FileManager.default.createDirectory(atPath: "\(root)/proj/sub", withIntermediateDirectories: true)
+        #expect(mkfifo("\(root)/proj/.git", 0o600) == 0)
+
+        let start = Date()
+        #expect(GitInfo.branch(forDirectory: "\(root)/repo") == nil)
+        #expect(GitInfo.branch(forDirectory: "\(root)/proj/sub") == nil)
+        #expect(Date().timeIntervalSince(start) < 5)
+        // 일반 파일이 아니면 읽지 않는다
+        #expect(GitInfo.readSmallFile(atPath: "\(root)/repo/.git") == nil)
+        #expect(GitInfo.readSmallFile(atPath: "/dev/null") == nil)
+    }
+
+    /// 심볼릭 링크로 된 .git (· HEAD) 은 계속 따라간다
+    @Test func symlinkedGitDirectory() throws {
+        let root = try makeTempRoot()
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        try write("ref: refs/heads/linked\n", to: "\(root)/store/repo.git/HEAD")
+        try FileManager.default.createDirectory(atPath: "\(root)/repo", withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: "\(root)/repo/.git", withDestinationPath: "\(root)/store/repo.git")
+        #expect(GitInfo.branch(forDirectory: "\(root)/repo") == "linked")
+
+        try write("ref: refs/heads/main\n", to: "\(root)/real-head")
+        try FileManager.default.createDirectory(atPath: "\(root)/repo2/.git", withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: "\(root)/repo2/.git/HEAD", withDestinationPath: "\(root)/real-head")
+        #expect(GitInfo.branch(forDirectory: "\(root)/repo2") == "main")
+    }
+
     @Test func parseHead() {
         #expect(GitInfo.parseHead("ref: refs/heads/main") == "main")
         #expect(GitInfo.parseHead("ref: refs/remotes/origin/x") == "remotes/origin/x")

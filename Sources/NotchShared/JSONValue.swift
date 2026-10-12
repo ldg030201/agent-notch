@@ -75,9 +75,10 @@ public enum JSONValue: Codable, Hashable, Sendable {
         return nil
     }
 
+    /// 소수점 아래는 버린다. NaN · 무한대 · Int 범위 밖이면 nil (Int(Double) 트랩 방지)
     public var intValue: Int? {
-        if case .number(let value) = self, value.isFinite { return Int(value) }
-        return nil
+        guard case .number(let value) = self else { return nil }
+        return Int(exactly: value.rounded(.towardZero))
     }
 
     public var boolValue: Bool? {

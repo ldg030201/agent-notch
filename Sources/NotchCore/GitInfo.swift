@@ -60,10 +60,18 @@ public enum GitInfo {
         return String(sha.prefix(7))
     }
 
-    private static func readSmallFile(atPath path: String) -> String? {
-        guard let handle = FileHandle(forReadingAtPath: path) else { return nil }
-        defer { try? handle.close() }
-        guard let data = try? handle.read(upToCount: maxReadBytes) else { return nil }
+    /// 일반 파일만 앞부분 `maxReadBytes` 까지 읽는다 (심볼릭 링크는 따라감).
+    /// FIFO · 장치 파일은 열기만 해도 메인 스레드가 멈추거나 부작용이 있을 수 있어 먼저 stat 으로 거르고,
+    /// 확인과 열기 사이에 바뀌는 경우를 위해 논블로킹으로 열어 fstat 으로 한 번 더 확인한다.
+    static func readSmallFile(atPath path: String) -> String? {
+        var info = stat()
+        guard stat(path, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { return nil }
+        let fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC | O_NOCTTY)
+        guard fd >= 0 else { return nil }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
+              let data = try? handle.read(upToCount: maxReadBytes)
+        else { return nil }
         return String(data: data, encoding: .utf8)
     }
 }

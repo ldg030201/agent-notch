@@ -119,4 +119,26 @@ import NotchShared
         #expect(TextUtils.countLines("a\nb") == 2)
         #expect(TextUtils.splitLines("a\n\nb\n").count == 3)
     }
+
+    /// Int 범위 밖 숫자는 트랩 대신 nil (#13)
+    @Test func intValueRange() {
+        #expect(json(#"{"n":42.9}"#)["n"]?.intValue == 42)
+        #expect(json(#"{"n":-42.9}"#)["n"]?.intValue == -42)
+        #expect(json(#"{"n":1e18}"#)["n"]?.intValue == 1_000_000_000_000_000_000)
+        #expect(json(#"{"n":1e19}"#)["n"]?.intValue == nil)
+        #expect(json(#"{"n":-1e19}"#)["n"]?.intValue == nil)
+        #expect(json(#"{"n":9223372036854775807}"#)["n"]?.intValue == nil)
+        #expect(JSONValue.number(.nan).intValue == nil)
+        #expect(JSONValue.number(.infinity).intValue == nil)
+        #expect(JSONValue.string("1").intValue == nil)
+    }
+
+    @Test func revealInvisiblesKeepsShortWhitespace() {
+        #expect(TextUtils.revealInvisibles("a\tb    c", keepLineBreaks: true) == "a\tb    c")
+        #expect(TextUtils.revealInvisibles("a" + String(repeating: " ", count: 8) + "b", keepLineBreaks: false) == "a        b")
+        #expect(TextUtils.revealInvisibles("a" + String(repeating: "\t", count: 9) + "b", keepLineBreaks: false) == "a␣×9b")
+        #expect(TextUtils.revealInvisibles("a\nb", keepLineBreaks: false) == "a⏎b")
+        #expect(TextUtils.revealInvisibles("한글 경로/파일.ts", keepLineBreaks: false) == "한글 경로/파일.ts")
+        #expect(TextUtils.revealInvisibles("\u{1B}[31m", keepLineBreaks: false) == "\\u{1B}[31m")
+    }
 }

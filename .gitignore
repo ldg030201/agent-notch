@@ -35,3 +35,9 @@ captures/
 
 # Claude Code 로컬 설정
 .claude/settings.local.json
+
+# Claude Code 로컬 메모 / 수동 덤프 (프롬프트·코드 등 민감 정보가 섞일 수 있음)
+CLAUDE.local.md
+*.jsonl
+payloads/
+snapshots/
