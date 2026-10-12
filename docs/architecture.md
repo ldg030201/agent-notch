@@ -128,6 +128,57 @@ Claude Code (CLI · 데스크톱 앱)
 - 패널은 최대 크기로 고정해 두고(아일랜드가 커져도 창 크기를 애니메이션하지 않음), 마우스가 아일랜드 영역 밖이면
   `ignoresMouseEvents = true` 로 클릭을 아래 앱에 통과시킨다 (전역/로컬 mouseMoved 모니터).
 
+## 8-1. 메뉴바 · 다른 앱과의 겹침 처리
+
+노치 양옆 메뉴바는 다른 앱의 상태 아이콘(오른쪽)과 앞 앱의 메뉴(왼쪽)가 쓰는 자리다. 아일랜드는 **절대 이것들을 덮지 않는다.**
+
+### 빈 공간 측정 (`MenuBarSpaceMonitor`)
+
+- 화면마다 노치 왼쪽/오른쪽의 **빈 폭**을 계산한다.
+  - 오른쪽: `CGWindowListCopyWindowInfo(.optionOnScreenOnly)` 에서 메뉴바 높이 안에 있는 상태 아이템 창
+    (`kCGWindowLayer` 가 상태바 레벨, 소유 PID 가 우리 앱이 아님)의 가장 왼쪽 x 까지. 창 경계·레이어·PID 는 화면 기록 권한 없이 읽힌다.
+  - 왼쪽: 손쉬운 사용 권한이 있으면 앞 앱의 `AXMenuBar` 항목 위치로 정확히 계산.
+    권한이 없으면 **왼쪽은 사용 중이라고 가정**한다 (앱 메뉴를 가리는 것보다 안전).
+- 다시 계산하는 시점: 앞 앱 변경(`NSWorkspace.didActivateApplicationNotification`), 화면 구성 변경, 1초 주기(가벼운 폴링, 접힌 상태일 때만).
+- 여백 8pt 를 남긴다.
+
+### 접힌 상태 레이아웃 선택
+
+1. **양쪽 날개** — 양쪽 빈 폭이 모두 충분하면 (목업 기본형).
+2. **오른쪽 날개만** — 왼쪽이 막혔으면 상태 아이콘 · 프로젝트 · 툴 · `+N −M` 을 오른쪽 날개 하나에 모은다 (필요 없는 요소부터 생략: 프로젝트명 → 툴 이름).
+3. **노치 아래 띠** — 양쪽 다 부족하면 날개를 쓰지 않고, 노치 바로 아래로 22pt 높이의 띠를 내려 그 안에 표시한다
+   (메뉴바 아이템과는 겹치지 않고, 창 제목 표시줄 일부만 덮음. 마우스가 없으면 클릭 통과).
+4. **최소 표시** — 설정에서 고르면 띠 대신 노치 아래 가장자리에 상태 색 선(3pt)만 표시.
+
+설정 `CompactOverlapStyle`: `belowNotch`(기본) / `minimal`.
+노치 없는 화면의 알약은 메뉴바 아래에 뜨므로 이 계산이 필요 없다.
+
+### 펼친 상태
+
+- 펼친 상태(peek / permission / done / expanded)는 메뉴바 아래로 내려오는 형태라 메뉴바 아이템을 가리지 않는다.
+  다만 노치 높이 구간의 가로 폭이 날개보다 넓어지지 않도록, 펼친 아일랜드 윗부분(메뉴바 높이)은 노치 폭 + 허용된 날개 폭으로 제한하고
+  그 아래부터 넓어지는 모양으로 그린다.
+
+### 열린 메뉴 · 팝오버와 겹침
+
+- 다른 앱의 메뉴(드롭다운), 상태 아이템 팝오버, 컨트롤 센터 등이 열리면 (`CGWindowList` 에서 팝업 메뉴 레벨 이상의 창이
+  아일랜드 영역과 겹침) **일시적 펼침(peek/done)을 접고**, 아일랜드 영역과 겹치는 동안은 접힌 상태도 투명하게 숨긴다.
+  메뉴가 닫히면 원래 상태로 복귀.
+- 권한 요청은 숨기지 않고 **메뉴가 닫힐 때까지 펼침을 미룬다** (접힌 상태에서 주황 점만 표시).
+- 감시는 아일랜드가 보이는 동안 0.25초 주기 폴링 (CGWindowList 조회는 1ms 미만).
+- 우리 앱 메뉴(상태 아이템 메뉴)는 `NSMenu.didBeginTracking` / `didEndTracking` 으로 직접 감지.
+
+### 다른 노치 앱과 겹침
+
+- 노치 영역에 다른 앱의 오버레이 창(우리보다 높거나 같은 레벨, 노치 사각형과 교차)이 있으면 그 앱이 노치를 쓰는 중으로 보고
+  자동으로 **노치 아래 띠** 레이아웃으로 바꾼다. 설정 화면에 "다른 노치 앱 감지됨: <앱 이름>" 을 표시.
+
+### 우리 메뉴바 아이콘이 노치에 가려질 때
+
+- 메뉴바 아이콘이 많으면 우리 상태 아이템이 노치 뒤로 밀려 안 보일 수 있다. 그래도 모든 기능에 접근할 수 있게:
+  - 아일랜드 클릭 → 펼침 → 톱니바퀴로 설정.
+  - 전역 단축키 `⌃⌥⌘N` (Carbon `RegisterEventHotKey`, 권한 불필요) 로 펼치기/접기.
+
 ## 9. 보안 · 개인정보 원칙 (GitHub 공개 저장소)
 
 - 비밀 정보(API 키, 토큰, 개인 경로 등)를 코드·픽스처·로그에 넣지 않는다. 경로는 `homeDirectoryForCurrentUser` 로 계산.
@@ -135,18 +186,33 @@ Claude Code (CLI · 데스크톱 앱)
 - 소켓 디렉터리 0700, 소켓 0600, 연결 시 `getpeereid` 로 같은 사용자만 허용.
 - 프롬프트·코드·응답 내용을 디스크에 기록하지 않는다. 메모리에만 두고 오래된 세션은 정리한다.
   디버그 로그는 `os.Logger` + `privacy: .private`.
-- 네트워크 통신 없음 (분석/텔레메트리 없음).
+- 네트워크 통신은 **업데이트 확인 하나뿐** — 하루 한 번 GitHub 의 `docs/changelog.json` (raw) 을 받는다. 설정에서 끌 수 있다.
+  분석/텔레메트리 없음.
 - `~/.claude/settings.json` 수정 전 타임스탬프 백업(0600). AgentNotch 항목만 추가/제거하고 다른 훅(예: iTerm2 `cc-status`)은 보존.
 - 테스트 픽스처는 가짜 데이터만 사용 (`/Users/dev/projects/api-server` 같은 예시 경로).
 
-## 10. 배포
+## 10. 배포 · 업데이트 (dong-csu 방식)
 
-애플 개발자 계정 없이 배포하므로 **Homebrew formula (소스 빌드)** 방식을 쓴다.
+애플 개발자 계정 없이 배포하므로 **Homebrew formula (소스 빌드 + bottle)** 방식을 쓴다. 저장소 자체가 tap 이다.
+
+```bash
+brew tap ldg030201/agent-notch https://github.com/ldg030201/agent-notch && brew trust ldg030201/agent-notch \
+  && brew install -y agent-notch && cp -R "$(brew --prefix agent-notch)/AgentNotch.app" /Applications/ && open /Applications/AgentNotch.app
+```
 
 - cask 로 빌드된 .app 을 배포하면 quarantine 속성 때문에 공증되지 않은 앱이 Gatekeeper 에 막힌다.
-  formula 는 사용자 맥에서 직접 빌드하므로 quarantine 이 붙지 않는다 (Command Line Tools 필요).
-- `scripts/build-app.sh` 가 `swift build -c release` 후 `AgentNotch.app` 번들을 만들고 ad-hoc 서명(`codesign -s -`)한다.
-- 로그인 시 실행: `brew services start agent-notch` (LaunchAgent).
+  formula 는 사용자 맥에서 빌드(또는 CI 가 만든 bottle 을 설치)하므로 quarantine 이 붙지 않는다.
+- `Formula/agent-notch.rb` (저장소 루트), `.github/workflows/bottle.yml` 이 릴리스마다 macOS 판별 bottle 을 올리고 formula 에 기록.
+- `scripts/build.sh` 가 `.app` 번들을 만든다. 버전은 `Sources/AgentNotch/Version.swift` 의 `agentNotchVersion` 과
+  `Resources/Info.plist` 두 곳에 있고, 다르면 빌드 실패. `agent-notch --version` → `agent-notch 0.1.0`.
+- 서명: 자체 서명 인증서(`scripts/make-signing-cert.sh`)가 있으면 그걸로, 없으면 ad-hoc.
+  자동화(iTerm2 AppleScript) · 손쉬운 사용 권한은 서명 신원에 묶이므로, ad-hoc 이면 업데이트마다 권한을 다시 물을 수 있다.
+- `scripts/release.sh <버전>`: 버전 반영 → 빌드 검증 → 변경 내역 날짜 기록 → 태그 `v<버전>` → tarball sha256 → formula 갱신 → GitHub 릴리스.
+  **릴리스(버전 자리 결정 · 태그)는 사용자에게 먼저 묻고 진행한다.**
+- 업데이트 확인: 하루 한 번 `https://raw.githubusercontent.com/ldg030201/agent-notch/main/docs/changelog.json` 을 받아 비교
+  (날짜가 있는 항목만 "나간 버전"). 설정 "버전" 탭과 펼친 아일랜드 헤더에 새 버전 표시. 끄기 가능.
+- 업데이트 실행: 앱이 `brew upgrade agent-notch` 를 직접 실행(진행 로그 표시) → 사용자가 "다시 띄우기" 를 누르면
+  분리된 스크립트가 앱을 종료 · `/Applications` 사본 교체 · 재실행.
+- 로그인 시 실행: `SMAppService.mainApp` (시스템 설정의 로그인 항목과 항상 일치).
 - 훅 헬퍼는 앱이 "훅 설치" 시 `~/Library/Application Support/AgentNotch/bin/notch-hook` 으로 복사해 경로를 고정한다
-  (brew 업그레이드로 Cellar 경로가 바뀌어도 훅이 깨지지 않게).
-- ad-hoc 서명은 빌드마다 서명이 바뀌어서, 업그레이드 후 자동화(AppleScript) 권한을 다시 물을 수 있다.
+  (brew 업그레이드로 Cellar 경로가 바뀌어도 훅이 깨지지 않게). 업데이트 후 첫 실행 때 헬퍼가 다르면 다시 복사한다.
