@@ -61,6 +61,18 @@ final class PresentationController {
     static let shortcutSettleDelay: TimeInterval = 0.5
 
     @ObservationIgnored private var transientTask: Task<Void, Never>?
+
+    /// 접힌 상태 폭 안정화 (툴 이름 · `+N −M` 폭이 이벤트마다 바뀌어도 날개가 출렁이지 않게)
+    @ObservationIgnored private var compactHold = CompactMetricsHold()
+    /// 붙잡아 둔 폭을 줄일 때가 되면 올려서 레이아웃을 다시 계산하게 한다
+    private var compactHoldRevision = 0
+    @ObservationIgnored private var compactHoldTask: (task: Task<Void, Never>, deadline: TimeInterval)?
+    /// 피크 카드 본문 높이: 피크가 이어지는 동안엔 커지기만 한다 (diff 줄 수마다 카드가 출렁이지 않게)
+    @ObservationIgnored private var peekBodyHold: CGFloat = 0
+    /// 화면별 직전 접힌 날개 (아이콘이 조금 밀려도 날개 끝을 붙잡는 데 쓴다)
+    @ObservationIgnored private var lastWings: [ScreenID: WingsSpec] = [:]
+    /// 화면별 열린 카드의 목 자리 (카드가 열려 있는 동안 아이콘이 조금 밀려도 목 · 귀를 붙잡는 데 쓴다. 접히면 지운다)
+    @ObservationIgnored private var lastCardRoom: [ScreenID: CardNeckRoom] = [:]
     @ObservationIgnored private var lastSignalSeq: Int?
     @ObservationIgnored private var observing = false
     /// stop/start 를 반복해도 관찰 루프가 겹치지 않게 하는 세대 번호
@@ -322,7 +334,9 @@ final class PresentationController {
             notchStyle: preferences.notchStyle,
             overlapStyle: preferences.compactOverlapStyle,
             notchConflict: notchConflicts[id] != nil,
-            retracted: retractedWings[id] ?? []
+            retracted: retractedWings[id] ?? [],
+            previousWings: lastWings[id],
+            previousCardRoom: lastCardRoom[id]
         )
     }
 
@@ -336,16 +350,46 @@ final class PresentationController {
     /// 접힌 상태 내용 (레이아웃 선택용 폭 측정)
     func compactContent(for mode: IslandMode) -> CompactContent {
         if mode == .working, let session = compactSession {
-            return .session(CompactMetrics(session: session))
+            _ = compactHoldRevision
+            let now = ProcessInfo.processInfo.systemUptime
+            let stable = compactHold.stabilize(CompactMetrics(session: session), key: session.id, now: now)
+            scheduleCompactHoldRelease(at: compactHold.releaseAt, now: now)
+            return .session(stable)
         }
         return .idle(count: store.rankedSessions.count)
+    }
+
+    /// 붙잡아 둔 폭을 줄일 수 있는 시각에 레이아웃을 다시 계산하게 한다
+    private func scheduleCompactHoldRelease(at deadline: TimeInterval?, now: TimeInterval) {
+        guard let deadline else { return }
+        if let pending = compactHoldTask, pending.deadline <= deadline + 0.01 { return }
+        compactHoldTask?.task.cancel()
+        let delay = max(0.05, deadline - now + 0.02)
+        let task = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled, let self else { return }
+            self.compactHoldTask = nil
+            self.compactHoldRevision &+= 1
+        }
+        compactHoldTask = (task, deadline)
     }
 
     func layout(for id: ScreenID, mode: IslandMode) -> IslandLayout {
         guard let engine = layoutEngine(for: id) else {
             return IslandLayout(size: .zero, origin: .zero, shape: IslandShapeSpec(), compact: nil)
         }
-        return layout(for: mode, engine: engine)
+        let result = layout(for: mode, engine: engine)
+        // 카드가 열려 있는 동안만 목 자리를 기억한다 (새로 열 때는 지금 메뉴바로 다시 잰다)
+        lastCardRoom[id] = mode.isOpen ? engine.cardNeckRoom : nil
+        if mode == .idle || mode == .working {
+            // 날개 없이 그렸으면(노치 아래 띠 · 선 · 알약) 그것도 기억한다 (날개로 다시 바꿀 때도 이력을 적용하게)
+            if case let .wings(spec)? = result.compact {
+                lastWings[id] = spec
+            } else {
+                lastWings[id] = .withoutWings
+            }
+        }
+        return result
     }
 
     func layout(for mode: IslandMode, engine: IslandLayoutEngine) -> IslandLayout {
@@ -367,8 +411,11 @@ final class PresentationController {
         case let .peek(sessionID, diff):
             let rows = DiffPresentation.visibleLines(diff).count
             let hasText = streamingLine(for: sessionID) != nil
-            let body = M.bodyTop + M.lineHeight + 6 + M.diffRowsHeight(count: rows)
+            let measured = M.bodyTop + M.lineHeight + 6 + M.diffRowsHeight(count: rows)
                 + (hasText ? 8 + M.lineHeight : 0) + M.bodyBottom
+            // 피크가 이어지는 동안엔 줄이지 않는다 (내용은 위쪽 정렬이라 아래가 조금 빈다)
+            let body = max(measured, peekBodyHold)
+            peekBodyHold = body
             return card(M.peekWidth, radius: 22) { _ in body }
 
         case let .permission(request, _):
@@ -587,26 +634,37 @@ final class PresentationController {
     }
 
     private func showTransient(_ value: Transient, duration: Double) {
+        if case .peek = value, case .peek? = transient {} else { peekBodyHold = 0 }
         transient = value
         transientTask?.cancel()
         let seconds = max(0.5, duration)
         transientTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(seconds))
             guard !Task.isCancelled, let self, self.transient == value else { return }
+            self.peekBodyHold = 0
             self.transient = nil
         }
+    }
+
+    /// 다른 표시 상태가 기억한 배치 이력(직전 접힌 날개 · 열린 카드 목 자리)을 가져온다
+    /// (스냅숏 전환 시트용: 전 상태를 그린 앱이 후 상태를 계산하는 것과 같게)
+    func adoptLayoutHistory(from other: PresentationController) {
+        lastWings = other.lastWings
+        lastCardRoom = other.lastCardRoom
     }
 
     /// 타이머 없이 일시 펼침을 띄운다 (스냅숏 렌더링용)
     func setTransientForSnapshot(_ value: Transient) {
         transientTask?.cancel()
         transientTask = nil
+        peekBodyHold = 0
         transient = value
     }
 
     private func clearTransient() {
         transientTask?.cancel()
         transientTask = nil
+        peekBodyHold = 0
         if transient != nil { transient = nil }
     }
 

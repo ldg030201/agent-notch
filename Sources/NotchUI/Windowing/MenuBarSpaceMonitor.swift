@@ -385,6 +385,46 @@ enum MenuBarSpaceBuilder {
         return spaces
     }
 
+    /// 아이템 위치 · 메뉴 끝 · 상태 아이템 시작이 이보다 적게 움직이면 이전 값을 유지한다
+    static let jitterTolerance: CGFloat = 2
+
+    /// 측정 흔들림 거르기.
+    /// CPU% 처럼 폭이 1초마다 바뀌는 메뉴바 아이템이 노치 쪽 아이콘을 1~2pt 밀거나 측정 오차가 있을 때마다
+    /// 날개 끝 · 아이콘 구멍 · 날개 배치가 다시 계산돼 접힌 아일랜드가 출렁이지 않게,
+    /// 작은 변화는 이전 값을 그대로 둔다 (구멍은 아이콘보다 좌우 3pt 넓어서 2pt 어긋나도 아이콘을 가리지 않는다).
+    ///
+    /// - holdsMenuShrink: 앞 앱이 바뀐 직후 첫 읽기. 앱 메뉴가 짧아진 값(빈 곳이 넓어짐)은 아직 받지 않는다.
+    ///   활성화 직후엔 메뉴가 덜 만들어진 채 읽힐 수 있어서, 그대로 받으면 0.5초 안에 날개가 넓어졌다 다시 좁아진다.
+    ///   길어진 값(메뉴를 덮지 않게 날개를 줄여야 함)은 바로 받고, 짧아진 값은 450ms 뒤 확인 읽기에서 받는다.
+    ///   (짧아진 값을 붙잡는 동안엔 날개가 실제보다 좁을 뿐 메뉴를 덮지 않는다)
+    static func stabilized(
+        _ built: [ScreenID: MenuBarSpace],
+        previous: [ScreenID: MenuBarSpace],
+        holdsMenuShrink: Bool = false
+    ) -> [ScreenID: MenuBarSpace] {
+        let tolerance = jitterTolerance
+        func near(_ a: CGFloat, _ b: CGFloat) -> Bool { abs(a - b) < tolerance }
+        var result = built
+        for (id, space) in built {
+            guard let old = previous[id], var next = result[id] else { continue }
+            if old.appMenuMeasured, space.appMenuMeasured,
+               near(old.appMenuEnd, space.appMenuEnd) || (holdsMenuShrink && space.appMenuEnd < old.appMenuEnd) {
+                next.appMenuEnd = old.appMenuEnd
+            }
+            if old.statusMeasured, space.statusMeasured, near(old.statusStart, space.statusStart) {
+                next.statusStart = old.statusStart
+            }
+            if old.itemsMeasured, space.itemsMeasured, old.itemFrames.count == space.itemFrames.count,
+               zip(old.itemFrames, space.itemFrames).allSatisfy({ a, b in
+                   near(a.minX, b.minX) && near(a.maxX, b.maxX) && near(a.minY, b.minY) && near(a.maxY, b.maxY)
+               }) {
+                next.itemFrames = old.itemFrames
+            }
+            result[id] = next
+        }
+        return result
+    }
+
     /// 화면별 메뉴바 항목 사각형 (패널 기준). 상태 아이템을 하나도 못 읽은 화면은 nil.
     /// - 그 화면에서 읽은 값을 그대로 쓰고, 못 읽었으면 가장 많이 읽힌 화면의 값을 옮겨 쓴다
     ///   (상태 아이템은 오른쪽 정렬, 앞 앱 메뉴는 왼쪽 정렬)
@@ -499,6 +539,8 @@ final class MenuBarSpaceMonitor {
     private var pendingRecheck: Set<pid_t> = []
     private var lastAppMenuRead = Date.distantPast
     private var lastStatusRead = Date.distantPast
+    /// 직전 상태 아이템 읽기가 (이전엔 아이템이 있었는데) 비었는지. 한 번 빈 결과는 일시 실패로 보고 무시한다
+    private var skippedEmptyStatus = false
     /// 화면별로 마지막에 기록한 아이템 수 (바뀔 때만 로그)
     private var loggedItemCounts: [ScreenID: Int] = [:]
 
@@ -508,12 +550,16 @@ final class MenuBarSpaceMonitor {
     private var refreshInFlight = false
     private var refreshQueued = false
     private var queuedForceAX = false
+    /// 앞 앱이 바뀐 직후 이 시각 전에 시작한 읽기는 짧아진 앱 메뉴를 아직 받지 않는다 (`MenuBarSpaceBuilder.stabilized`)
+    private var menuShrinkHoldUntil = Date.distantPast
     private var tokens: [(NotificationCenter, NSObjectProtocol)] = []
     private var running = false
 
     private static let pollInterval: Double = 1
     private static let appMenuInterval: TimeInterval = 5
     private static let statusInterval: TimeInterval = 5
+    /// 앞 앱이 바뀐 뒤 메뉴를 다시 읽어 확인하는 지연 (메뉴는 활성화 직후 갱신된다)
+    private static let menuConfirmDelay: TimeInterval = 0.45
     /// 실행 직후엔 상태 아이템이 아직 없을 수 있어 조금 뒤에 다시 찾는다
     private static let launchRecheckDelay: Duration = .seconds(3)
     private let logger = Logger(subsystem: "com.ldg.agent-notch", category: "MenuBarSpace")
@@ -569,10 +615,12 @@ final class MenuBarSpaceMonitor {
     /// 앞 앱이 바뀌면 메뉴가 바뀐다 (macOS 27 은 메뉴 길이에 따라 상태 아이콘 접힘도 바뀐다).
     /// 메뉴는 활성화 직후 갱신되므로 조금 뒤에 한 번 더 읽는다.
     private func frontAppChanged() {
+        // 첫 읽기(와 그사이 1초 주기 읽기)는 덜 만들어진 메뉴일 수 있어 짧아진 메뉴는 확인 읽기(450ms 뒤)에서 받는다
+        menuShrinkHoldUntil = Date().addingTimeInterval(Self.menuConfirmDelay - 0.05)
         refresh(forceAX: true)
         activationTask?.cancel()
         activationTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(450))
+            try? await Task.sleep(for: .seconds(Self.menuConfirmDelay))
             guard !Task.isCancelled else { return }
             self?.refresh(forceAX: true)
         }
@@ -697,20 +745,29 @@ final class MenuBarSpaceMonitor {
                 lastAppMenuRead = date
             }
             if let status {
-                readings.status = status.status
-                readings.agentExtras = status.extras
-                readings.agentItems = status.items
+                let empty = status.status.isEmpty && status.extras.isEmpty
+                let hadItems = !readings.status.isEmpty || !readings.agentExtras.isEmpty
+                if empty, hadItems, !skippedEmptyStatus {
+                    // 손쉬운 사용 응답 시간 초과 등으로 한 번 비면 이전 값을 유지한다
+                    // (그대로 받으면 아이콘 구멍 날개 → 덮는 날개로 레이아웃이 통째로 바뀌었다 돌아온다). 다음에도 비면 받아들인다
+                    skippedEmptyStatus = true
+                    logger.debug("상태 아이템 읽기 결과가 비어 이전 값 유지")
+                } else {
+                    skippedEmptyStatus = false
+                    readings.status = status.status
+                    readings.agentExtras = status.extras
+                    readings.agentItems = status.items
+                }
                 lastStatusRead = date
             }
         } else {
             readings = MenuBarItemReadings()
             extrasHosts = MenuExtrasHosts()
         }
-        let built = MenuBarSpaceBuilder.build(
-            screens: screens,
-            scan: scan,
-            readings: readings,
-            reportsMenuBar: reports
+        let built = MenuBarSpaceBuilder.stabilized(
+            MenuBarSpaceBuilder.build(screens: screens, scan: scan, readings: readings, reportsMenuBar: reports),
+            previous: spaces,
+            holdsMenuShrink: date < menuShrinkHoldUntil
         )
         logItemCounts(built)
         if built != spaces {

@@ -25,6 +25,10 @@ final class ScreenManager {
     private var fullscreenTask: Task<Void, Never>?
     private var fullscreenRefreshTask: Task<Void, Never>?
     private var running = false
+    /// 키 반납용 보이지 않는 패널 (`KeyReleasePanel`)
+    private lazy var keyReleasePanel = KeyReleasePanel()
+    /// 키를 반납하는 동안엔 아일랜드 패널이 다시 키 윈도우가 되지 않게 한다
+    private var releasingKey = false
     /// stop/start 를 반복해도 관찰 루프가 겹치지 않게 하는 세대 번호
     private var generation = 0
 
@@ -71,6 +75,7 @@ final class ScreenManager {
         fullscreenRefreshTask = nil
         spaceMonitor.stop()
         overlapMonitor.stop()
+        keyReleasePanel.orderOut(nil)
         wingRetract.reset()
         for panel in panels.values {
             panel.orderOut(nil)
@@ -124,8 +129,9 @@ final class ScreenManager {
     private func makePanel(for geometry: NotchGeometry) -> NotchPanel {
         let id = geometry.screenID
         let panel = NotchPanel(frame: geometry.panelFrame)
-        panel.allowsKey = { [weak presentation] in
-            presentation?.mode(for: id).wantsKey ?? false
+        panel.allowsKey = { [weak self, weak presentation] in
+            guard self?.releasingKey != true else { return false }
+            return presentation?.mode(for: id).wantsKey ?? false
         }
         let host = IslandHostingView(rootView: makeRootView(id))
         host.sizingOptions = []
@@ -198,14 +204,33 @@ final class ScreenManager {
             // 접히면 키 윈도우를 반납해 원래 앱으로 키보드 포커스를 돌려준다.
             // 다른 권한 요청이 새로 보이게 돼도 반납한다 (보지 못한 요청을 단축키로 결정하지 않게, 다시 클릭해야 함)
             if !state.mode.wantsKey || Self.showsNewPermission(state.mode, after: previous), panel.isKeyWindow {
-                panel.orderOut(nil)
-                panel.orderFrontRegardless()
+                releaseKey(from: panel, geometry: geometry)
             }
         }
         wingRetract.setBands(bands)
         updateMouseState()
         // 접힌 상태가 새로 보이기 시작하면 메뉴바 빈 공간을 바로 다시 잰다
         if becameCompact { spaceMonitor.refresh() }
+    }
+
+    /// 키 윈도우를 반납해 키보드 포커스를 원래 앱으로 돌려준다.
+    /// 아일랜드 패널은 화면에 그대로 두고(접히는 애니메이션이 끊기거나 한 프레임 비지 않게),
+    /// 보이지 않는 패널을 잠깐 키 윈도우로 만들었다가 내린다. 넘기지 못했으면 예전처럼 패널을 내렸다 올린다.
+    private func releaseKey(from panel: NotchPanel, geometry: NotchGeometry?) {
+        releasingKey = true
+        defer { releasingKey = false }
+        let helper = keyReleasePanel
+        if let geometry {
+            helper.setFrameOrigin(CGPoint(x: geometry.frame.midX, y: geometry.frame.maxY - 1))
+        }
+        helper.makeKeyAndOrderFront(nil)
+        helper.orderOut(nil)
+        if panel.isKeyWindow || helper.isKeyWindow {
+            logger.debug("보이지 않는 패널로 키 반납 실패 → 패널을 내렸다 올림")
+            helper.orderOut(nil)
+            panel.orderOut(nil)
+            panel.orderFrontRegardless()
+        }
     }
 
     /// 이전과 다른 권한 요청이 보이기 시작했는지 (대기열 수만 바뀐 같은 요청은 제외)

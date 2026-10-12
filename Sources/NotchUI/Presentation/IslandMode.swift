@@ -23,7 +23,7 @@ enum IslandMode: Equatable {
     /// 사용자가 연 전체 펼침
     case expanded
 
-    enum Kind: Equatable {
+    enum Kind: Hashable {
         case hidden, idle, working, peek, permission, needsInput, done, failed, expanded
     }
 

@@ -12,7 +12,7 @@ struct WingSides: OptionSet, Hashable, Sendable {
 }
 
 /// 날개 안 내용 배치
-enum WingArrangement: Equatable, Sendable {
+enum WingArrangement: Hashable, Sendable {
     /// 왼쪽 = 상태 (+ 프로젝트), 오른쪽 = (툴 +) `+N −M`
     case split
     /// 왼쪽 날개 하나에 모음 (노치 쪽으로 붙임)
@@ -36,13 +36,17 @@ struct WingsSpec: Equatable, Sendable {
     /// 내용 자리 바깥쪽 여백 (날개 끝이면 넓게, 아이콘 구멍 앞이면 좁게)
     var leftOuterPad: CGFloat
     var rightOuterPad: CGFloat
-    /// 아이콘이 비쳐 보이게 뚫을 구멍 (패널 기준: x 는 화면 왼쪽부터, y 는 화면 위부터)
-    var holes: [CGRect] = []
     /// 마우스를 올려 비켜준 쪽 (폭 0 으로 그리고 내용은 숨김)
     var hidden: WingSides = []
 
     var visibleLeft: CGFloat { hidden.contains(.left) ? 0 : left }
     var visibleRight: CGFloat { hidden.contains(.right) ? 0 : right }
+
+    /// 날개 없이 그린 접힌 상태 (노치 아래 띠 · 선 · 알약). 배치 이력(`IslandLayoutEngine.previousWings`)용
+    static let withoutWings = WingsSpec(
+        left: 0, right: 0, items: [], arrangement: .strip,
+        leftSpan: 0, rightSpan: 0, leftOuterPad: 0, rightOuterPad: 0
+    )
 
     /// 아이콘 구멍 없이 날개 폭 그대로 내용을 두는 기본형
     static func plain(left: CGFloat, right: CGFloat, items: CompactItems, hidden: WingSides = []) -> WingsSpec {
@@ -142,6 +146,34 @@ enum WingCutouts {
             edge = extended
         }
         return edge
+    }
+
+    /// 직전 날개 끝을 붙잡는 범위: 직전 끝에서 이만큼 안에 유효한 끝이 있으면 그쪽을 쓴다 (아이콘 흔들림)
+    static let stickTolerance: CGFloat = 8
+    /// 붙잡은 끝이 새로 계산한 끝과 이보다 멀어지면 놓는다 (아이콘 하나 폭 남짓)
+    static let stickRange: CGFloat = 32
+
+    /// 날개 끝 이력 유지.
+    /// `fitEdge` 는 아이콘이 1pt 움직여도 날개 끝이 아이콘 하나만큼(약 25pt) 뒤집힐 수 있다
+    /// (CPU% 처럼 폭이 바뀌는 메뉴바 아이템이 노치 쪽 아이콘을 밀 때).
+    /// 직전 끝이 아직 아이콘을 자르지 않으면 그대로 두고(움직이지 않음), 잘랐으면 가까이에 있는
+    /// 자르지 않는 끝(아이콘 뒤 · 아이콘 앞 · 기본 폭)을 따라가며, 새 계산값과 크게 다를 때만 새 값으로 바꾼다.
+    static func stickyEdge(fresh: CGFloat, previous: CGFloat, base: CGFloat, items: [Item], cap: CGFloat) -> CGFloat {
+        guard abs(fresh - previous) > 0.5 else { return fresh }
+        func cuts(_ edge: CGFloat) -> Bool {
+            items.contains { $0.start + tolerance < edge && edge < $0.end - tolerance }
+        }
+        var candidates: [CGFloat] = [previous, fresh, base]
+        for item in items {
+            candidates.append(item.end + edgePad)
+            candidates.append(item.start)
+        }
+        let valid = candidates.filter { $0 >= minWing && $0 <= cap + 0.5 && !cuts($0) }
+        guard let near = valid.min(by: { abs($0 - previous) < abs($1 - previous) }),
+              abs(near - previous) <= stickTolerance,
+              abs(near - fresh) <= stickRange
+        else { return fresh }
+        return near
     }
 
     /// 날개 안에 든 아이템의 구멍 (패널 기준, 겹치는 구멍은 합침).

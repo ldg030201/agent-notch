@@ -4,7 +4,8 @@ import SwiftUI
 // MARK: - 색상 (아일랜드는 라이트/다크 공통으로 항상 검정 배경)
 
 enum Palette {
-    static let background = Color(hex: 0x0B0B0B)
+    /// 아일랜드 검은 모양. 하드웨어 노치(꺼진 픽셀)와 이음매 없이 이어지도록 순수 검정
+    static let background = Color(hex: 0x000000)
     static let text = Color(hex: 0xF1EFE8)
     static let secondary = Color(hex: 0xB4B2A9)
     static let muted = Color(hex: 0x888780)
@@ -93,15 +94,28 @@ enum IslandFont {
 // MARK: - 모션
 
 enum IslandMotion {
-    /// 크기 전환. 동작 줄이기 설정이면 오버슈트 없는 스프링
+    /// 모드 종류가 바뀔 때(접힘 ↔ 카드 등)의 모양 전환.
+    /// 노치에 딱 맞춘 치수(접힌 높이 = 노치 높이, 카드 목 = 노치 폭)를 넘치지 않게 거의 오버슈트 없는 스프링 (최대 약 0.15%).
+    /// 넘쳐도 `IslandShape` 가 노치는 늘 덮는다. 동작 줄이기 설정이면 오버슈트 없는 스프링
     static func resize(reduceMotion: Bool) -> Animation {
-        reduceMotion
-            ? .spring(response: 0.42, dampingFraction: 1.0)
-            : .spring(response: 0.42, dampingFraction: 0.82)
+        reduceMotion ? adjustSpring : .spring(response: resizeResponse, dampingFraction: resizeDamping)
     }
 
-    /// 크기 변경 후 내용이 다시 나타나기까지의 지연
-    static let contentDelay: Duration = .milliseconds(160)
+    static let resizeResponse = 0.4
+    static let resizeDamping = 0.9
+
+    /// 같은 종류 안의 크기 변화(접힌 폭 · 비켜주기 · 피크 높이 등): 출렁이지 않게 임계 감쇠
+    static func adjust(reduceMotion: Bool) -> Animation { adjustSpring }
+    private static let adjustSpring = Animation.spring(response: adjustResponse, dampingFraction: 1.0)
+    static let adjustResponse = 0.32
+
+    /// 크기 변경 후 내용이 다시 나타나기까지의 지연 (모양이 약 90% 자리 잡은 시점)
+    static let contentDelay: Duration = .milliseconds(220)
+    /// 같은 모드 안에서 내용 구조만 바뀔 때(왼쪽 날개 ↔ 노치 아래 띠 등)의 지연.
+    /// 프레임이 크게(200pt 가까이) 옮겨 가므로 모양이 99% 자리 잡은 뒤 나타나야 새 내용이 미끄러져 들어오지 않는다
+    static let branchContentDelay: Duration = .milliseconds(340)
+    /// 크기 · 위치가 바뀐 뒤 모양이 다 자리 잡았다고 보는 시간 (두 스프링 모두 99.8% 이상). 그 전엔 호버 확대를 시작하지 않는다
+    static let settleDelay: Duration = .milliseconds(450)
     static let contentFadeIn = Animation.easeOut(duration: 0.18)
     static let contentFadeOut = Animation.easeOut(duration: 0.1)
     static let hover = Animation.easeOut(duration: 0.15)
