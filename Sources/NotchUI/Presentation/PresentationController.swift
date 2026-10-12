@@ -308,6 +308,7 @@ final class PresentationController {
             geometry: geometry,
             space: spaces[id],
             externalStyle: preferences.externalDisplayStyle,
+            notchStyle: preferences.notchStyle,
             overlapStyle: preferences.compactOverlapStyle,
             notchConflict: notchConflicts[id] != nil
         )

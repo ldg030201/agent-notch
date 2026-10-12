@@ -94,6 +94,17 @@ final class SettingsModel {
         refreshAccessibility()
     }
 
+    /// 시스템 설정 > 메뉴 막대를 연다. 그 화면으로 바로 못 가면 시스템 설정만 연다.
+    func openMenuBarSettings() {
+        let workspace = NSWorkspace.shared
+        if let url = URL(string: "x-apple.systempreferences:com.apple.ControlCenter-Settings.extension"), workspace.open(url) {
+            return
+        }
+        if let app = workspace.urlForApplication(withBundleIdentifier: "com.apple.systempreferences") {
+            workspace.openApplication(at: app, configuration: NSWorkspace.OpenConfiguration())
+        }
+    }
+
     /// 창이 열려 있는 동안 권한 변화를 본다 (시스템 설정에서 허용하고 돌아왔을 때 바로 반영)
     func startWatching() {
         pollTask?.cancel()
@@ -351,6 +362,22 @@ struct SettingsView: View {
             }
 
             SettingsGroup(title: "메뉴바와 겹침") {
+                SettingsRow(title: "노치 화면 표시", note: Self.notchStyleNote(preferences.notchStyle)) {
+                    SettingsMenuPicker(title: "노치 화면 표시", selection: $preferences.notchStyle, options: [
+                        (.belowNotch, "노치 아래 (노치 폭에 맞춤)"),
+                        (.wings, "넓은 노치 (양옆을 검게)"),
+                    ])
+                }
+                if preferences.notchStyle == .belowNotch {
+                    SettingsDivider()
+                    SettingsRow(title: "노치 옆이 막혔을 때", note: "노치 옆 메뉴바에 자리가 없으면 노치 아래에 이렇게 보여줘요") {
+                        SettingsMenuPicker(title: "노치 옆이 막혔을 때", selection: $preferences.compactOverlapStyle, options: [
+                            (.belowNotch, "노치 아래 띠"),
+                            (.minimal, "선만"),
+                        ])
+                    }
+                }
+                SettingsDivider()
                 SettingsRow(title: "외부 모니터 표시", note: "노치 없는 화면에서 접힌 아일랜드를 둘 곳") {
                     SettingsMenuPicker(title: "외부 모니터 표시", selection: $preferences.externalDisplayStyle, options: [
                         (.inMenuBar, "메뉴바 안"),
@@ -359,16 +386,9 @@ struct SettingsView: View {
                     ])
                 }
                 SettingsDivider()
-                SettingsRow(title: "노치 옆이 막혔을 때", note: "메뉴바 아이콘이 노치 옆을 채우면 이렇게 보여줘요") {
-                    SettingsMenuPicker(title: "노치 옆이 막혔을 때", selection: $preferences.compactOverlapStyle, options: [
-                        (.belowNotch, "노치 아래 띠"),
-                        (.minimal, "선만"),
-                    ])
-                }
-                SettingsDivider()
                 SettingsRow(
                     title: "메뉴 위치 정확히 감지",
-                    note: "손쉬운 사용 권한이 있으면 앱 메뉴와 메뉴바 아이콘 위치를 재서 피해 가요. 없으면 노치 왼쪽은 메뉴가 차 있다고 보고 비켜 가요. 직접 빌드한 앱(ad-hoc 서명)은 업데이트한 뒤 다시 허용해야 할 수 있어요."
+                    note: "손쉬운 사용 권한이 있으면 앞 앱 메뉴 위치를 재서 넓은 노치의 왼쪽이 메뉴를 덮지 않게 줄여요. 노치 아래 방식에서는 메뉴바 아이콘도 재서 노치 옆이 비어 있으면 그 자리에 보여줘요. 직접 빌드한 앱(ad-hoc 서명)은 업데이트한 뒤 다시 허용해야 할 수 있어요."
                 ) {
                     if model.accessibilityTrusted {
                         Label("허용됨", systemImage: "checkmark.circle.fill")
@@ -392,6 +412,31 @@ struct SettingsView: View {
                     )
                 }
             }
+
+            SettingsGroup(title: "메뉴바 아이콘") {
+                SettingsNote(
+                    text: "macOS 27 은 아이콘이 넘치면 « 버튼 뒤로 자동으로 접어요. 노치 옆 아이콘이 먼저 접히고, ⌘-드래그로 순서를 바꿀 수 있어요. 시스템 설정 > 메뉴 막대에서 아이콘을 숨길 수도 있어요.",
+                    systemImage: "info.circle"
+                )
+                SettingsDivider()
+                HStack(spacing: 8) {
+                    Button("메뉴 막대 설정 열기") {
+                        model.openMenuBarSettings()
+                    }
+                    Spacer(minLength: 0)
+                }
+                .buttonStyle(SettingsButtonStyle())
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+            }
+        }
+    }
+
+    /// 노치 화면 표시 방식 설명
+    private static func notchStyleNote(_ style: NotchStyle) -> String {
+        switch style {
+        case .wings: return "노치 양옆 메뉴바 자리를 검게 칠해 노치가 넓어 보여요."
+        case .belowNotch: return "메뉴바를 가리지 않고 노치 바로 아래에 노치 폭만큼 내려 보여줘요."
         }
     }
 

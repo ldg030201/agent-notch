@@ -63,7 +63,9 @@ public enum IslandSnapshotRenderer {
 
 enum SnapshotScenario: String, CaseIterable {
     case idle
+    case idleWings = "idle-wings"
     case working
+    case workingWings = "working-wings"
     case workingRightWing = "working-right-wing"
     case workingBelowNotch = "working-below-notch"
     case workingMinimal = "working-minimal"
@@ -93,11 +95,20 @@ enum SnapshotScenario: String, CaseIterable {
 
     var isSettings: Bool { self == .settings || self == .settingsVersion }
 
+    /// 노치 화면 표시 방식. 노치 아래 장면만 명시하고 나머지는 기본값(넓은 노치)
+    var notchStyle: NotchStyle {
+        switch self {
+        case .workingBelowNotch, .workingMinimal: return .belowNotch
+        default: return .wings
+        }
+    }
+
     /// 메뉴바 배치 (메뉴 · 상태 아이콘이 차지하는 자리)
     var crowding: SnapshotMenuBar.Crowding {
         switch self {
         case .workingRightWing: return .leftBlocked
         case .workingBelowNotch, .workingMinimal: return .bothBlocked
+        case .idleWings, .workingWings: return .iconsToNotch
         case .menubarDot: return .narrowGap
         default: return .roomy
         }
@@ -115,6 +126,8 @@ struct SnapshotMenuBar {
         case leftBlocked
         /// 왼쪽은 앱 메뉴, 오른쪽은 상태 아이콘이 노치 바로 옆까지 (오른쪽 빈 곳 약 30pt)
         case bothBlocked
+        /// 앱 메뉴는 짧고, 상태 아이콘이 노치 바로 옆부터 꽉 참 (넓은 노치가 아이콘을 덮는 모습)
+        case iconsToNotch
         /// 노치 없는 화면: 앱 메뉴와 상태 아이콘 사이가 좁음
         case narrowGap
     }
@@ -164,7 +177,7 @@ struct SnapshotMenuBar {
         let longMenus = ["Xcode", "파일", "편집", "보기", "찾기", "탐색", "편집기", "제품", "디버그", "소스 제어", "윈도우", "도움말"]
         let menus: [MenuItem]
         switch crowding {
-        case .roomy:
+        case .roomy, .iconsToNotch:
             menus = Self.layoutMenus(shortMenus, limit: .greatestFiniteMagnitude)
         case .leftBlocked, .bothBlocked:
             menus = Self.layoutMenus(longMenus, limit: notchMinX - 6)
@@ -180,6 +193,7 @@ struct SnapshotMenuBar {
         case .roomy: statusStart = hasNotch ? 760 : 800
         case .leftBlocked: statusStart = notchMaxX + 210
         case .bothBlocked: statusStart = notchMaxX + 38
+        case .iconsToNotch: statusStart = notchMaxX + 8
         case .narrowGap: statusStart = appMenuEnd + 92
         }
         clockX = width - 12 - Self.textWidth(Self.clockText, bold: false)
@@ -301,6 +315,7 @@ enum SnapshotStage {
             throw IslandSnapshotRenderer.RenderError.renderFailed("설정 저장소를 만들 수 없음")
         }
         let preferences = AppPreferences(defaults: defaults)
+        preferences.notchStyle = scene.notchStyle
         let presentation = PresentationController(store: world.store, preferences: preferences, actions: SnapshotActions())
 
         if scene.isSettings {
@@ -316,9 +331,9 @@ enum SnapshotStage {
 
         let api = SnapshotWorld.apiServer.id
         switch scene {
-        case .idle:
+        case .idle, .idleWings:
             break
-        case .working, .workingRightWing, .workingBelowNotch, .menubarWorking, .menubarDot:
+        case .working, .workingWings, .workingRightWing, .workingBelowNotch, .menubarWorking, .menubarDot:
             world.apiServerEdits()
             world.apiServerRunsTests()
         case .workingMinimal:

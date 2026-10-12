@@ -157,6 +157,8 @@ struct IslandLayoutEngine {
     /// 메뉴바 빈 공간 측정값 (아직 모르면 nil)
     let space: MenuBarSpace?
     let externalStyle: ExternalDisplayStyle
+    /// 노치 화면 표시 방식 (넓은 노치 / 노치 아래)
+    let notchStyle: NotchStyle
     let overlapStyle: CompactOverlapStyle
     /// 다른 노치 앱이 노치를 쓰는 중
     let notchConflict: Bool
@@ -182,6 +184,21 @@ struct IslandLayoutEngine {
         if space.appMenuMeasured, space.appMenuEnd > notchMinX { return (0, 0) }
         let left = space.appMenuMeasured ? max(0, notchMinX - M.menuBarMargin - space.appMenuEnd) : 0
         let right = space.statusMeasured ? max(0, space.statusStart - M.menuBarMargin - notchMaxX) : 0
+        return (left, right)
+    }
+
+    /// 넓은 노치(날개) 방식을 쓰는지. 다른 노치 앱이 있으면 노치 아래 방식으로 물러난다.
+    var usesWings: Bool { geometry.hasNotch && notchStyle == .wings && !notchConflict }
+
+    /// 넓은 노치: 한쪽 날개가 쓸 수 있는 최대 폭.
+    /// 메뉴바 아이템이 있어도 덮으므로 화면의 노치 옆 영역까지 쓰되,
+    /// 앞 앱 메뉴를 손쉬운 사용으로 쟀으면 왼쪽은 메뉴 끝 + 여백까지만 쓴다.
+    var wingLimit: (left: CGFloat, right: CGFloat) {
+        var left = max(0, notchMinX - M.menuBarMargin)
+        let right = max(0, screenWidth - notchMaxX - M.menuBarMargin)
+        if let space, space.appMenuMeasured {
+            left = space.appMenuEnd > notchMinX ? 0 : min(left, max(0, notchMinX - M.menuBarMargin - space.appMenuEnd))
+        }
         return (left, right)
     }
 
@@ -212,6 +229,7 @@ struct IslandLayoutEngine {
     }
 
     private func notchPlacement(_ content: CompactContent) -> CompactPlacement {
+        if usesWings, let placement = wingsPlacement(content) { return placement }
         let free = notchFree
         let appMenuMeasured = space?.appMenuMeasured ?? false
 
@@ -238,9 +256,46 @@ struct IslandLayoutEngine {
         }
 
         switch overlapStyle {
-        case .belowNotch: return .strip(width: stripWidth(content))
+        case .belowNotch: return .strip(width: notchWidth)
         case .minimal: return .line
         }
+    }
+
+    /// 넓은 노치: 빈 공간 측정과 관계없이 양쪽 날개 (목업 기본형).
+    /// 폭은 내용에 맞추되 한쪽 `wideWingMax` 이하, 노치를 가운데 두도록 양쪽을 같게.
+    /// 왼쪽이 앞 앱 메뉴로 모자라면 왼쪽 날개를 없애고 내용을 오른쪽 날개에 모은다. 그것도 안 되면 nil (노치 아래 방식).
+    private func wingsPlacement(_ content: CompactContent) -> CompactPlacement? {
+        let limit = wingLimit
+        switch content {
+        case let .idle(count):
+            let dots = M.idleDotsWidth(count: count)
+            let both = max(28, dots + M.wingPadding + 8)
+            if limit.left >= both, limit.right >= both { return .wings(left: both, right: both, items: .all) }
+            let single = dots + M.wingPadding + 6
+            if limit.right >= single { return .wings(left: 0, right: single, items: []) }
+
+        case let .session(metrics):
+            let pad = M.wingPadding
+            let project = min(metrics.project, M.wideWingProjectCap)
+            // 왼쪽: 상태 + 프로젝트명, 오른쪽: 툴 + `+N −M` (또는 상태 문구). SwiftUI 배치 오차 8pt 여유.
+            let leftNeed = pad + 14 + (project > 0 ? 6 + project : 0) + 4 + 8
+            var rightText = metrics.trailing
+            if !metrics.isAttention, metrics.shortTool > 0 {
+                rightText += min(metrics.shortTool, M.wideWingToolCap) + (metrics.trailing > 0 ? 6 : 0)
+            }
+            let rightNeed = 4 + rightText + pad + 8
+            let wing = min(max(leftNeed, rightNeed, M.minWideWing), M.wideWingMax)
+            let both = (wing / 4).rounded(.up) * 4
+            // 프로젝트명은 줄일 수 있으니 왼쪽은 앞 몇 글자만 들어가도 된다
+            let leftMin = pad + 14 + 6 + min(project, 40) + 4
+            if limit.left >= leftMin, limit.right >= min(both, rightNeed) {
+                return .wings(left: min(both, limit.left), right: min(both, limit.right), items: .all)
+            }
+            if let wing = singleWing(available: limit.right, metrics) {
+                return .wings(left: 0, right: wing.width, items: wing.items)
+            }
+        }
+        return nil
     }
 
     /// 날개 하나에 모을 때 폭과 요소 (프로젝트명 → 툴 이름 순으로 생략)
@@ -263,17 +318,6 @@ struct IslandLayoutEngine {
         if items.contains(.tool), toolWidth > 0 { width += 6 + min(toolWidth, toolCap) }
         if metrics.trailing > 0 { width += 6 + metrics.trailing }
         return width
-    }
-
-    private func stripWidth(_ content: CompactContent) -> CGFloat {
-        let need: CGFloat
-        switch content {
-        case let .idle(count):
-            need = M.idleDotsWidth(count: count) + 20
-        case let .session(metrics):
-            need = Self.contentWidth(metrics, items: [.tool], toolWidth: metrics.shortTool, toolCap: 120) + 20
-        }
-        return min(max(need, notchWidth), notchWidth + M.stripExtraWidth).rounded(.up)
     }
 
     private func externalPlacement(_ content: CompactContent) -> CompactPlacement {
@@ -466,7 +510,8 @@ struct IslandLayoutEngine {
     }
 
     private func notchCard(preferredWidth: CGFloat, radius: CGFloat, bodyHeight: (CGFloat) -> CGFloat) -> IslandLayout {
-        let free = notchFree
+        // 넓은 노치면 접힌 날개처럼 목(메뉴바 높이)도 메뉴바 아이템 위로 넓힌다
+        let free = usesWings ? wingLimit : notchFree
         let cardWidth = max(preferredWidth, notchWidth + 80)
         let neck = neckHeight
         let allowed = min(free.left, free.right)

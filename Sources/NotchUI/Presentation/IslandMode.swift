@@ -105,9 +105,13 @@ enum IslandMetrics {
     static let minBothWing: CGFloat = 72
     /// 접힌 날개 하나만 쓸 때 최대 폭
     static let maxSingleWing: CGFloat = 240
-    /// 노치 아래 띠
+    /// 넓은 노치: 양쪽 날개 한쪽 최대/최소 폭, 왼쪽 프로젝트명 · 오른쪽 툴 이름 최대 폭
+    static let wideWingMax: CGFloat = 120
+    static let minWideWing: CGFloat = 64
+    static let wideWingProjectCap: CGFloat = 76
+    static let wideWingToolCap: CGFloat = 56
+    /// 노치 아래 띠 (폭은 노치 폭)
     static let stripHeight: CGFloat = 22
-    static let stripExtraWidth: CGFloat = 80
     /// 노치 아래 선
     static let lineThickness: CGFloat = 3
     /// 메뉴바 안 점
