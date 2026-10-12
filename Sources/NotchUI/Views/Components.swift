@@ -3,12 +3,34 @@ import QuartzCore
 import SwiftUI
 import NotchCore
 
-// MARK: - 스피너 (Core Animation 으로 돌려서 앱 CPU 를 쓰지 않음)
+// MARK: - 스피너
 
-struct SpinnerView: NSViewRepresentable {
+/// 작업 중 스피너. 실제 패널에서는 Core Animation 으로 돌려 앱 CPU 를 쓰지 않고,
+/// 스냅숏 렌더링에서는 같은 크기의 정지된 SwiftUI 호를 그린다.
+struct SpinnerView: View {
     var color: NSColor = Palette.greenNS
     var lineWidth: CGFloat = 1.8
     var animated: Bool = true
+
+    @Environment(\.islandRenderContext) private var renderContext
+
+    var body: some View {
+        if renderContext.isSnapshot {
+            Circle()
+                .inset(by: lineWidth / 2 + 0.5)
+                .trim(from: 0, to: 0.75)
+                .stroke(Color(nsColor: color), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        } else {
+            LayerSpinner(color: color, lineWidth: lineWidth, animated: animated)
+        }
+    }
+}
+
+private struct LayerSpinner: NSViewRepresentable {
+    var color: NSColor
+    var lineWidth: CGFloat
+    var animated: Bool
 
     func makeNSView(context: Context) -> SpinnerNSView {
         let view = SpinnerNSView()
@@ -87,9 +109,25 @@ final class SpinnerNSView: NSView {
 
 // MARK: - 깜빡이는 점 (주의 필요)
 
-struct PulsingDot: NSViewRepresentable {
+/// 주의 필요 점. 실제 패널에서는 Core Animation 으로 깜빡이고, 스냅숏에서는 정지된 원.
+struct PulsingDot: View {
     var color: NSColor = Palette.amberNS
     var animated: Bool = true
+
+    @Environment(\.islandRenderContext) private var renderContext
+
+    var body: some View {
+        if renderContext.isSnapshot {
+            Circle().fill(Color(nsColor: color))
+        } else {
+            LayerPulsingDot(color: color, animated: animated)
+        }
+    }
+}
+
+private struct LayerPulsingDot: NSViewRepresentable {
+    var color: NSColor
+    var animated: Bool
 
     func makeNSView(context: Context) -> PulsingDotNSView {
         let view = PulsingDotNSView()
@@ -158,35 +196,37 @@ final class PulsingDotNSView: NSView {
 struct StatusIndicator: View {
     let session: AgentSession
     var reduceMotion: Bool
+    /// 아이콘 영역 크기 (기본 14)
+    var size: CGFloat = 14
 
     var body: some View {
         Group {
             if session.phase.isWorking {
                 SpinnerView(animated: !reduceMotion)
-                    .frame(width: 13, height: 13)
+                    .frame(width: size - 1, height: size - 1)
                     .accessibilityLabel("작업 중")
             } else if session.phase == .failed {
                 Image(systemName: "xmark.circle")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: size - 1, weight: .medium))
                     .foregroundStyle(Palette.red)
                     .accessibilityLabel("실패")
             } else if session.phase.needsAttention {
                 PulsingDot(animated: !reduceMotion)
-                    .frame(width: 8, height: 8)
+                    .frame(width: size * 0.57, height: size * 0.57)
                     .accessibilityLabel("확인 필요")
             } else if session.phase == .completed {
                 Image(systemName: "checkmark.circle")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: size - 1, weight: .medium))
                     .foregroundStyle(Palette.green)
                     .accessibilityLabel("완료")
             } else {
                 Circle()
                     .fill(Palette.muted)
-                    .frame(width: 6, height: 6)
+                    .frame(width: size * 0.43, height: size * 0.43)
                     .accessibilityLabel("유휴")
             }
         }
-        .frame(width: 14, height: 14)
+        .frame(width: size, height: size)
     }
 }
 
@@ -321,9 +361,9 @@ struct IslandIconButtonStyle: ButtonStyle {
 
 // MARK: - 상단 행 (날개)
 
-/// 노치 양옆 날개. 노치 화면은 가운데 노치 폭만큼 비워 카메라를 가리지 않는다.
+/// 상단 행. `notchGap` 이 있으면 가운데(노치)를 비워 카메라를 가리지 않고 양옆 날개에 나눠 둔다.
 struct WingRow<Leading: View, Trailing: View>: View {
-    let geometry: NotchGeometry
+    let notchGap: CGFloat
     let height: CGFloat
     @ViewBuilder var leading: Leading
     @ViewBuilder var trailing: Trailing
@@ -332,8 +372,8 @@ struct WingRow<Leading: View, Trailing: View>: View {
         HStack(spacing: 0) {
             leading
                 .frame(maxWidth: .infinity, alignment: .leading)
-            if geometry.hasNotch {
-                Color.clear.frame(width: geometry.notchSize.width + 8)
+            if notchGap > 0 {
+                Color.clear.frame(width: notchGap)
             } else {
                 Spacer(minLength: 8)
             }
@@ -345,6 +385,73 @@ struct WingRow<Leading: View, Trailing: View>: View {
         .font(IslandFont.body)
         .foregroundStyle(Palette.text)
         .lineLimit(1)
+    }
+}
+
+/// 펼친 카드 공통 틀: 레이아웃이 정한 자리(목 안 날개 또는 목 아래 한 줄)에 상단 행, 그 아래 본문.
+struct CardScaffold<Leading: View, Trailing: View, Content: View>: View {
+    let layout: IslandLayout
+    @ViewBuilder var leading: Leading
+    @ViewBuilder var trailing: Trailing
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        let header = layout.header
+        VStack(spacing: 0) {
+            WingRow(notchGap: header.notchGap, height: header.height) {
+                leading
+            } trailing: {
+                trailing
+            }
+            .padding(.leading, header.leftInset)
+            .padding(.trailing, header.rightInset)
+            .padding(.top, header.top)
+
+            Color.clear.frame(height: max(0, layout.contentTop - header.top - header.height))
+
+            content
+                .padding(.leading, layout.contentLeftInset)
+                .padding(.trailing, layout.contentRightInset)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+}
+
+/// 스냅숏 렌더링에선 ScrollView 를 그릴 수 없어서 잘린 VStack 으로 대신한다.
+struct IslandScrollable<Content: View>: View {
+    var showsIndicators = false
+    @ViewBuilder var content: Content
+
+    @Environment(\.islandRenderContext) private var renderContext
+
+    var body: some View {
+        if renderContext.isSnapshot {
+            VStack(spacing: 0) { content }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .clipped()
+        } else {
+            ScrollView(.vertical) { content }
+                .scrollIndicators(showsIndicators ? .automatic : .never)
+        }
+    }
+}
+
+/// 실제 시각(1초/1분 주기) 또는 스냅숏 고정 시각으로 내용을 그린다.
+struct IslandClock<Content: View>: View {
+    var everySecond = false
+    @ViewBuilder var content: (Date) -> Content
+
+    @Environment(\.islandRenderContext) private var renderContext
+
+    var body: some View {
+        if let now = renderContext.fixedNow {
+            content(now)
+        } else if everySecond {
+            TimelineView(.periodic(from: .now, by: 1)) { context in content(context.date) }
+        } else {
+            TimelineView(.everyMinute) { context in content(context.date) }
+        }
     }
 }
 

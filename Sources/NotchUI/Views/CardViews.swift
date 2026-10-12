@@ -7,20 +7,19 @@ struct PeekView: View {
     let session: AgentSession?
     let diff: DiffSnippet
     let textLine: String?
-    let geometry: NotchGeometry
-    let headerHeight: CGFloat
+    let layout: IslandLayout
     let actions: IslandActions
     let reduceMotion: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
-            CardHeader(session: session, geometry: geometry, height: headerHeight, reduceMotion: reduceMotion) {
-                HStack(spacing: 6) {
-                    Text(toolName)
-                    DiffStatText(added: diff.added, removed: diff.removed)
-                }
+        CardScaffold(layout: layout) {
+            CardHeaderLeading(session: session, reduceMotion: reduceMotion)
+        } trailing: {
+            HStack(spacing: 6) {
+                Text(toolName)
+                DiffStatText(added: diff.added, removed: diff.removed)
             }
-
+        } content: {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 6) {
                     Button {
@@ -64,7 +63,6 @@ struct PeekView: View {
             .padding(.top, IslandMetrics.bodyTop)
             .padding(.bottom, IslandMetrics.bodyBottom)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     /// 이 diff 를 만든 툴 이름 (모르면 Edit)
@@ -81,26 +79,24 @@ struct PermissionView: View {
     let request: PermissionRequestInfo
     let queueCount: Int
     let session: AgentSession?
-    let geometry: NotchGeometry
-    let headerHeight: CGFloat
+    let layout: IslandLayout
     let presentation: PresentationController
     let reduceMotion: Bool
 
     var body: some View {
         let canAllowAlways = PresentationController.canAllowAlways(request)
+        let detailLines = PresentationController.permissionDetailLines(request, cardWidth: layout.cardWidth)
 
-        VStack(spacing: 0) {
-            CardHeader(
+        CardScaffold(layout: layout) {
+            CardHeaderLeading(
                 session: session,
-                geometry: geometry,
-                height: headerHeight,
                 reduceMotion: reduceMotion,
                 indicator: AnyView(PulsingDot(animated: !reduceMotion).frame(width: 8, height: 8))
-            ) {
-                Text(queueCount > 1 ? "승인 필요 · \(queueCount)" : "승인 필요")
-                    .foregroundStyle(Palette.amber)
-            }
-
+            )
+        } trailing: {
+            Text(queueCount > 1 ? "승인 필요 · \(queueCount)" : "승인 필요")
+                .foregroundStyle(Palette.amber)
+        } content: {
             VStack(alignment: .leading, spacing: 0) {
                 Text(request.title)
                     .foregroundStyle(Palette.secondary)
@@ -152,6 +148,15 @@ struct PermissionView: View {
                     Spacer(minLength: 0)
 
                     Button {
+                        presentation.minimize(request)
+                    } label: {
+                        Text("접기")
+                    }
+                    .buttonStyle(IslandButtonStyle())
+                    .accessibilityLabel("접기")
+                    .help("요청은 그대로 두고 접기 (⎋). 아일랜드를 누르면 다시 펼쳐져")
+
+                    Button {
                         presentation.sendToTerminal(request)
                     } label: {
                         HStack(spacing: 4) {
@@ -169,16 +174,6 @@ struct PermissionView: View {
             .padding(.top, IslandMetrics.bodyTop)
             .padding(.bottom, 14)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-    }
-
-    /// 레이아웃 계산과 같은 방식으로 센 상세 줄 수
-    private var detailLines: Int {
-        let width = IslandMetrics.permissionWidth - IslandMetrics.bodyPadding * 2 - IslandMetrics.detailHorizontalPadding * 2
-        return TextMeasure.lineCount(
-            request.detail, font: IslandFont.monoNS, lineHeight: IslandMetrics.monoLineHeight,
-            width: width, maxLines: IslandMetrics.maxDetailLines
-        )
     }
 }
 
@@ -189,24 +184,21 @@ struct NeedsInputView: View {
     let sessionID: String
     let message: String
     let isPermissionPrompt: Bool
-    let geometry: NotchGeometry
-    let headerHeight: CGFloat
-    let actions: IslandActions
+    let layout: IslandLayout
+    let presentation: PresentationController
     let reduceMotion: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
-            CardHeader(
+        CardScaffold(layout: layout) {
+            CardHeaderLeading(
                 session: session,
-                geometry: geometry,
-                height: headerHeight,
                 reduceMotion: reduceMotion,
                 indicator: AnyView(PulsingDot(animated: !reduceMotion).frame(width: 8, height: 8))
-            ) {
-                Text(isPermissionPrompt ? "승인 필요" : "입력 필요")
-                    .foregroundStyle(Palette.amber)
-            }
-
+            )
+        } trailing: {
+            Text(isPermissionPrompt ? "승인 필요" : "입력 필요")
+                .foregroundStyle(Palette.amber)
+        } content: {
             VStack(alignment: .leading, spacing: 0) {
                 Text(message)
                     .foregroundStyle(Palette.text)
@@ -215,10 +207,19 @@ struct NeedsInputView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, minHeight: CGFloat(messageLines) * IslandMetrics.lineHeight, alignment: .topLeading)
 
-                HStack {
+                HStack(spacing: 6) {
                     Spacer(minLength: 0)
                     Button {
-                        actions.jumpToTerminal(sessionID: sessionID)
+                        presentation.minimizeInput(sessionID: sessionID, message: message)
+                    } label: {
+                        Text("접기")
+                    }
+                    .buttonStyle(IslandButtonStyle())
+                    .accessibilityLabel("접기")
+                    .help("접기 (⎋)")
+
+                    Button {
+                        presentation.actions.jumpToTerminal(sessionID: sessionID)
                     } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "terminal")
@@ -235,13 +236,12 @@ struct NeedsInputView: View {
             .padding(.top, IslandMetrics.bodyTop)
             .padding(.bottom, 14)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private var messageLines: Int {
         TextMeasure.lineCount(
             message, font: IslandFont.bodyNS, lineHeight: IslandMetrics.bodyLineHeight,
-            width: IslandMetrics.needsInputWidth - IslandMetrics.bodyPadding * 2, maxLines: 2
+            width: layout.cardWidth - IslandMetrics.bodyPadding * 2, maxLines: 2
         )
     }
 }
@@ -252,15 +252,12 @@ struct CompletionView: View {
     let session: AgentSession?
     let failed: Bool
     let textLine: String?
-    let geometry: NotchGeometry
-    let headerHeight: CGFloat
+    let layout: IslandLayout
 
     var body: some View {
-        VStack(spacing: 0) {
-            CardHeader(
+        CardScaffold(layout: layout) {
+            CardHeaderLeading(
                 session: session,
-                geometry: geometry,
-                height: headerHeight,
                 reduceMotion: true,
                 indicator: AnyView(
                     Image(systemName: failed ? "xmark.circle" : "checkmark.circle")
@@ -268,11 +265,11 @@ struct CompletionView: View {
                         .foregroundStyle(failed ? Palette.red : Palette.green)
                         .accessibilityLabel(failed ? "실패" : "완료")
                 )
-            ) {
-                Text(statusText)
-                    .foregroundStyle(failed ? Palette.red : Palette.muted)
-            }
-
+            )
+        } trailing: {
+            Text(statusText)
+                .foregroundStyle(failed ? Palette.red : Palette.muted)
+        } content: {
             VStack(alignment: .leading, spacing: 4) {
                 if failed {
                     Text(errorText)
@@ -302,7 +299,6 @@ struct CompletionView: View {
             .padding(.top, 2)
             .padding(.bottom, IslandMetrics.bodyBottom)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private var statusText: String {

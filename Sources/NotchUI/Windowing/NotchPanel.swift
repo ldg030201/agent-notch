@@ -7,6 +7,9 @@ import SwiftUI
 /// - 아일랜드가 펼쳐졌거나 권한 요청을 보여줄 때만 키 윈도우가 될 수 있다 (클릭 후 단축키용).
 /// - 창 크기는 고정. 아일랜드 크기 변화는 SwiftUI 내용에서 애니메이션한다.
 final class NotchPanel: NSPanel {
+    /// 메뉴바(.statusBar) 위, 팝업 메뉴/경고창 아래
+    static let islandLevel = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 8)
+
     /// 지금 키 윈도우가 될 수 있는지 (표시 모드에 따라 동적으로 결정)
     var allowsKey: @MainActor () -> Bool = { false }
 
@@ -24,8 +27,7 @@ final class NotchPanel: NSPanel {
         isOpaque = false
         backgroundColor = .clear
         hasShadow = false
-        // 메뉴바(.statusBar) 위, 팝업 메뉴/경고창 아래
-        level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 8)
+        level = Self.islandLevel
         collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         isMovable = false
         isMovableByWindowBackground = false

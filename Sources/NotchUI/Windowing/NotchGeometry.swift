@@ -12,9 +12,8 @@ struct NotchGeometry: Equatable {
     static let pillHeaderHeight: CGFloat = 32
     /// 메뉴바와 알약 사이 간격
     static let pillTopGap: CGFloat = 6
-    /// 패널 고정 크기 (아일랜드 최대 크기 + 여유). 창 크기는 애니메이션하지 않는다.
-    static let panelWidth: CGFloat = 680
-    static let maxIslandHeight: CGFloat = 320
+    /// 패널 높이 (메뉴바 + 가장 큰 카드 + 여유). 패널은 화면 폭 전체를 덮고 크기를 애니메이션하지 않는다.
+    static let panelHeight: CGFloat = 420
 
     let screenID: ScreenID
     /// 화면 전체 프레임 (Cocoa 전역 좌표, 원점 왼쪽 아래)
@@ -24,6 +23,8 @@ struct NotchGeometry: Equatable {
     let notchSize: CGSize
     let isBuiltIn: Bool
     let menuBarHeight: CGFloat
+    /// visibleFrame 이 메뉴바 자리를 빼고 있는지 (창 목록으로 메뉴바를 못 찾을 때의 대체 판단)
+    let reportsMenuBar: Bool
 
     @MainActor
     init(screen: NSScreen) {
@@ -53,17 +54,27 @@ struct NotchGeometry: Equatable {
             hasNotch: hasNotch,
             notchSize: notchSize,
             isBuiltIn: CGDisplayIsBuiltin(id) != 0,
-            menuBarHeight: menuBar > 0 ? menuBar : 24
+            menuBarHeight: menuBar > 0 ? menuBar : (hasNotch ? topInset : 24),
+            reportsMenuBar: menuBar > 0
         )
     }
 
-    init(screenID: ScreenID, frame: CGRect, hasNotch: Bool, notchSize: CGSize, isBuiltIn: Bool, menuBarHeight: CGFloat) {
+    init(
+        screenID: ScreenID,
+        frame: CGRect,
+        hasNotch: Bool,
+        notchSize: CGSize,
+        isBuiltIn: Bool,
+        menuBarHeight: CGFloat,
+        reportsMenuBar: Bool = true
+    ) {
         self.screenID = screenID
         self.frame = frame
         self.hasNotch = hasNotch
         self.notchSize = notchSize
         self.isBuiltIn = isBuiltIn
         self.menuBarHeight = menuBarHeight
+        self.reportsMenuBar = reportsMenuBar
     }
 
     /// 아일랜드 상단 행(날개) 높이. 노치 화면은 노치 높이, 아니면 알약 높이.
@@ -71,27 +82,26 @@ struct NotchGeometry: Equatable {
         hasNotch ? max(notchSize.height, 24) : Self.pillHeaderHeight
     }
 
-    /// 패널 상단에서 아일랜드 상단까지의 거리. 노치 화면은 화면 맨 위에 붙는다.
-    var islandTopInset: CGFloat {
-        hasNotch ? 0 : menuBarHeight + Self.pillTopGap
-    }
-
-    /// 화면 상단 가운데에 고정된 패널 프레임
+    /// 화면 맨 위에 화면 폭 전체로 붙인 패널 프레임
     var panelFrame: CGRect {
-        let width = min(Self.panelWidth, frame.width)
-        let height = min(islandTopInset + Self.maxIslandHeight, frame.height)
-        return CGRect(
-            x: (frame.midX - width / 2).rounded(),
-            y: frame.maxY - height,
-            width: width,
-            height: height
-        )
+        let height = min(Self.panelHeight, frame.height)
+        return CGRect(x: frame.minX, y: frame.maxY - height, width: frame.width, height: height)
     }
 
-    /// 주어진 아일랜드 크기(귀 포함)의 화면 좌표 사각형
-    func islandRect(size: CGSize) -> CGRect {
-        let top = frame.maxY - islandTopInset
-        return CGRect(x: frame.midX - size.width / 2, y: top - size.height, width: size.width, height: size.height)
+    /// 패널 기준 사각형(원점 화면 왼쪽 위, y 아래로) → Cocoa 전역 좌표
+    func screenRect(fromPanel rect: CGRect) -> CGRect {
+        CGRect(x: frame.minX + rect.minX, y: frame.maxY - rect.maxY, width: rect.width, height: rect.height)
+    }
+
+    /// 하드웨어 노치 사각형 (Cocoa 전역, 노치 없으면 nil)
+    var notchRect: CGRect? {
+        guard hasNotch else { return nil }
+        return CGRect(
+            x: frame.minX + (frame.width - notchSize.width) / 2,
+            y: frame.maxY - notchSize.height,
+            width: notchSize.width,
+            height: notchSize.height
+        )
     }
 }
 

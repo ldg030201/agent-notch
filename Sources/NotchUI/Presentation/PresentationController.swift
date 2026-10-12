@@ -36,6 +36,14 @@ final class PresentationController {
     /// 풀스크린 앱이 덮고 있는 화면 (best-effort)
     private(set) var fullscreenScreenIDs: Set<ScreenID> = []
     private(set) var reduceMotion = false
+    /// 화면별 메뉴바 빈 공간 측정값
+    private(set) var spaces: [ScreenID: MenuBarSpace] = [:]
+    /// 열린 메뉴 · 팝오버가 아일랜드 자리와 겹친 화면
+    private(set) var occludedScreenIDs: Set<ScreenID> = []
+    /// 노치를 쓰는 다른 앱 (화면 → 앱 이름)
+    private(set) var notchConflicts: [ScreenID: String] = [:]
+    /// 업데이트 상태 (없으면 배지 · 버전 탭 숨김)
+    var updateProvider: UpdateProvider?
 
     private var transient: Transient?
     /// ⎋ 로 접어 둔 권한 요청 (요청은 계속 대기)
@@ -53,7 +61,7 @@ final class PresentationController {
     /// 사용자 동작으로 펼쳤을 때 해당 화면 패널을 키 윈도우로 만든다 (ScreenManager 가 연결)
     @ObservationIgnored var onRequestKey: ((ScreenID) -> Void)?
     /// 설정 창 열기 (NotchUIController 가 연결. 없으면 IslandActions.openSettings 사용)
-    @ObservationIgnored var onOpenSettings: (() -> Void)?
+    @ObservationIgnored var onOpenSettings: ((SettingsSection?) -> Void)?
 
     @ObservationIgnored private let logger = Logger(subsystem: "AgentNotch", category: "Presentation")
 
@@ -128,6 +136,28 @@ final class PresentationController {
         if reduceMotion != value { reduceMotion = value }
     }
 
+    func setSpaces(_ value: [ScreenID: MenuBarSpace]) {
+        if spaces != value { spaces = value }
+    }
+
+    func setNotchConflicts(_ value: [ScreenID: String]) {
+        if notchConflicts != value { notchConflicts = value }
+    }
+
+    /// 열린 메뉴와 겹친 화면. 겹치기 시작하면 일시 펼침(피크/완료)은 바로 접는다.
+    func setOccluded(_ ids: Set<ScreenID>) {
+        guard occludedScreenIDs != ids else { return }
+        occludedScreenIDs = ids
+        if let target = transientTargetScreenID, ids.contains(target), transient != nil {
+            clearTransient()
+        }
+    }
+
+    /// 감지된 다른 노치 앱 이름 (설정 화면 표시용)
+    var notchConflictNames: [String] {
+        Array(Set(notchConflicts.values)).sorted()
+    }
+
     // MARK: - 화면 정책
 
     /// 일시적 펼침(피크/권한/완료 등)을 보여줄 화면
@@ -168,15 +198,28 @@ final class PresentationController {
         let isTarget = id == transientTargetScreenID
         let fullscreen = fullscreenScreenIDs.contains(id)
         let behavior = preferences.fullscreenBehavior
+        // 열린 메뉴와 겹치면 알림 펼침은 메뉴가 닫힐 때까지 미루고(접힌 상태 + 주황 점), 일시 펼침은 보이지 않는다
+        let occluded = occludedScreenIDs.contains(id)
 
         if isTarget, !(fullscreen && behavior == .hide), let alert = alertMode() {
-            return alert
+            return occluded ? compactMode(for: id) : alert
         }
         // 사용자가 직접 연 펼침은 풀스크린 설정보다 우선
         if expandedScreenID == id { return .expanded }
         if fullscreen && behavior != .showAll { return .hidden }
-        if isTarget, let transient = transientMode() { return transient }
-        return compactMode()
+        if isTarget, !occluded, let transient = transientMode() { return transient }
+        return compactMode(for: id)
+    }
+
+    /// 열린 메뉴와 겹쳐 접힌 아일랜드를 투명하게 숨기는 중인지 (알림이 대기 중이면 숨기지 않음)
+    func isConcealed(_ id: ScreenID) -> Bool {
+        guard occludedScreenIDs.contains(id) else { return false }
+        switch mode(for: id) {
+        case .idle, .working:
+            return !(id == transientTargetScreenID && alertMode() != nil)
+        default:
+            return false
+        }
     }
 
     /// 접힌 상태에서 보여줄 세션: 포커스 세션이 활동 중이면 그것, 아니면 작업 중인 첫 세션
@@ -189,9 +232,14 @@ final class PresentationController {
         session.phase.isWorking || session.phase.needsAttention || session.hasUnseenCompletion
     }
 
-    private func compactMode() -> IslandMode {
+    /// 접힌 상태. 둘 자리가 없으면(메뉴바가 숨었거나 빈 구간이 없음, "표시 안 함") 숨긴다.
+    private func compactMode(for id: ScreenID) -> IslandMode {
         guard !store.rankedSessions.isEmpty else { return .hidden }
-        return compactSession == nil ? .idle : .working
+        let mode: IslandMode = compactSession == nil ? .idle : .working
+        if let engine = layoutEngine(for: id), engine.compactPlacement(for: compactContent(for: mode)) == .none {
+            return .hidden
+        }
+        return mode
     }
 
     private func alertMode() -> IslandMode? {
@@ -247,103 +295,101 @@ final class PresentationController {
 
     // MARK: - 레이아웃
 
-    func layout(for id: ScreenID, mode: IslandMode) -> IslandLayout {
-        guard let geometry = geometries[id] else {
-            return IslandLayout(bodySize: .zero, earRadius: 0, topRadius: 0, bottomRadius: 0, headerHeight: 0)
-        }
-        return layout(for: mode, geometry: geometry)
+    func layoutEngine(for id: ScreenID) -> IslandLayoutEngine? {
+        guard let geometry = geometries[id] else { return nil }
+        return IslandLayoutEngine(
+            geometry: geometry,
+            space: spaces[id],
+            externalStyle: preferences.externalDisplayStyle,
+            overlapStyle: preferences.compactOverlapStyle,
+            notchConflict: notchConflicts[id] != nil
+        )
     }
 
-    func layout(for mode: IslandMode, geometry: NotchGeometry) -> IslandLayout {
+    /// 접힌 상태 내용 (레이아웃 선택용 폭 측정)
+    func compactContent(for mode: IslandMode) -> CompactContent {
+        if mode == .working, let session = compactSession {
+            return .session(CompactMetrics(session: session))
+        }
+        return .idle(count: store.rankedSessions.count)
+    }
+
+    func layout(for id: ScreenID, mode: IslandMode) -> IslandLayout {
+        guard let engine = layoutEngine(for: id) else {
+            return IslandLayout(size: .zero, origin: .zero, shape: IslandShapeSpec(), compact: nil)
+        }
+        return layout(for: mode, engine: engine)
+    }
+
+    func layout(for mode: IslandMode, engine: IslandLayoutEngine) -> IslandLayout {
         typealias M = IslandMetrics
-        let header = geometry.headerHeight
-        let notch = geometry.hasNotch
-        let notchWidth = geometry.notchSize.width
         let contentWidth: (CGFloat) -> CGFloat = { $0 - M.bodyPadding * 2 }
 
-        func open(width: CGFloat, body: CGFloat, radius: CGFloat) -> IslandLayout {
-            let minWidth = notch ? notchWidth + 80 : 0
-            return IslandLayout(
-                bodySize: CGSize(width: max(width, minWidth), height: header + body),
-                earRadius: notch ? 8 : 0,
-                topRadius: notch ? 0 : radius,
-                bottomRadius: radius,
-                headerHeight: header
-            )
+        func card(_ width: CGFloat, radius: CGFloat, body: @escaping (CGFloat) -> CGFloat) -> IslandLayout {
+            let compact = engine.compactPlacement(for: compactContent(for: compactSession == nil ? .idle : .working))
+            return engine.cardLayout(preferredWidth: width, radius: radius, compact: compact, bodyHeight: body)
         }
 
         switch mode {
         case .hidden:
-            if notch {
-                return IslandLayout(
-                    bodySize: CGSize(width: notchWidth, height: header),
-                    earRadius: 0, topRadius: 0, bottomRadius: 10, headerHeight: header
-                )
-            }
-            return IslandLayout(bodySize: CGSize(width: 60, height: 22), earRadius: 0, topRadius: 11, bottomRadius: 11, headerHeight: 22)
+            return engine.hiddenLayout()
 
-        case .idle:
-            let dots = M.idleDotsWidth(count: store.rankedSessions.count)
-            if notch {
-                let wing = max(28, dots + M.wingPadding + 8)
-                return IslandLayout(
-                    bodySize: CGSize(width: notchWidth + wing * 2, height: header),
-                    earRadius: 6, topRadius: 0, bottomRadius: 10, headerHeight: header
-                )
-            }
-            return IslandLayout(bodySize: CGSize(width: dots + 28, height: 22), earRadius: 0, topRadius: 11, bottomRadius: 11, headerHeight: 22)
-
-        case .working:
-            if notch {
-                return IslandLayout(
-                    bodySize: CGSize(width: notchWidth + M.workingWing * 2, height: header),
-                    earRadius: 6, topRadius: 0, bottomRadius: 12, headerHeight: header
-                )
-            }
-            let height = NotchGeometry.pillHeaderHeight
-            return IslandLayout(
-                bodySize: CGSize(width: M.pillWorkingWidth, height: height),
-                earRadius: 0, topRadius: height / 2, bottomRadius: height / 2, headerHeight: height
-            )
+        case .idle, .working:
+            return engine.compactLayout(for: compactContent(for: mode))
 
         case let .peek(sessionID, diff):
             let rows = DiffPresentation.visibleLines(diff).count
             let hasText = streamingLine(for: sessionID) != nil
             let body = M.bodyTop + M.lineHeight + 6 + M.diffRowsHeight(count: rows)
                 + (hasText ? 8 + M.lineHeight : 0) + M.bodyBottom
-            return open(width: M.peekWidth, body: body, radius: 22)
+            return card(M.peekWidth, radius: 22) { _ in body }
 
         case let .permission(request, _):
-            let detailWidth = contentWidth(M.permissionWidth) - M.detailHorizontalPadding * 2
-            let lines = TextMeasure.lineCount(
-                request.detail, font: IslandFont.monoNS, lineHeight: M.monoLineHeight,
-                width: detailWidth, maxLines: M.maxDetailLines
-            )
-            let box = CGFloat(lines) * M.monoLineHeight + M.detailVerticalPadding * 2
-            let body = M.bodyTop + M.lineHeight + 6 + box + 12 + M.buttonHeight + 14
-            return open(width: M.permissionWidth, body: body, radius: 22)
+            return card(M.permissionWidth, radius: 22) { width in
+                let lines = Self.permissionDetailLines(request, cardWidth: width)
+                let box = CGFloat(lines) * M.monoLineHeight + M.detailVerticalPadding * 2
+                return M.bodyTop + M.lineHeight + 6 + box + 12 + M.buttonHeight + 14
+            }
 
         case let .needsInput(_, message, _):
-            let lines = TextMeasure.lineCount(
-                message, font: IslandFont.bodyNS, lineHeight: M.bodyLineHeight,
-                width: contentWidth(M.needsInputWidth), maxLines: 2
-            )
-            let body = M.bodyTop + CGFloat(lines) * M.lineHeight + 10 + M.buttonHeight + 14
-            return open(width: M.needsInputWidth, body: body, radius: 22)
+            return card(M.needsInputWidth, radius: 22) { width in
+                let lines = TextMeasure.lineCount(
+                    message, font: IslandFont.bodyNS, lineHeight: M.bodyLineHeight,
+                    width: contentWidth(width), maxLines: 2
+                )
+                return M.bodyTop + CGFloat(lines) * M.lineHeight + 10 + M.buttonHeight + 14
+            }
 
         case let .done(sessionID):
             let hasText = streamingLine(for: sessionID) != nil
             let body = 2 + M.lineHeight + (hasText ? 4 + M.lineHeight : 0) + M.bodyBottom
-            return open(width: M.doneWidth, body: body, radius: 20)
+            return card(M.doneWidth, radius: 20) { _ in body }
 
         case let .failed(sessionID):
             let hasFiles = !(store.sessions[sessionID]?.turn.changedFiles.isEmpty ?? true)
             let body = 2 + M.lineHeight + (hasFiles ? 4 + M.lineHeight : 0) + M.bodyBottom
-            return open(width: M.doneWidth, body: body, radius: 20)
+            return card(M.doneWidth, radius: 20) { _ in body }
 
         case .expanded:
-            return open(width: M.expandedSize.width, body: M.expandedSize.height - header, radius: 26)
+            return card(M.expandedSize.width, radius: 26) { _ in M.expandedBodyHeight }
         }
+    }
+
+    /// 권한 요청 상세(고정폭) 줄 수. 레이아웃과 뷰가 같은 값을 쓴다.
+    static func permissionDetailLines(_ request: PermissionRequestInfo, cardWidth: CGFloat) -> Int {
+        typealias M = IslandMetrics
+        let width = cardWidth - M.bodyPadding * 2 - M.detailHorizontalPadding * 2
+        return TextMeasure.lineCount(
+            request.detail, font: IslandFont.monoNS, lineHeight: M.monoLineHeight,
+            width: width, maxLines: M.maxDetailLines
+        )
+    }
+
+    /// 열린 메뉴와 겹치는지 볼 영역 (패널 기준): 지금 아일랜드 + 카드가 펼쳐질 자리
+    func overlapZone(for id: ScreenID) -> CGRect? {
+        guard let engine = layoutEngine(for: id) else { return nil }
+        let current = layout(for: mode(for: id), engine: engine).panelRect
+        return current.union(engine.cardZone())
     }
 
     /// 설정이 켜져 있을 때만 보여줄 최근 응답 한 줄
@@ -399,9 +445,21 @@ final class PresentationController {
         }
     }
 
-    /// 아일랜드 바깥(다른 앱)을 클릭하면 사용자가 연 펼침을 접는다.
+    /// 권한 카드 "접기": 요청은 그대로 대기하고 접힌 상태(주황 점)로 줄인다. 접힌 아일랜드를 누르면 다시 펼친다.
+    func minimize(_ request: PermissionRequestInfo) {
+        suppressedPermissionIDs.insert(request.id)
+    }
+
+    /// 입력 대기 카드 "접기"
+    func minimizeInput(sessionID: String, message: String) {
+        suppressedInputKey = Self.inputKey(sessionID, message)
+    }
+
+    /// 아일랜드 바깥(다른 앱)을 클릭하면 사용자가 연 펼침과 일시 펼침(피크/완료)을 바로 접는다.
+    /// 권한 요청 · 입력 대기는 "접기"/⎋ 로만 접는다 (실수로 놓치지 않게).
     func clickedOutside() {
         if expandedScreenID != nil { expandedScreenID = nil }
+        if transient != nil { clearTransient() }
     }
 
     /// 접어 둔 알림이 있으면 다시 펼친다
@@ -420,11 +478,11 @@ final class PresentationController {
         return restored
     }
 
-    /// 펼침의 톱니 버튼: 펼침을 접고 설정 창을 연다
-    func openSettings() {
+    /// 펼침의 톱니 버튼 · 새 버전 배지: 펼침을 접고 설정 창을 연다
+    func openSettings(section: SettingsSection? = nil) {
         expandedScreenID = nil
         if let onOpenSettings {
-            onOpenSettings()
+            onOpenSettings(section)
         } else {
             actions.openSettings()
         }
@@ -476,7 +534,7 @@ final class PresentationController {
 
     // MARK: - 신호 처리
 
-    private func handleLatestSignal() {
+    func handleLatestSignal() {
         pruneTransientState()
         guard let event = store.latestSignal, event.seq != lastSignalSeq else { return }
         lastSignalSeq = event.seq
@@ -513,6 +571,13 @@ final class PresentationController {
             guard !Task.isCancelled, let self, self.transient == value else { return }
             self.transient = nil
         }
+    }
+
+    /// 타이머 없이 일시 펼침을 띄운다 (스냅숏 렌더링용)
+    func setTransientForSnapshot(_ value: Transient) {
+        transientTask?.cancel()
+        transientTask = nil
+        transient = value
     }
 
     private func clearTransient() {

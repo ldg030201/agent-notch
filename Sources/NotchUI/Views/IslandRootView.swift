@@ -1,7 +1,7 @@
 import SwiftUI
 import NotchCore
 
-/// 패널 하나의 루트 뷰. 패널 상단 가운데에 아일랜드를 둔다.
+/// 패널 하나의 루트 뷰. 패널은 화면 맨 위에 화면 폭 전체로 붙어 있고, 아일랜드는 레이아웃 위치에 놓인다.
 struct IslandRootView: View {
     let screenID: ScreenID
     let presentation: PresentationController
@@ -9,23 +9,20 @@ struct IslandRootView: View {
     let viewState: IslandViewState
 
     var body: some View {
-        VStack(spacing: 0) {
-            if let geometry = presentation.geometries[screenID] {
-                IslandContainer(screenID: screenID, geometry: geometry, presentation: presentation, viewState: viewState)
-                    .padding(.top, geometry.islandTopInset)
+        ZStack(alignment: .topLeading) {
+            if presentation.geometries[screenID] != nil {
+                IslandContainer(screenID: screenID, presentation: presentation, viewState: viewState)
             }
-            Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .ignoresSafeArea()
     }
 }
 
 /// 아일랜드 본체: 검정 모양 + 모드별 내용.
-/// 크기는 스프링으로 애니메이션하고, 모드 종류가 바뀌면 내용을 잠깐 숨겼다가 크기 변경 후 페이드인한다.
+/// 크기 · 위치는 스프링으로 애니메이션하고, 모드 종류가 바뀌면 내용을 잠깐 숨겼다가 크기 변경 후 페이드인한다.
 struct IslandContainer: View {
     let screenID: ScreenID
-    let geometry: NotchGeometry
     let presentation: PresentationController
 
     let viewState: IslandViewState
@@ -34,36 +31,35 @@ struct IslandContainer: View {
 
     var body: some View {
         let mode = presentation.mode(for: screenID)
-        let layout = presentation.layout(for: mode, geometry: geometry)
+        let layout = presentation.layout(for: screenID, mode: mode)
+        let concealed = presentation.isConcealed(screenID)
         let reduceMotion = presentation.reduceMotion || environmentReduceMotion
         let displayMode = resolvedDisplayMode(current: mode)
         let hovered = presentation.hoveredScreenID == screenID && !mode.isOpen
-        let shape = IslandShape(
-            earRadius: layout.earRadius,
-            topRadius: layout.topRadius,
-            bottomRadius: layout.bottomRadius
-        )
+        let shape = IslandShape(spec: layout.shape)
+        let invisible = mode == .hidden || concealed
 
-        ZStack(alignment: .top) {
+        ZStack(alignment: .topLeading) {
             IslandContentView(
                 mode: displayMode,
                 layout: layout,
-                geometry: geometry,
                 presentation: presentation,
                 reduceMotion: reduceMotion
             )
-            .frame(width: layout.bodySize.width, height: layout.bodySize.height, alignment: .top)
+            .frame(width: layout.size.width, height: layout.size.height, alignment: .topLeading)
             .opacity(viewState.contentVisible ? 1 : 0)
         }
-        .frame(width: layout.frameSize.width, height: layout.frameSize.height, alignment: .top)
+        .frame(width: layout.size.width, height: layout.size.height, alignment: .topLeading)
         .background(shape.fill(Palette.background))
         .clipShape(shape)
         .contentShape(shape)
-        .opacity(mode == .hidden ? 0 : 1)
+        .opacity(invisible ? 0 : 1)
+        .allowsHitTesting(!invisible)
         .scaleEffect(hovered && !reduceMotion ? 1.02 : 1, anchor: .top)
+        .offset(x: layout.origin.x, y: layout.origin.y)
         .animation(IslandMotion.resize(reduceMotion: reduceMotion), value: layout)
         .animation(IslandMotion.hover, value: hovered)
-        .animation(.easeOut(duration: 0.2), value: mode == .hidden)
+        .animation(.easeOut(duration: 0.2), value: invisible)
         .onTapGesture {
             presentation.handleIslandClick(on: screenID)
         }
@@ -136,7 +132,6 @@ final class IslandViewState {
 struct IslandContentView: View {
     let mode: IslandMode
     let layout: IslandLayout
-    let geometry: NotchGeometry
     let presentation: PresentationController
     let reduceMotion: Bool
 
@@ -145,21 +140,15 @@ struct IslandContentView: View {
         case .hidden:
             Color.clear
         case .idle:
-            IdleWingsView(geometry: geometry, layout: layout, store: presentation.store, reduceMotion: reduceMotion)
+            IdleCompactView(layout: layout, store: presentation.store, reduceMotion: reduceMotion)
         case .working:
-            CompactWingsView(
-                session: presentation.compactSession,
-                geometry: geometry,
-                height: layout.headerHeight,
-                reduceMotion: reduceMotion
-            )
+            CompactSessionView(session: presentation.compactSession, layout: layout, reduceMotion: reduceMotion)
         case let .peek(sessionID, diff):
             PeekView(
                 session: presentation.store.sessions[sessionID],
                 diff: diff,
                 textLine: presentation.streamingLine(for: sessionID),
-                geometry: geometry,
-                headerHeight: layout.headerHeight,
+                layout: layout,
                 actions: presentation.actions,
                 reduceMotion: reduceMotion
             )
@@ -168,8 +157,7 @@ struct IslandContentView: View {
                 request: request,
                 queueCount: queueCount,
                 session: presentation.store.sessions[request.sessionID],
-                geometry: geometry,
-                headerHeight: layout.headerHeight,
+                layout: layout,
                 presentation: presentation,
                 reduceMotion: reduceMotion
             )
@@ -179,9 +167,8 @@ struct IslandContentView: View {
                 sessionID: sessionID,
                 message: message,
                 isPermissionPrompt: isPermissionPrompt,
-                geometry: geometry,
-                headerHeight: layout.headerHeight,
-                actions: presentation.actions,
+                layout: layout,
+                presentation: presentation,
                 reduceMotion: reduceMotion
             )
         case let .done(sessionID):
@@ -189,24 +176,17 @@ struct IslandContentView: View {
                 session: presentation.store.sessions[sessionID],
                 failed: false,
                 textLine: presentation.streamingLine(for: sessionID),
-                geometry: geometry,
-                headerHeight: layout.headerHeight
+                layout: layout
             )
         case let .failed(sessionID):
             CompletionView(
                 session: presentation.store.sessions[sessionID],
                 failed: true,
                 textLine: nil,
-                geometry: geometry,
-                headerHeight: layout.headerHeight
+                layout: layout
             )
         case .expanded:
-            ExpandedView(
-                geometry: geometry,
-                headerHeight: layout.headerHeight,
-                presentation: presentation,
-                reduceMotion: reduceMotion
-            )
+            ExpandedView(layout: layout, presentation: presentation, reduceMotion: reduceMotion)
         }
     }
 }

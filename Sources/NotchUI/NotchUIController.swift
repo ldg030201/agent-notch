@@ -30,7 +30,12 @@ public final class NotchUIController {
     private var started = false
 
     /// 업데이트 상태 (App 이 주입. 없으면 버전 탭에 업데이트 기능을 숨긴다)
-    public var updateProvider: UpdateProvider?
+    public var updateProvider: UpdateProvider? {
+        didSet {
+            presentation.updateProvider = updateProvider
+            settingsWindow?.setUpdateProvider(updateProvider)
+        }
+    }
 
     public init(store: SessionStore, preferences: AppPreferences, actions: IslandActions, settings: SettingsProvider) {
         self.store = store
@@ -43,7 +48,7 @@ public final class NotchUIController {
         self.screenManager = ScreenManager(presentation: presentation) { screenID in
             AnyView(IslandRootView(screenID: screenID, presentation: presentation, viewState: IslandViewState()))
         }
-        presentation.onOpenSettings = { [weak self] in self?.showSettings() }
+        presentation.onOpenSettings = { [weak self] section in self?.showSettings(section: section) }
     }
 
     /// 모든 화면에 패널을 만들고 스토어 관찰을 시작한다.
@@ -64,9 +69,23 @@ public final class NotchUIController {
 
     /// 설정 창 열기 (이미 열려 있으면 앞으로)
     public func showSettings() {
-        let controller = settingsWindow ?? SettingsWindowController(preferences: preferences, provider: settings)
+        showSettings(section: nil)
+    }
+
+    func showSettings(section: SettingsSection?) {
+        let controller = settingsWindow ?? makeSettingsWindow()
         settingsWindow = controller
-        controller.show()
+        controller.show(section: section)
+    }
+
+    private func makeSettingsWindow() -> SettingsWindowController {
+        let controller = SettingsWindowController(preferences: preferences, provider: settings, presentation: presentation)
+        controller.setUpdateProvider(updateProvider)
+        // 시스템 설정에서 손쉬운 사용 권한을 허용하고 돌아오면 메뉴바를 바로 다시 잰다
+        controller.onAccessibilityChange = { [weak self] _ in
+            self?.screenManager.refreshMenuBarSpace()
+        }
+        return controller
     }
 
     /// 마우스가 있는 화면에서 펼침/접기

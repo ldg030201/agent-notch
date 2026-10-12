@@ -66,24 +66,6 @@ enum IslandMode: Equatable {
     }
 }
 
-/// 아일랜드 크기와 모양. SwiftUI 뷰와 클릭 영역 계산이 같은 값을 쓴다.
-struct IslandLayout: Equatable {
-    /// 보이는 몸체 크기 (귀 제외)
-    var bodySize: CGSize
-    /// 노치 화면 위쪽 모서리의 오목한 "귀" 반경 (알약이면 0)
-    var earRadius: CGFloat
-    /// 알약 위쪽 모서리 반경 (노치 화면이면 0)
-    var topRadius: CGFloat
-    var bottomRadius: CGFloat
-    /// 상단 행(날개) 높이
-    var headerHeight: CGFloat
-
-    /// 귀까지 포함한 전체 프레임 크기
-    var frameSize: CGSize {
-        CGSize(width: bodySize.width + earRadius * 2, height: bodySize.height)
-    }
-}
-
 // MARK: - 레이아웃 상수
 
 enum IslandMetrics {
@@ -112,6 +94,32 @@ enum IslandMetrics {
     static let needsInputWidth: CGFloat = 440
     static let doneWidth: CGFloat = 430
     static let expandedSize = CGSize(width: 620, height: 300)
+    /// 펼침 본문 높이 (상단 행 제외)
+    static let expandedBodyHeight: CGFloat = 268
+    /// 노치 없는 화면에서 카드 최대 폭 (전체 펼침 제외)
+    static let externalCardMaxWidth: CGFloat = 460
+
+    /// 메뉴바 아이템과 띄울 여백
+    static let menuBarMargin: CGFloat = 8
+    /// 접힌 날개: 양쪽 날개 최대/최소 폭
+    static let minBothWing: CGFloat = 72
+    /// 접힌 날개 하나만 쓸 때 최대 폭
+    static let maxSingleWing: CGFloat = 240
+    /// 노치 아래 띠
+    static let stripHeight: CGFloat = 22
+    static let stripExtraWidth: CGFloat = 80
+    /// 노치 아래 선
+    static let lineThickness: CGFloat = 3
+    /// 메뉴바 안 점
+    static let menuBarDotSize: CGFloat = 12
+    /// 메뉴바 안 알약 최소 폭 (이보다 좁으면 점)
+    static let minMenuBarPill: CGFloat = 80
+    /// 카드 상단 행을 목 안(날개)에 두려면 필요한 날개 폭
+    static let headerWingMin: CGFloat = 96
+    /// 목 아래에 따로 두는 상단 행 높이
+    static let headerRowHeight: CGFloat = 28
+    /// 메뉴바 알약 안에 카드 상단 행을 둘 최소 폭
+    static let pillHeaderMin: CGFloat = 220
 
     /// 권한 요청 상세(고정폭) 최대 줄 수
     static let maxDetailLines = 4

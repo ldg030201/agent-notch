@@ -4,14 +4,18 @@ import SwiftUI
 import NotchCore
 import os
 
-/// 화면마다 패널 하나를 두고, 클릭 통과·마우스 추적·풀스크린 감지·단축키를 처리한다.
+/// 화면마다 패널 하나를 두고, 클릭 통과·마우스 추적·풀스크린 감지·단축키·메뉴바 겹침 감시를 처리한다.
 @MainActor
 final class ScreenManager {
     private let presentation: PresentationController
     private let makeRootView: @MainActor (ScreenID) -> AnyView
+    private let spaceMonitor = MenuBarSpaceMonitor()
+    private let overlapMonitor = OverlapMonitor()
 
     private var panels: [ScreenID: NotchPanel] = [:]
     private var lastModes: [ScreenID: IslandMode] = [:]
+    /// 화면별 클릭 영역 (Cocoa 전역). 마우스 이동마다 레이아웃을 다시 계산하지 않도록 상태가 바뀔 때만 갱신한다.
+    private var hitRectCache: [ScreenID: [CGRect]] = [:]
     private var eventMonitors: [Any] = []
     private var notificationTokens: [(NotificationCenter, NSObjectProtocol)] = []
     private var fullscreenTask: Task<Void, Never>?
@@ -41,6 +45,7 @@ final class ScreenManager {
         installEventMonitors()
         installNotifications()
         startFullscreenPolling()
+        startOverlapMonitoring()
         armModeObservation()
         updateMouseState()
     }
@@ -57,12 +62,15 @@ final class ScreenManager {
         fullscreenTask = nil
         fullscreenRefreshTask?.cancel()
         fullscreenRefreshTask = nil
+        spaceMonitor.stop()
+        overlapMonitor.stop()
         for panel in panels.values {
             panel.orderOut(nil)
             panel.contentView = nil
         }
         panels.removeAll()
         lastModes.removeAll()
+        hitRectCache.removeAll()
     }
 
     /// 마우스가 있는 화면(또는 정책상 대상 화면)에서 펼침 토글
@@ -83,6 +91,7 @@ final class ScreenManager {
             panel.contentView = nil
             panels.removeValue(forKey: id)
             lastModes.removeValue(forKey: id)
+            hitRectCache.removeValue(forKey: id)
         }
 
         presentation.updateScreens(geometries)
@@ -98,6 +107,7 @@ final class ScreenManager {
             }
         }
         logger.info("패널 재구성: 화면 \(geometries.count, privacy: .public)개")
+        spaceMonitor.screensChanged()
         updateMouseState()
     }
 
@@ -125,32 +135,53 @@ final class ScreenManager {
 
     // MARK: - 모드 변화 감시 (키 윈도우 반납, 클릭 영역 갱신)
 
+    /// 화면별 표시 상태 (모드 · 레이아웃 · 투명 숨김)
+    private struct ScreenState {
+        var mode: IslandMode
+        var layout: IslandLayout
+        var concealed: Bool
+    }
+
     private func armModeObservation() {
         guard running else { return }
         let ids = Array(panels.keys)
         let current = generation
-        let modes = withObservationTracking {
-            Dictionary(uniqueKeysWithValues: ids.map { ($0, presentation.mode(for: $0)) })
+        let states = withObservationTracking {
+            Dictionary(uniqueKeysWithValues: ids.map { id -> (ScreenID, ScreenState) in
+                let mode = presentation.mode(for: id)
+                return (id, ScreenState(
+                    mode: mode,
+                    layout: presentation.layout(for: id, mode: mode),
+                    concealed: presentation.isConcealed(id)
+                ))
+            })
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, self.running, self.generation == current else { return }
                 self.armModeObservation()
             }
         }
-        applyModes(modes)
+        applyModes(states)
     }
 
-    private func applyModes(_ modes: [ScreenID: IslandMode]) {
-        for (id, mode) in modes where lastModes[id] != mode {
-            lastModes[id] = mode
+    private func applyModes(_ states: [ScreenID: ScreenState]) {
+        var becameCompact = false
+        for (id, state) in states {
+            hitRectCache[id] = hitRects(state, geometry: presentation.geometries[id])
+            guard lastModes[id] != state.mode else { continue }
+            let wasCompact = lastModes[id].map { $0 == .idle || $0 == .working } ?? false
+            if !wasCompact, state.mode == .idle || state.mode == .working { becameCompact = true }
+            lastModes[id] = state.mode
             guard let panel = panels[id] else { continue }
             // 접히면 키 윈도우를 반납해 원래 앱으로 키보드 포커스를 돌려준다
-            if !mode.wantsKey, panel.isKeyWindow {
+            if !state.mode.wantsKey, panel.isKeyWindow {
                 panel.orderOut(nil)
                 panel.orderFrontRegardless()
             }
         }
         updateMouseState()
+        // 접힌 상태가 새로 보이기 시작하면 메뉴바 빈 공간을 바로 다시 잰다
+        if becameCompact { spaceMonitor.refresh() }
     }
 
     // MARK: - 마우스 추적 / 클릭 통과
@@ -196,7 +227,7 @@ final class ScreenManager {
         var hovered: ScreenID?
         for (id, panel) in panels {
             let inside = id == active?.screenID
-                && (islandRect(for: id).map { Self.containsInclusive($0, location) } ?? false)
+                && (hitRectCache[id] ?? []).contains { Self.containsInclusive($0, location) }
             if inside { hovered = id }
             if panel.ignoresMouseEvents == inside {
                 panel.ignoresMouseEvents = !inside
@@ -205,13 +236,20 @@ final class ScreenManager {
         presentation.setHoveredScreen(hovered)
     }
 
-    /// 지금 모드의 아일랜드 사각형 (화면 좌표). 숨김이면 nil.
-    private func islandRect(for id: ScreenID) -> CGRect? {
-        guard let geometry = presentation.geometries[id] else { return nil }
-        let mode = presentation.mode(for: id)
-        guard mode != .hidden else { return nil }
-        let layout = presentation.layout(for: mode, geometry: geometry)
-        return geometry.islandRect(size: layout.frameSize)
+    /// 아일랜드가 클릭을 받는 영역들 (Cocoa 전역 좌표). 숨김 · 투명 숨김이면 빈 배열.
+    private func hitRects(_ state: ScreenState, geometry: NotchGeometry?) -> [CGRect] {
+        guard let geometry, state.mode != .hidden, !state.concealed else { return [] }
+        let layout = state.layout
+        return layout.hitRects.map { rect in
+            geometry.screenRect(fromPanel: rect.offsetBy(dx: layout.origin.x, dy: layout.origin.y))
+        }
+    }
+
+    /// 화면 좌표가 아일랜드 위인지
+    func isIslandHit(_ location: CGPoint) -> Bool {
+        hitRectCache.values.contains { rects in
+            rects.contains { Self.containsInclusive($0, location) }
+        }
     }
 
     /// 화면 맨 위 픽셀(y == maxY)도 포함하는 판정
@@ -270,6 +308,60 @@ final class ScreenManager {
             }
         }
         notificationTokens.append((workspace, motionToken))
+    }
+
+    // MARK: - 메뉴바 빈 공간 · 열린 메뉴 · 다른 노치 앱 감시
+
+    private func startOverlapMonitoring() {
+        spaceMonitor.screensProvider = { [weak self] in
+            guard let self else { return [] }
+            return self.presentation.screenOrder.compactMap { self.presentation.geometries[$0] }
+        }
+        // 1초 주기 측정은 접힌 상태가 보이는 화면이 있을 때만
+        spaceMonitor.shouldPoll = { [weak self] in
+            guard let self else { return false }
+            return self.panels.keys.contains { id in
+                let mode = self.presentation.mode(for: id)
+                return mode == .idle || mode == .working
+            }
+        }
+        spaceMonitor.onUpdate = { [weak self] spaces in
+            self?.presentation.setSpaces(spaces)
+        }
+        spaceMonitor.start()
+
+        overlapMonitor.ourLevel = NotchPanel.islandLevel.rawValue
+        overlapMonitor.targetsProvider = { [weak self] in
+            self?.overlapTargets() ?? []
+        }
+        overlapMonitor.onChange = { [weak self] state in
+            guard let self else { return }
+            self.presentation.setOccluded(state.occluded)
+            self.presentation.setNotchConflicts(state.notchConflicts)
+        }
+        overlapMonitor.start { [weak self] location in
+            self?.isIslandHit(location) ?? false
+        }
+    }
+
+    /// 메뉴바 빈 공간을 지금 다시 잰다 (손쉬운 사용 권한 변경 등)
+    func refreshMenuBarSpace() {
+        spaceMonitor.refresh(forceAX: true)
+    }
+
+    /// 아일랜드가 보이는 화면의 감시 영역 (지금 아일랜드 + 카드가 펼쳐질 자리)
+    private func overlapTargets() -> [OverlapScanner.Target] {
+        panels.keys.compactMap { id in
+            guard let geometry = presentation.geometries[id], presentation.mode(for: id) != .hidden,
+                  let zone = presentation.overlapZone(for: id)
+            else { return nil }
+            return OverlapScanner.Target(
+                id: id,
+                screenFrame: geometry.frame,
+                zone: geometry.screenRect(fromPanel: zone),
+                notchRect: geometry.notchRect?.insetBy(dx: 6, dy: 4)
+            )
+        }
     }
 
     // MARK: - 풀스크린 감지 (best-effort)

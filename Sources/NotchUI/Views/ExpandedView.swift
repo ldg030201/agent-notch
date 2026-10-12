@@ -3,8 +3,7 @@ import NotchCore
 
 /// 전체 펼침 (620×300): 왼쪽 세션 목록(우선순위순) / 오른쪽 포커스 세션 상세
 struct ExpandedView: View {
-    let geometry: NotchGeometry
-    let headerHeight: CGFloat
+    let layout: IslandLayout
     let presentation: PresentationController
     let reduceMotion: Bool
 
@@ -13,11 +12,16 @@ struct ExpandedView: View {
         let sessions = store.rankedSessions
         let detail = store.focusedSession ?? sessions.first
 
-        VStack(spacing: 0) {
-            WingRow(geometry: geometry, height: headerHeight) {
-                Text("세션 \(sessions.count)")
-                    .foregroundStyle(Palette.secondary)
-            } trailing: {
+        CardScaffold(layout: layout) {
+            Text("세션 \(sessions.count)")
+                .foregroundStyle(Palette.secondary)
+        } trailing: {
+            HStack(spacing: 6) {
+                if let provider = presentation.updateProvider, provider.hasUpdate {
+                    UpdateBadge(version: provider.latestVersion) {
+                        presentation.openSettings(section: .version)
+                    }
+                }
                 Button {
                     presentation.openSettings()
                 } label: {
@@ -28,38 +32,39 @@ struct ExpandedView: View {
                 .accessibilityLabel("설정")
                 .help("설정")
             }
-
-            if sessions.isEmpty {
-                emptyState
-            } else {
-                HStack(alignment: .top, spacing: 12) {
-                    SessionListView(
-                        sessions: sessions,
-                        selectedID: detail?.id,
-                        pinnedID: store.pinnedSessionID,
-                        actions: presentation.actions,
-                        reduceMotion: reduceMotion
-                    )
-                    .frame(width: 180)
-
-                    if let detail {
-                        SessionDetailView(
-                            session: detail,
-                            textLine: presentation.streamingLine(for: detail.id),
+        } content: {
+            Group {
+                if sessions.isEmpty {
+                    emptyState
+                } else {
+                    HStack(alignment: .top, spacing: 12) {
+                        SessionListView(
+                            sessions: sessions,
+                            selectedID: detail?.id,
+                            pinnedID: store.pinnedSessionID,
                             actions: presentation.actions,
                             reduceMotion: reduceMotion
                         )
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .frame(width: 180)
+
+                        if let detail {
+                            SessionDetailView(
+                                session: detail,
+                                textLine: presentation.streamingLine(for: detail.id),
+                                actions: presentation.actions,
+                                reduceMotion: reduceMotion
+                            )
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        }
                     }
+                    .padding(.horizontal, 14)
+                    .padding(.top, 6)
+                    .padding(.bottom, 14)
                 }
-                .padding(.horizontal, 14)
-                .padding(.top, 6)
-                .padding(.bottom, 14)
             }
+            .font(IslandFont.body)
+            .foregroundStyle(Palette.text)
         }
-        .font(IslandFont.body)
-        .foregroundStyle(Palette.text)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private var emptyState: some View {
@@ -77,6 +82,27 @@ struct ExpandedView: View {
     }
 }
 
+/// 펼친 아일랜드 상단의 작은 파란 "새 버전" 배지 (누르면 설정의 버전 탭)
+struct UpdateBadge: View {
+    let version: String?
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text("새 버전")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Palette.badgeText)
+                .padding(.horizontal, 7)
+                .frame(height: 18)
+                .background(Palette.badgeBackground, in: Capsule())
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(version.map { "새 버전 \($0)" } ?? "새 버전")
+        .help(version.map { "새 버전 \($0) — 눌러서 업데이트" } ?? "새 버전 — 눌러서 업데이트")
+    }
+}
+
 // MARK: - 세션 목록
 
 struct SessionListView: View {
@@ -87,7 +113,7 @@ struct SessionListView: View {
     let reduceMotion: Bool
 
     var body: some View {
-        ScrollView(.vertical) {
+        IslandScrollable {
             VStack(spacing: 2) {
                 ForEach(sessions) { session in
                     SessionRow(
@@ -100,7 +126,6 @@ struct SessionListView: View {
                 }
             }
         }
-        .scrollIndicators(.never)
     }
 }
 
@@ -112,8 +137,8 @@ struct SessionRow: View {
     let reduceMotion: Bool
 
     var body: some View {
-        TimelineView(.everyMinute) { context in
-            let subtitle = IslandFormat.subtitle(session, now: context.date)
+        IslandClock { now in
+            let subtitle = IslandFormat.subtitle(session, now: now)
             Button {
                 // 세션 선택 = 확인 처리 (App 의 IslandActions 구현이 markSeen 도 한다)
                 actions.focus(sessionID: session.id)
@@ -285,14 +310,14 @@ struct ElapsedText: View {
         Group {
             if session.phase.isWorking || session.phase.needsAttention,
                let start = session.turnStartedAt ?? session.turn.startedAt {
-                TimelineView(.periodic(from: .now, by: 1)) { context in
-                    Text(IslandFormat.duration(context.date.timeIntervalSince(start)))
+                IslandClock(everySecond: true) { now in
+                    Text(IslandFormat.duration(now.timeIntervalSince(start)))
                 }
             } else if session.phase == .completed, let duration = IslandFormat.turnDuration(session) {
                 Text("완료 · \(IslandFormat.duration(duration))")
             } else {
-                TimelineView(.everyMinute) { context in
-                    Text("유휴 · \(IslandFormat.idleText(since: session.lastEventAt, now: context.date))")
+                IslandClock { now in
+                    Text("유휴 · \(IslandFormat.idleText(since: session.lastEventAt, now: now))")
                 }
             }
         }
