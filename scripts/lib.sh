@@ -107,3 +107,39 @@ dump_changelog() {
   swift_build >&2
   "$(swift_bin_dir)/AgentNotch" --dump-changelog "$ROOT/docs/changelog.json"
 }
+
+# ── 실행 · 종료 (run.sh · stop.sh · dev.sh 공용) ─────────────────────────
+
+# 이 판(정식/테스트)의 앱 프로세스를 찾는 패턴. build/ 든 /Applications 든 같은 판이면 잡는다
+# (두 사본은 소켓을 같이 써서 함께 뜰 수 없다). notch-hook 헬퍼는 잡지 않는다.
+app_process_pattern() {
+  printf '/%s\\.app/Contents/MacOS/AgentNotch( |$)' "$APP_NAME"
+}
+
+# 실행 중인 앱을 끈다. SIGTERM 으로 정상 종료(소켓 정리)를 5초 기다리고, 그래도 남으면 강제로 끈다.
+# 끈 게 있으면 0, 원래 꺼져 있었으면 1.
+stop_running_app() {
+  local pattern
+  pattern="$(app_process_pattern)"
+  pgrep -f "$pattern" >/dev/null 2>&1 || return 1
+  pkill -TERM -f "$pattern" 2>/dev/null || true
+  for _ in $(seq 1 50); do
+    pgrep -f "$pattern" >/dev/null 2>&1 || return 0
+    sleep 0.1
+  done
+  pkill -9 -f "$pattern" 2>/dev/null || true
+  sleep 0.2
+  return 0
+}
+
+# 앱을 띄운다. 인자는 앱에 그대로 넘기고, AGENT_NOTCH_SOCKET 이 있으면 환경변수로 전달한다.
+launch_app() {
+  local open_args=(-n "$APP")
+  if [[ -n "${AGENT_NOTCH_SOCKET:-}" ]]; then
+    open_args+=(--env "AGENT_NOTCH_SOCKET=$AGENT_NOTCH_SOCKET")
+  fi
+  if [[ $# -gt 0 ]]; then
+    open_args+=(--args "$@")
+  fi
+  open "${open_args[@]}"
+}

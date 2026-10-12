@@ -31,6 +31,8 @@
 
 - 개발 중에는 정식 번들을 만들지 않는다. brew 로 설치해 쓰는 배포본과 헷갈린다. 실수로 만들었으면 `build/AgentNotch.app` 을 지운다.
 - **빌드했다고 화면이 바뀌지 않는다.** 떠 있는 앱은 옛 바이너리다. `scripts/dev.sh` 가 끄고 다시 띄운다 (`watch` 를 붙이면 저장할 때마다).
+  정식판(`build/AgentNotch.app`)은 `scripts/run.sh` (필요하면 `--build`) 로 다시 띄우고 `scripts/stop.sh` 로 끈다.
+  `run.sh` 는 소켓이 열려 훅을 받을 준비가 될 때까지 기다렸다가 결과를 알려준다.
 
 ## 화면 없이 확인하기
 

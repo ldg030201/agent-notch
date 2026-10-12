@@ -248,6 +248,8 @@ VARIANT=test scripts/build.sh     # build/AgentNotch-Test.app 만 만들기
 | 명령 | 하는 일 |
 |---|---|
 | `scripts/build.sh` | `build/AgentNotch.app` (정식판). 버전 세 곳이 다르면 멈춰요. 서명 인증서가 없으면 ad-hoc |
+| `scripts/run.sh` | 빌드된 `build/AgentNotch.app` 을 다시 띄워요 (켜져 있으면 끄고 켬, 없으면 먼저 빌드). `--build` 로 새로 빌드, 그 밖의 인자는 앱에 그대로 (`--demo` 등) |
+| `scripts/stop.sh` | 실행 중인 앱을 꺼요 (정상 종료로 소켓 정리, 5초 안에 안 꺼지면 강제). 테스트판은 `VARIANT=test` |
 | `scripts/simulate-events.sh` | `Fixtures/events/*.json` 을 실행 중인 앱에 훅처럼 흘려요 (`~/.claude` 를 건드리지 않음) |
 | `AgentNotch --render-island all <폴더> --style both` | 아일랜드 장면을 PNG 로 저장 (권한 불필요, 가짜 데이터) |
 | `AgentNotch --demo` | 데모 시나리오로 시작 (`open <앱> --args --demo`) |

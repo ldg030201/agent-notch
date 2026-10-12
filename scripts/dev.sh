@@ -23,16 +23,6 @@ APP_ARGS=("$@")
 LOG="$ROOT/build/dev-build.log"
 mkdir -p "$ROOT/build"
 
-stop_app() {
-  pkill -f "$APP_NAME.app/Contents/MacOS/AgentNotch" 2>/dev/null || return 0
-  # 소켓 파일을 정리하고 끝날 때까지 잠깐 기다린다 (바로 띄우면 "이미 실행 중" 으로 끝난다)
-  for _ in $(seq 1 30); do
-    pgrep -f "$APP_NAME.app/Contents/MacOS/AgentNotch" >/dev/null 2>&1 || return 0
-    sleep 0.1
-  done
-  pkill -9 -f "$APP_NAME.app/Contents/MacOS/AgentNotch" 2>/dev/null || true
-}
-
 build() {
   if "$ROOT/scripts/build.sh" >"$LOG" 2>&1; then
     return 0
@@ -46,22 +36,11 @@ build() {
   return 1
 }
 
-launch() {
-  local open_args=(-n "$APP")
-  if [[ -n "${AGENT_NOTCH_SOCKET:-}" ]]; then
-    open_args+=(--env "AGENT_NOTCH_SOCKET=$AGENT_NOTCH_SOCKET")
-  fi
-  if [[ ${#APP_ARGS[@]} -gt 0 ]]; then
-    open_args+=(--args "${APP_ARGS[@]}")
-  fi
-  open "${open_args[@]}"
-}
-
 cycle() {
   printf '\n\033[2m──\033[0m %s \033[2m빌드…\033[0m\n' "$(date +%H:%M:%S)"
   build || return 1
-  stop_app
-  launch
+  stop_running_app || true
+  launch_app ${APP_ARGS[@]+"${APP_ARGS[@]}"}
   printf '\033[32m✓\033[0m %s 실행 중\n' "$APP_NAME"
 }
 
