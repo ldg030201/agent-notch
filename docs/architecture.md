@@ -51,8 +51,8 @@ Claude Code (CLI · 데스크톱 앱)
 | `PreToolUse` | phase `runningTool`, `currentActivity` 생성(툴 요약), 타임라인 추가. `AskUserQuestion` 이면 `waitingInput` + `needsInput` |
 | `PostToolUse` | 해당 `tool_use_id` 활동 성공 처리, diff 계산(Edit/MultiEdit/Write/NotebookEdit/Bash `bashEditDiff`) → `lastDiff`, 턴 요약 누적, 신호 `edited` |
 | `PostToolUseFailure` | 활동 실패 처리, phase `thinking` |
-| `PermissionRequest` | `PermissionRequestInfo` 생성 → 대기열, phase `waitingPermission`, 신호 `permissionRequested`, 요청 ID 반환 |
-| `Notification` | `lastNotification` 갱신. `elicitation_dialog`/`agent_needs_input` → `waitingInput` + `needsInput`. `permission_prompt` 인데 해당 세션의 훅 대기 요청이 없으면 `waitingPermission` + `needsInput` |
+| `PermissionRequest` | `PermissionRequestInfo` 생성 → 대기열, phase `waitingPermission`, 신호 `permissionRequested`, 요청 ID 반환. 단 `AskUserQuestion` / `ExitPlanMode` 는 대기열에 넣지 않고 바로 결정 없음(Claude Code 가 `updatedInput` 없는 allow 를 무시하므로) → 입력 대기 카드 |
+| `Notification` | `lastNotification` 갱신. `elicitation_dialog`/`agent_needs_input` → `waitingInput` + `needsInput`. `permission_prompt` 인데 해당 세션의 훅 대기 요청이 없으면 `waitingPermission` + `needsInput`. `idle_prompt` → 작업 중 · 훅 대기 없는 승인 대기 · 입력 대기를 `idle` 로 정리 (터미널에서 거부/Esc 한 경우 약 60초 뒤 복구) |
 | `MessageDisplay` | `delta` 를 `streamingText` 뒤에 붙임(최근 2000자 유지) |
 | `Stop` | phase `completed`, `lastAssistantMessage`, 미확인 완료 표시, 신호 `completed`, 해당 세션 남은 권한 대기 정리 |
 | `StopFailure` | phase `failed`, `errorMessage`, 신호 `failed` |
@@ -61,6 +61,9 @@ Claude Code (CLI · 데스크톱 앱)
 | `SessionEnd` | 세션 제거, 해당 세션 권한 대기 정리 |
 
 - 처음 보는 `session_id` 의 이벤트가 오면(앱을 세션 도중 켠 경우) payload 의 `cwd` 로 세션을 즉석 생성한다.
+- 오래된 권한 대기 정리: 다른 경로(터미널)에서 이미 답한 요청은 **같은 호출의** `PostToolUse` / `PostToolUseFailure`
+  (같은 에이전트 · 툴 이름 · 입력)가 오면 결정 없음으로 풀어준다. 병렬 형제 툴이 있어서 `PreToolUse` 는 기준으로 쓰지 않는다.
+  `UserPromptSubmit` · `Stop` · `StopFailure` · `SessionEnd` · `SubagentStop` 은 해당 범위의 대기를 모두 정리한다.
 - 모든 payload 필드는 선택적으로 취급한다 (버전에 따라 필드가 없거나 늘어날 수 있음). 세부 스키마는 `docs/hook-events.md`.
 
 ## 5. 주로 볼 세션 (포커스) 규칙
@@ -81,7 +84,7 @@ Claude Code (CLI · 데스크톱 앱)
 | idle | 작업 중인 세션 없음 | 오른쪽 날개에 세션 수만큼 점 (작업 중=초록, 나머지=회색) | 노치폭+50 × 노치높이 |
 | working | 포커스 세션 작업 중 | 왼쪽: 스피너 + 프로젝트명 / 오른쪽: 현재 툴 + `+N −M` | 노치폭+200 × 노치높이 |
 | peek | `edited` 신호 (설정 on) | 파일명·줄번호, 미니 diff 3줄, 스트리밍 텍스트 한 줄 | 460 × 160 |
-| permission | `permissionRequested` | 툴 · 명령어, [허용] [항상 허용] [거부] [터미널로]. 해결될 때까지 유지 | 480 × 170 |
+| permission | `permissionRequested` | 툴 · 명령어, [허용] [항상 허용] [거부] [접기] [터미널로]. 해결될 때까지 유지 (아래 "권한 카드 안전 규칙") | 480 × 170 |
 | needsInput | `needsInput` | 질문 메시지 + [터미널로] | 440 × 110 |
 | done / failed | `completed` / `failed` | 체크(또는 경고) + 소요 시간, 변경 파일 수 `+N −M`, 마지막 응답 한 줄. 일정 시간 후 접힘 | 430 × 105 |
 | expanded | 아일랜드 클릭 | 왼쪽: 세션 목록(우선순위순, 고정 핀) / 오른쪽: 포커스 세션 타임라인 · diff · 최근 응답 | 620 × 300 |
@@ -94,6 +97,14 @@ Claude Code (CLI · 데스크톱 앱)
 - 아일랜드는 활성화하지 않는 패널(non-activating)이라 알림이 와도 다른 앱의 키보드 포커스를 뺏지 않는다.
   사용자가 아일랜드를 클릭해 키 윈도우가 됐을 때만 단축키가 동작한다:
   `⌘↩` 허용, `⌥⌘↩` 항상 허용, `⌘⌫` 거부, `⎋` 접기(요청은 대기 유지).
+
+### 권한 카드 안전 규칙
+
+- 명령의 안 보이는 문자를 드러낸다: 줄바꿈 `⏎`, 9개 이상 연속 공백 `␣×N`, 제어 · bidi · 폭 0 문자 `\u{…}`. MCP 툴은 인자 JSON 을 보여준다.
+- 상세가 카드에 다 안 보이면(4줄 초과, 글자 수 제한, 헬퍼의 payload 축소) **노치에서 허용 · 항상 허용을 막고** "터미널로" 를 강조한다.
+  거부 · 접기는 가능. (여러 줄 heredoc 명령도 막히므로 줄 수 한도는 사용해 보며 조정)
+- "항상 허용" 이 가능할 때는 저장될 규칙과 범위(`permission_suggestions` 요약)를 카드에 표시한다.
+- 보이는 요청이 바뀌면 키 윈도우를 반납하고, 새 요청이 뜬 뒤 0.5초 안의 단축키 · 키 반복 입력은 무시한다.
 
 ### 색상 (아일랜드는 항상 검정 배경 — 라이트/다크 공통)
 
