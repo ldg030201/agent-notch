@@ -220,6 +220,55 @@ struct SnapshotWorld {
         clock.set(842)
     }
 
+    /// web-app: 카드에 다 들어가지 않는 여러 줄 명령 권한 요청 (허용 막힘 · 터미널로 안내)
+    mutating func webAppAsksClippedPermission() {
+        let web = Self.webApp
+        send(web, "UserPromptSubmit", at: 820, ["prompt": "스테이징 배포 스크립트 만들어줘"])
+        let command: [String: Any] = [
+            "command": """
+            cat > scripts/deploy.sh <<'EOF'
+            #!/bin/sh
+            set -e
+            npm run build
+
+
+            rsync -av dist/ deploy@staging.example.com:/srv/web-app
+            EOF
+            """,
+            "description": "배포 스크립트 작성",
+        ]
+        start(web, "Bash", at: 830, input: command)
+        send(web, "PermissionRequest", at: 831, [
+            "tool_name": "Bash",
+            "tool_input": command,
+            "permission_suggestions": [[
+                "type": "addRules",
+                "rules": [["toolName": "Bash", "ruleContent": "cat:*"]],
+                "behavior": "allow",
+                "destination": "localSettings",
+            ]],
+        ])
+        clock.set(842)
+    }
+
+    /// web-app: 프로젝트 밖 파일 수정 권한 요청 (항상 허용 범위가 여러 줄)
+    mutating func webAppAsksScopedPermission() {
+        let web = Self.webApp
+        send(web, "UserPromptSubmit", at: 820, ["prompt": "공용 설정에도 같은 값 넣어줘"])
+        let file = "/Users/dev/projects/shared-config/env.ts"
+        let input: [String: Any] = ["file_path": file, "old_string": "ttl: 3600", "new_string": "ttl: env.SESSION_TTL"]
+        start(web, "Edit", at: 830, input: input)
+        send(web, "PermissionRequest", at: 831, [
+            "tool_name": "Edit",
+            "tool_input": input,
+            "permission_suggestions": [
+                ["type": "addDirectories", "directories": ["/Users/dev/projects/shared-config"], "destination": "session"],
+                ["type": "setMode", "mode": "acceptEdits", "destination": "session"],
+            ],
+        ])
+        clock.set(842)
+    }
+
     /// web-app: 테스트 실패 후 사용량 한도로 턴 실패
     mutating func webAppFails() {
         let web = Self.webApp

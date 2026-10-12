@@ -53,6 +53,11 @@ final class PresentationController {
     /// needsInput 신호로 받은 메시지 (세션별 최신)
     private var inputMessages: [String: String] = [:]
 
+    /// 지금 카드에 보이는 권한 요청과 처음 보인 시각(부팅 후 초). 막 바뀐 요청은 단축키로 결정하지 않는다.
+    @ObservationIgnored private var displayedPermission: (id: UUID, since: TimeInterval)?
+    /// 새 권한 요청이 보이고 나서 단축키 결정을 받기 시작할 때까지의 시간
+    static let shortcutSettleDelay: TimeInterval = 0.5
+
     @ObservationIgnored private var transientTask: Task<Void, Never>?
     @ObservationIgnored private var lastSignalSeq: Int?
     @ObservationIgnored private var observing = false
@@ -202,7 +207,9 @@ final class PresentationController {
         let occluded = occludedScreenIDs.contains(id)
 
         if isTarget, !(fullscreen && behavior == .hide), let alert = alertMode() {
-            return occluded ? compactMode(for: id) : alert
+            if occluded { return compactMode(for: id) }
+            noteDisplayed(alert)
+            return alert
         }
         // 사용자가 직접 연 펼침은 풀스크린 설정보다 우선
         if expandedScreenID == id { return .expanded }
@@ -346,9 +353,7 @@ final class PresentationController {
 
         case let .permission(request, _):
             return card(M.permissionWidth, radius: 22) { width in
-                let lines = Self.permissionDetailLines(request, cardWidth: width)
-                let box = CGFloat(lines) * M.monoLineHeight + M.detailVerticalPadding * 2
-                return M.bodyTop + M.lineHeight + 6 + box + 12 + M.buttonHeight + 14
+                PermissionCardModel(request: request, cardWidth: width).bodyHeight
             }
 
         case let .needsInput(_, message, _):
@@ -373,16 +378,6 @@ final class PresentationController {
         case .expanded:
             return card(M.expandedSize.width, radius: 26) { _ in M.expandedBodyHeight }
         }
-    }
-
-    /// 권한 요청 상세(고정폭) 줄 수. 레이아웃과 뷰가 같은 값을 쓴다.
-    static func permissionDetailLines(_ request: PermissionRequestInfo, cardWidth: CGFloat) -> Int {
-        typealias M = IslandMetrics
-        let width = cardWidth - M.bodyPadding * 2 - M.detailHorizontalPadding * 2
-        return TextMeasure.lineCount(
-            request.detail, font: IslandFont.monoNS, lineHeight: M.monoLineHeight,
-            width: width, maxLines: M.maxDetailLines
-        )
     }
 
     /// 열린 메뉴와 겹치는지 볼 영역 (패널 기준): 지금 아일랜드 + 카드가 펼쳐질 자리
@@ -499,17 +494,7 @@ final class PresentationController {
         actions.jumpToTerminal(sessionID: request.sessionID)
     }
 
-    static func canAllowAlways(_ request: PermissionRequestInfo) -> Bool {
-        guard let suggestions = request.suggestions else { return false }
-        switch suggestions {
-        case .null: return false
-        case let .array(items): return !items.isEmpty
-        case let .object(object): return !object.isEmpty
-        default: return true
-        }
-    }
-
-    /// 키 윈도우일 때의 단축키 처리. 처리했으면 true.
+    /// 키 윈도우일 때의 단축키 처리. 처리했으면(또는 일부러 무시했으면) true.
     func perform(_ shortcut: Shortcut, on id: ScreenID) -> Bool {
         let mode = mode(for: id)
         if shortcut == .collapse {
@@ -518,11 +503,18 @@ final class PresentationController {
             return true
         }
         guard case let .permission(request, _) = mode else { return false }
+        // 방금 바뀐 요청은 아직 읽지 못했을 수 있다 → 결정하지 않고 키만 소비 (경고음 없이 무시)
+        guard isSettled(request) else {
+            logger.debug("새 권한 요청 직후 단축키 무시")
+            return true
+        }
+        let card = PermissionCardModel(request: request, cardWidth: layout(for: id, mode: mode).cardWidth)
         switch shortcut {
         case .allow:
+            guard card.canAllow else { return true }
             resolve(request, decision: .allow)
         case .allowAlways:
-            guard Self.canAllowAlways(request) else { return false }
+            guard card.canAllowAlways else { return true }
             resolve(request, decision: .allowAlways)
         case .deny:
             resolve(request, decision: .deny(message: nil))
@@ -530,6 +522,18 @@ final class PresentationController {
             break
         }
         return true
+    }
+
+    /// 카드에 보이는 권한 요청이 바뀌면 그 시각을 기록한다 (`mode(for:)` 에서 호출)
+    private func noteDisplayed(_ mode: IslandMode) {
+        guard case let .permission(request, _) = mode, displayedPermission?.id != request.id else { return }
+        displayedPermission = (request.id, ProcessInfo.processInfo.systemUptime)
+    }
+
+    /// 이 요청이 카드에 보인 지 `shortcutSettleDelay` 이상 지났는지
+    private func isSettled(_ request: PermissionRequestInfo) -> Bool {
+        guard let shown = displayedPermission, shown.id == request.id else { return false }
+        return ProcessInfo.processInfo.systemUptime - shown.since >= Self.shortcutSettleDelay
     }
 
     // MARK: - 신호 처리
@@ -599,5 +603,57 @@ final class PresentationController {
         }
         let stale = inputMessages.keys.filter { store.sessions[$0]?.phase != .waitingInput }
         for key in stale { inputMessages.removeValue(forKey: key) }
+    }
+}
+
+// MARK: - 권한 카드 내용
+
+/// 권한 카드에 무엇을 얼마나 보여줄지. 레이아웃(높이)과 뷰 · 단축키가 같은 값을 쓴다.
+struct PermissionCardModel {
+    /// 상세(고정폭) 상자 줄 수 (최대 `IslandMetrics.maxDetailLines`)
+    let detailLines: Int
+    /// 상세가 승인 대상 전체를 보여주지 못함 (줄 수 초과 · 글자 수 제한) → 허용 · 항상 허용을 막고 터미널로 안내
+    let isClipped: Bool
+    /// 항상 허용 사용 가능 (규칙이 있고, 내용이 다 보일 때)
+    let canAllowAlways: Bool
+    /// 항상 허용 시 저장될 규칙 (항상 허용을 쓸 수 있을 때만, 최대 `maxScopeLines` 줄)
+    let scopeLines: [String]
+    /// 툴팁용 전체 규칙
+    let fullScope: [String]
+
+    static let maxScopeLines = 3
+    static let clippedNote = "요청이 길어서 다 못 보여줘 · 터미널에서 확인해 줘"
+
+    var canAllow: Bool { !isClipped }
+
+    init(request: PermissionRequestInfo, cardWidth: CGFloat) {
+        typealias M = IslandMetrics
+        let width = cardWidth - M.bodyPadding * 2 - M.detailHorizontalPadding * 2
+        // 측정과 실제 그리기의 줄바꿈 위치가 조금 달라도 내용이 잘려 보이지 않게, 한 글자 좁게 재서 넉넉히 잡는다
+        let measured = TextMeasure.lineCount(
+            request.detail, font: IslandFont.monoNS, lineHeight: M.monoLineHeight,
+            width: width - IslandFont.monoCharWidth, maxLines: .max
+        )
+        detailLines = min(measured, M.maxDetailLines)
+        isClipped = PermissionReplyBuilder.isDetailClipped(request, measuredLines: measured, visibleLines: M.maxDetailLines)
+        canAllowAlways = !isClipped && PermissionReplyBuilder.canAllowAlways(request)
+
+        let scope = canAllowAlways ? PermissionReplyBuilder.scopeSummary(request.suggestions) : []
+        fullScope = scope
+        if scope.count > Self.maxScopeLines {
+            let shown = Self.maxScopeLines - 1
+            scopeLines = Array(scope.prefix(shown)) + ["외 \(scope.count - shown)개 규칙"]
+        } else {
+            scopeLines = scope
+        }
+    }
+
+    /// 카드 본문 높이 (상단 행 제외)
+    var bodyHeight: CGFloat {
+        typealias M = IslandMetrics
+        let box = CGFloat(detailLines) * M.monoLineHeight + M.detailVerticalPadding * 2
+        let note = isClipped ? M.permissionNoteGap + M.permissionNoteHeight : 0
+        let scope = scopeLines.isEmpty ? 0 : M.permissionNoteGap + CGFloat(scopeLines.count) * M.scopeLineHeight
+        return M.bodyTop + M.lineHeight + 6 + box + note + scope + 12 + M.buttonHeight + 14
     }
 }

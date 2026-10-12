@@ -336,6 +336,17 @@ struct IslandButtonStyle: ButtonStyle {
     var prominent = false
 
     func makeBody(configuration: Configuration) -> some View {
+        IslandButtonBody(configuration: configuration, prominent: prominent)
+    }
+}
+
+/// 비활성 상태를 읽으려고 따로 둔 버튼 본문 (비활성이면 흐리게)
+private struct IslandButtonBody: View {
+    let configuration: ButtonStyleConfiguration
+    let prominent: Bool
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
         configuration.label
             .font(IslandFont.body)
             .lineLimit(1)
@@ -343,7 +354,7 @@ struct IslandButtonStyle: ButtonStyle {
             .padding(.horizontal, 10)
             .frame(height: IslandMetrics.buttonHeight)
             .background(prominent ? Palette.green : Palette.row, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .opacity(configuration.isPressed ? 0.7 : 1)
+            .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : 0.4)
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }

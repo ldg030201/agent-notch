@@ -69,6 +69,8 @@ enum SnapshotScenario: String, CaseIterable {
     case workingMinimal = "working-minimal"
     case peek
     case permission
+    case permissionClipped = "permission-clipped"
+    case permissionScope = "permission-scope"
     case permissionCollapsed = "permission-collapsed"
     case needsInput = "needs-input"
     case done
@@ -331,6 +333,14 @@ enum SnapshotStage {
             world.apiServerEdits()
             world.apiServerRunsTests()
             world.webAppAsksPermission()
+        case .permissionClipped:
+            world.apiServerEdits()
+            world.apiServerRunsTests()
+            world.webAppAsksClippedPermission()
+        case .permissionScope:
+            world.apiServerEdits()
+            world.apiServerRunsTests()
+            world.webAppAsksScopedPermission()
         case .permissionCollapsed:
             world.apiServerEdits()
             world.apiServerRunsTests()

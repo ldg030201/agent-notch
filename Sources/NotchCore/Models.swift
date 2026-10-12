@@ -220,12 +220,14 @@ public struct PermissionRequestInfo: Identifiable, Hashable, Sendable {
     public var toolName: String
     /// 사람이 읽는 제목 (예: "Bash 실행 요청")
     public var title: String
-    /// 핵심 내용 (명령어, 파일 경로 등)
+    /// 핵심 내용 (명령어, 파일 경로 등). 숨은 문자는 드러낸 상태 (줄바꿈 → "⏎")
     public var detail: String
     public var toolInput: JSONValue
     /// 훅 입력의 `permission_suggestions` (항상 허용에 사용)
     public var suggestions: JSONValue?
     public var receivedAt: Date
+    /// `detail` 이 `tool_input` 을 다 담지 못함 (글자 수 제한 등). 카드는 이때 허용을 막는다
+    public var isDetailTruncated: Bool
 
     public init(
         id: UUID,
@@ -235,7 +237,8 @@ public struct PermissionRequestInfo: Identifiable, Hashable, Sendable {
         detail: String,
         toolInput: JSONValue,
         suggestions: JSONValue?,
-        receivedAt: Date
+        receivedAt: Date,
+        isDetailTruncated: Bool = false
     ) {
         self.id = id
         self.sessionID = sessionID
@@ -245,6 +248,7 @@ public struct PermissionRequestInfo: Identifiable, Hashable, Sendable {
         self.toolInput = toolInput
         self.suggestions = suggestions
         self.receivedAt = receivedAt
+        self.isDetailTruncated = isDetailTruncated
     }
 }
 

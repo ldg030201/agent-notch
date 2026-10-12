@@ -88,11 +88,74 @@ enum TextUtils {
 
     /// 한 줄 JSON (키 정렬), 최대 `max` 글자
     static func compactJSON(_ value: JSONValue?, max: Int) -> String {
+        truncate(compactJSON(value), max: max)
+    }
+
+    /// 한 줄 JSON (키 정렬) 전체. 값이 없으면 빈 문자열
+    static func compactJSON(_ value: JSONValue?) -> String {
         guard let value, !value.isNull,
               let data = try? value.serialized(sortedKeys: true),
               let text = String(data: data, encoding: .utf8)
         else { return "" }
-        return truncate(text, max: max)
+        return text
+    }
+
+    // MARK: - 권한 카드 표시
+
+    /// 이보다 길게 이어진 공백 · 탭은 "␣×N" 으로 보여준다 (공백으로 뒤쪽 내용을 밀어내지 못하게)
+    static let maxVisibleWhitespaceRun = 8
+    /// 줄바꿈 자리 표시
+    static let lineBreakMarker = "⏎"
+
+    /// 권한 카드에서 승인 대상이 빠짐없이 보이도록 숨은 문자를 드러낸다. 공백을 합치거나 지우지 않는다.
+    /// - 줄바꿈("\n", "\r\n"): `keepLineBreaks` 면 "⏎" + 실제 줄바꿈, 아니면 "⏎" 만 (한 줄 유지)
+    /// - `maxVisibleWhitespaceRun` 보다 길게 이어진 공백 · 탭 → "␣×N"
+    /// - 그 밖의 제어 문자, 서식 문자(폭 0 공백 · 양방향 제어 등), 줄/문단 구분자, 특수 공백 → "\u{XXXX}"
+    static func revealInvisibles(_ text: String, keepLineBreaks: Bool) -> String {
+        var result = String.UnicodeScalarView()
+        var run = String.UnicodeScalarView()
+
+        func append(_ string: String) { result.append(contentsOf: string.unicodeScalars) }
+        func flushRun() {
+            if run.count > maxVisibleWhitespaceRun {
+                append("␣×\(run.count)")
+            } else {
+                result.append(contentsOf: run)
+            }
+            run.removeAll()
+        }
+
+        let scalars = Array(text.unicodeScalars)
+        var index = 0
+        while index < scalars.count {
+            let scalar = scalars[index]
+            index += 1
+            if scalar == " " || scalar == "\t" {
+                run.append(scalar)
+                continue
+            }
+            flushRun()
+            if scalar == "\n" || (scalar == "\r" && index < scalars.count && scalars[index] == "\n") {
+                if scalar == "\r" { index += 1 }
+                append(keepLineBreaks ? lineBreakMarker + "\n" : lineBreakMarker)
+            } else if isHidden(scalar) {
+                append(scalar == "\r" ? "\\r" : "\\u{\(String(scalar.value, radix: 16, uppercase: true))}")
+            } else {
+                result.append(scalar)
+            }
+        }
+        flushRun()
+        return String(result)
+    }
+
+    /// 화면에 보이지 않거나 줄을 바꾸거나 글자 순서를 뒤집을 수 있는 문자
+    private static func isHidden(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.properties.generalCategory {
+        case .control, .format, .lineSeparator, .paragraphSeparator, .spaceSeparator:
+            return true
+        default:
+            return false
+        }
     }
 
     // MARK: - diff 줄
@@ -106,10 +169,16 @@ enum TextUtils {
         return truncate(text, max: maxDiffLineCharacters)
     }
 
-    /// 줄 단위로 나눈다. 마지막 줄바꿈 뒤의 빈 줄은 버린다.
+    /// 줄 구분자: "\n" 과 "\r\n" ("\r\n" 은 Character 하나라서 따로 비교해야 한다).
+    /// `countLines` 가 세는 0x0A 와 같은 기준이라 단독 "\r" 이나 U+2028 에서는 나누지 않는다.
+    static func isLineSeparator(_ character: Character) -> Bool {
+        character == "\n" || character == "\r\n"
+    }
+
+    /// 줄 단위로 나눈다 (LF · CRLF). 마지막 줄바꿈 뒤의 빈 줄은 버린다.
     static func splitLines(_ text: String) -> [Substring] {
         guard !text.isEmpty else { return [] }
-        var lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        var lines = text.split(omittingEmptySubsequences: false, whereSeparator: isLineSeparator)
         if lines.last?.isEmpty == true { lines.removeLast() }
         return lines
     }

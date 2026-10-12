@@ -86,6 +86,8 @@ enum IslandFont {
     // 레이아웃 계산(텍스트 줄 수 측정)용 AppKit 글꼴
     static let bodyNS = NSFont.systemFont(ofSize: 12)
     static let monoNS = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    /// 고정폭 11pt 한 글자 폭
+    static let monoCharWidth: CGFloat = ceil(("M" as NSString).size(withAttributes: [.font: monoNS]).width)
 }
 
 // MARK: - 모션

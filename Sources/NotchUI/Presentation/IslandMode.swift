@@ -121,10 +121,14 @@ enum IslandMetrics {
     /// 메뉴바 알약 안에 카드 상단 행을 둘 최소 폭
     static let pillHeaderMin: CGFloat = 220
 
-    /// 권한 요청 상세(고정폭) 최대 줄 수
+    /// 권한 요청 상세(고정폭) 최대 줄 수. 넘으면 노치에서 허용하지 않는다 (`PermissionCardModel.isClipped`)
     static let maxDetailLines = 4
     static let detailHorizontalPadding: CGFloat = 10
     static let detailVerticalPadding: CGFloat = 6
+    /// 권한 카드 상세 아래 안내 줄 · 항상 허용 범위 줄
+    static let permissionNoteGap: CGFloat = 6
+    static let permissionNoteHeight: CGFloat = 16
+    static let scopeLineHeight: CGFloat = 15
 
     /// 고정폭 11pt 한 줄 높이
     static let monoLineHeight: CGFloat = fontLineHeight(IslandFont.monoNS)

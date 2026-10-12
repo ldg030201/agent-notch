@@ -76,7 +76,7 @@ public final class SessionStore {
         }
 
         // 다른 경로(터미널)에서 이미 답한 권한 요청 정리
-        let released = dropStalePendings(event: event, sessionID: sessionID, agentID: agentID)
+        let released = dropStalePendings(event: event, sessionID: sessionID, agentID: agentID, payload: payload)
 
         let isNew = sessions[sessionID] == nil
         var session = sessions[sessionID] ?? makeSession(id: sessionID, payload: payload, now: now)
@@ -96,11 +96,17 @@ public final class SessionStore {
         case "PostToolUseFailure":
             handlePostToolUseFailure(&session, payload: payload, now: now)
         case "PermissionRequest":
-            let info = handlePermissionRequest(&session, payload: payload, agentID: agentID, now: now)
-            requestID = info.id
-            signal = .permissionRequested(id: info.id, sessionID: sessionID)
+            if let toolName = payload.string("tool_name"), Self.userInteractionTools.contains(toolName) {
+                // 답 · 계획 승인은 Claude Code 다이얼로그에서만 할 수 있다 (updatedInput 없는 allow 는 무시됨).
+                // 대기열에 넣지 않고 nil → 훅에 바로 "결정 없음" 응답, 카드는 입력 대기로 보여준다.
+                signal = handleUserInteractionRequest(&session, toolName: toolName, payload: payload)
+            } else {
+                let info = handlePermissionRequest(&session, payload: payload, agentID: agentID, now: now)
+                requestID = info.id
+                signal = .permissionRequested(id: info.id, sessionID: sessionID)
+            }
         case "Notification":
-            signal = handleNotification(&session, payload: payload)
+            signal = handleNotification(&session, payload: payload, now: now)
         case "MessageDisplay":
             handleMessageDisplay(&session, payload: payload)
         case "Stop":
@@ -280,18 +286,31 @@ public final class SessionStore {
         }
         session.currentActivity = item
 
-        switch toolName {
-        case "AskUserQuestion":
+        if Self.userInteractionTools.contains(toolName) {
             session.phase = .waitingInput
-            let message = ToolSummarizer.firstQuestion(in: toolInput) ?? "질문에 답변 필요"
-            return .needsInput(sessionID: session.id, message: message)
-        case "ExitPlanMode":
-            session.phase = .waitingInput
-            return .needsInput(sessionID: session.id, message: "계획 승인 필요")
-        default:
-            session.phase = .runningTool
-            return nil
+            return .needsInput(sessionID: session.id, message: Self.inputMessage(toolName: toolName, toolInput: toolInput))
         }
+        session.phase = .runningTool
+        return nil
+    }
+
+    /// 사용자가 터미널 다이얼로그에서 직접 답해야 하는 툴 (권한 카드로 승인할 수 없음)
+    static let userInteractionTools: Set<String> = ["AskUserQuestion", "ExitPlanMode"]
+
+    private static func inputMessage(toolName: String, toolInput: JSONValue?) -> String {
+        if toolName == "ExitPlanMode" { return "계획 승인 필요" }
+        return ToolSummarizer.firstQuestion(in: toolInput) ?? "질문에 답변 필요"
+    }
+
+    /// AskUserQuestion · ExitPlanMode 의 PermissionRequest: 입력 대기로만 표시 (PreToolUse 를 놓쳤을 때만 신호)
+    private func handleUserInteractionRequest(
+        _ session: inout AgentSession,
+        toolName: String,
+        payload: HookPayload
+    ) -> IslandSignal? {
+        guard session.phase != .waitingInput else { return nil }
+        session.phase = .waitingInput
+        return .needsInput(sessionID: session.id, message: Self.inputMessage(toolName: toolName, toolInput: payload["tool_input"]))
     }
 
     private func handlePostToolUse(_ session: inout AgentSession, payload: HookPayload, now: Date) -> IslandSignal? {
@@ -355,7 +374,9 @@ public final class SessionStore {
             detail: summary.detail,
             toolInput: toolInput,
             suggestions: payload["permission_suggestions"],
-            receivedAt: now
+            receivedAt: now,
+            // 헬퍼가 큰 payload 를 줄였으면 카드에 보이는 입력이 실제 실행될 입력과 다를 수 있다
+            isDetailTruncated: summary.isTruncated || Self.isShrunk(payload)
         )
         pendingPermissions.append(info)
         if let agentID { pendingAgentIDs[info.id] = agentID }
@@ -363,7 +384,7 @@ public final class SessionStore {
         return info
     }
 
-    private func handleNotification(_ session: inout AgentSession, payload: HookPayload) -> IslandSignal? {
+    private func handleNotification(_ session: inout AgentSession, payload: HookPayload, now: Date) -> IslandSignal? {
         let message = payload.string("message")
         if let message { session.lastNotification = message }
 
@@ -380,8 +401,17 @@ public final class SessionStore {
             if session.phase == .waitingInput { session.phase = .thinking }
             return nil
         case "idle_prompt":
-            // 입력 대기 알림인데 아직 작업 중으로 보이면 종료 이벤트를 놓친 것 (인터럽트 등)
-            if session.phase.isWorking {
+            // 프롬프트 입력 대기 알림 = 턴이 끝났고 열린 다이얼로그도 없다.
+            // - 아직 작업 중으로 보이면 종료 이벤트를 놓친 것 (인터럽트 등)
+            // - 훅 대기 없는 승인 대기 · 입력 대기는 터미널에서 거부/Esc 로 끝난 것 (그때는 아무 이벤트도 오지 않는다)
+            let endedWait = (session.phase == .waitingPermission && !hasPending(session.id))
+                || session.phase == .waitingInput
+            if session.phase.isWorking || endedWait {
+                for index in session.activities.indices
+                where session.activities[index].kind == .tool && session.activities[index].status == .running {
+                    session.activities[index].status = .failed
+                    session.activities[index].endedAt = now
+                }
                 session.phase = .idle
                 session.currentActivity = nil
             }
@@ -625,15 +655,26 @@ public final class SessionStore {
     }
 
     /// 이 이벤트가 왔다는 건 대기 중인 권한 요청이 이미 다른 곳(터미널)에서 처리됐다는 뜻
-    private func dropStalePendings(event: String, sessionID: String, agentID: String?) -> [PermissionRequestInfo] {
+    private func dropStalePendings(
+        event: String,
+        sessionID: String,
+        agentID: String?,
+        payload: HookPayload
+    ) -> [PermissionRequestInfo] {
         switch event {
         case "UserPromptSubmit", "Stop", "StopFailure":
             return takePendings { request, _ in request.sessionID == sessionID }
-        case "PreToolUse", "PostToolUse", "PostToolUseFailure":
-            // 같은 에이전트(메인/서브에이전트)의 다음 툴 진행 → 그 에이전트의 이전 요청은 끝난 것.
-            // PreToolUse 는 같은 호출의 PermissionRequest 보다 먼저 오므로 여기서 지워지는 건 이전 요청뿐이다.
+        case "PostToolUse", "PostToolUseFailure":
+            // 같은 호출이 터미널에서 승인돼 실행(또는 실패)된 경우에만 정리.
+            // PermissionRequest 에는 tool_use_id 가 없어 같은 에이전트 · 툴 이름 · 입력으로 같은 호출인지 본다.
+            // PreToolUse 는 신호로 쓰지 않는다: 병렬로 도는 형제 호출(Read · Grep · WebFetch 등)일 수 있다.
+            let toolName = payload.string("tool_name") ?? "Tool"
+            // 헬퍼가 큰 payload 를 줄였으면 입력이 잘렸을 수 있어 비교하지 않는다
+            let toolInput = Self.isShrunk(payload) ? nil : payload["tool_input"]
             return takePendings { request, requestAgentID in
                 request.sessionID == sessionID && requestAgentID == agentID
+                    && request.toolName == toolName
+                    && (toolInput == nil || request.toolInput.isNull || request.toolInput == toolInput)
             }
         case "SubagentStop":
             guard let agentID else { return [] }
@@ -672,6 +713,13 @@ public final class SessionStore {
     private func emit(_ signal: IslandSignal, at date: Date) {
         signalSeq += 1
         latestSignal = SignalEvent(seq: signalSeq, signal: signal, at: date)
+    }
+
+    /// notch-hook 의 PayloadShrinker 가 payload 를 줄였다는 표시 (같은 키를 쓴다)
+    static let shrunkMarkerKey = "_agent_notch_truncated"
+
+    private static func isShrunk(_ payload: HookPayload) -> Bool {
+        payload.bool(shrunkMarkerKey) == true
     }
 
     // MARK: - 표시 문자열

@@ -21,12 +21,15 @@ public struct ToolSummary: Hashable, Sendable {
 public struct PermissionSummary: Hashable, Sendable {
     /// 예: "Bash 실행 요청"
     public var title: String
-    /// 예: 명령어, 파일 경로
+    /// 예: 명령어, 파일 경로. 숨은 문자는 드러낸 상태 (줄바꿈 → "⏎")
     public var detail: String
+    /// `detail` 이 원본 입력을 다 담지 못함 (글자 수 제한으로 잘림 · 일부만 표시)
+    public var isTruncated: Bool
 
-    public init(title: String, detail: String) {
+    public init(title: String, detail: String, isTruncated: Bool = false) {
         self.title = title
         self.detail = detail
+        self.isTruncated = isTruncated
     }
 }
 
@@ -112,29 +115,51 @@ public enum ToolSummarizer {
         }
     }
 
-    /// 권한 요청 카드용 제목/내용
+    /// 권한 요청 카드용 제목/내용.
+    /// 승인하면 `tool_input` 전체가 실행되므로 내용을 고치지 않고 숨은 문자만 드러낸다
+    /// (줄바꿈 → "⏎" + 줄바꿈, 긴 공백 → "␣×N", 제어 · 서식 문자 → "\u{…}"). 다 못 담으면 `isTruncated`.
     public static func permissionSummary(toolName: String, toolInput: JSONValue?, cwd: String?) -> PermissionSummary {
         let input = HookPayload(toolInput ?? .null)
+
+        /// 글자 수 제한으로 자르고 숨은 문자를 드러낸다
+        func shown(_ text: String, max: Int, keepLineBreaks: Bool = false) -> (text: String, truncated: Bool) {
+            let truncated = text.count > max
+            let cut = truncated ? String(text.prefix(max - 1)) + TextUtils.ellipsis : text
+            return (TextUtils.revealInvisibles(cut, keepLineBreaks: keepLineBreaks), truncated)
+        }
+
         switch toolName {
         case "Bash":
+            // 앞뒤 공백 · 줄바꿈만 정리 (실행 내용과 무관). 안쪽 공백 · 줄바꿈은 그대로 드러낸다
             let command = (input.string("command") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            return PermissionSummary(title: "Bash 실행 요청", detail: TextUtils.truncate(command, max: maxPermissionCommand))
+            let detail = shown(command, max: maxPermissionCommand, keepLineBreaks: true)
+            return PermissionSummary(title: "Bash 실행 요청", detail: detail.text, isTruncated: detail.truncated)
         case "Edit", "Write", "MultiEdit", "NotebookEdit":
             let raw = input.string("file_path") ?? input.string("notebook_path") ?? ""
-            return PermissionSummary(title: "파일 수정 요청", detail: TextUtils.displayPath(raw, cwd: cwd))
+            let detail = shown(TextUtils.displayPath(raw, cwd: cwd), max: maxPermissionCommand)
+            return PermissionSummary(title: "파일 수정 요청", detail: detail.text, isTruncated: detail.truncated)
         case "WebFetch":
-            return PermissionSummary(title: "웹 요청", detail: TextUtils.truncate(input.string("url") ?? "", max: maxDetail))
+            let detail = shown(input.string("url") ?? "", max: maxDetail)
+            return PermissionSummary(title: "웹 요청", detail: detail.text, isTruncated: detail.truncated)
         case "ExitPlanMode":
-            return PermissionSummary(
-                title: "계획 승인 요청",
-                detail: TextUtils.truncate(firstPlanLine(in: toolInput) ?? "", max: maxDetail)
-            )
+            // 계획은 첫 줄만 보여준다 → 나머지가 있으면 잘린 것
+            let plan = toolInput?["plan"]?.stringValue ?? ""
+            let lineCount = plan.split(whereSeparator: \.isNewline)
+                .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.count
+            let detail = shown(firstPlanLine(in: toolInput) ?? "", max: maxDetail)
+            return PermissionSummary(title: "계획 승인 요청", detail: detail.text, isTruncated: detail.truncated || lineCount > 1)
         default:
             if let mcp = mcpParts(toolName) {
-                return PermissionSummary(title: "MCP 툴 요청", detail: "\(mcp.server) · \(mcp.tool)")
+                // 서버 · 툴 이름 다음 줄에 인자 JSON (인자가 없으면 이름만)
+                let arguments = toolInput?.objectValue?.isEmpty == true ? nil : toolInput
+                let json = shown(TextUtils.compactJSON(arguments), max: maxDetail)
+                let header = TextUtils.revealInvisibles("\(mcp.server) · \(mcp.tool)", keepLineBreaks: false)
+                let detail = json.text.isEmpty ? header : header + "\n" + json.text
+                return PermissionSummary(title: "MCP 툴 요청", detail: detail, isTruncated: json.truncated)
             }
+            let json = shown(TextUtils.compactJSON(toolInput), max: maxDetail)
             let name = toolName.isEmpty ? "툴" : toolName
-            return PermissionSummary(title: "\(name) 사용 요청", detail: TextUtils.compactJSON(toolInput, max: maxDetail))
+            return PermissionSummary(title: "\(name) 사용 요청", detail: json.text, isTruncated: json.truncated)
         }
     }
 

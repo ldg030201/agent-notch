@@ -168,13 +168,15 @@ final class ScreenManager {
         var becameCompact = false
         for (id, state) in states {
             hitRectCache[id] = hitRects(state, geometry: presentation.geometries[id])
-            guard lastModes[id] != state.mode else { continue }
-            let wasCompact = lastModes[id].map { $0 == .idle || $0 == .working } ?? false
+            let previous = lastModes[id]
+            guard previous != state.mode else { continue }
+            let wasCompact = previous.map { $0 == .idle || $0 == .working } ?? false
             if !wasCompact, state.mode == .idle || state.mode == .working { becameCompact = true }
             lastModes[id] = state.mode
             guard let panel = panels[id] else { continue }
-            // 접히면 키 윈도우를 반납해 원래 앱으로 키보드 포커스를 돌려준다
-            if !state.mode.wantsKey, panel.isKeyWindow {
+            // 접히면 키 윈도우를 반납해 원래 앱으로 키보드 포커스를 돌려준다.
+            // 다른 권한 요청이 새로 보이게 돼도 반납한다 (보지 못한 요청을 단축키로 결정하지 않게, 다시 클릭해야 함)
+            if !state.mode.wantsKey || Self.showsNewPermission(state.mode, after: previous), panel.isKeyWindow {
                 panel.orderOut(nil)
                 panel.orderFrontRegardless()
             }
@@ -182,6 +184,13 @@ final class ScreenManager {
         updateMouseState()
         // 접힌 상태가 새로 보이기 시작하면 메뉴바 빈 공간을 바로 다시 잰다
         if becameCompact { spaceMonitor.refresh() }
+    }
+
+    /// 이전과 다른 권한 요청이 보이기 시작했는지 (대기열 수만 바뀐 같은 요청은 제외)
+    private static func showsNewPermission(_ mode: IslandMode, after previous: IslandMode?) -> Bool {
+        guard case let .permission(request, _) = mode else { return false }
+        if case let .permission(old, _)? = previous { return old.id != request.id }
+        return true
     }
 
     // MARK: - 마우스 추적 / 클릭 통과
@@ -267,10 +276,13 @@ final class ScreenManager {
         case 53: // ⎋
             return presentation.perform(.collapse, on: id)
         case 36, 76: // ↩, 키패드 엔터
+            // 키를 누르고 있어 반복 입력된 이벤트로는 결정하지 않는다 (다음 요청까지 승인되지 않게)
+            if event.isARepeat, flags.contains(.command) { return true }
             if flags == [.command] { return presentation.perform(.allow, on: id) }
             if flags == [.command, .option] { return presentation.perform(.allowAlways, on: id) }
             return false
         case 51, 117: // ⌫, ⌦
+            if event.isARepeat, flags == [.command] { return true }
             if flags == [.command] { return presentation.perform(.deny, on: id) }
             return false
         default:

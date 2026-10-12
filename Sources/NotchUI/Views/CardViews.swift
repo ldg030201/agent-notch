@@ -84,8 +84,7 @@ struct PermissionView: View {
     let reduceMotion: Bool
 
     var body: some View {
-        let canAllowAlways = PresentationController.canAllowAlways(request)
-        let detailLines = PresentationController.permissionDetailLines(request, cardWidth: layout.cardWidth)
+        let card = PermissionCardModel(request: request, cardWidth: layout.cardWidth)
 
         CardScaffold(layout: layout) {
             CardHeaderLeading(
@@ -107,14 +106,49 @@ struct PermissionView: View {
                 Text(request.detail)
                     .font(IslandFont.mono)
                     .foregroundStyle(Palette.text)
-                    .lineLimit(detailLines)
+                    .lineLimit(card.detailLines)
                     .truncationMode(.tail)
                     .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, minHeight: CGFloat(detailLines) * IslandMetrics.monoLineHeight, alignment: .topLeading)
+                    .frame(maxWidth: .infinity, minHeight: CGFloat(card.detailLines) * IslandMetrics.monoLineHeight, alignment: .topLeading)
                     .padding(.horizontal, IslandMetrics.detailHorizontalPadding)
                     .padding(.vertical, IslandMetrics.detailVerticalPadding)
                     .background(Palette.row, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .padding(.bottom, 12)
+
+                if card.isClipped {
+                    // 다 보이지 않는 요청은 노치에서 허용하지 않는다 (승인하면 안 보이는 부분까지 실행된다)
+                    HStack(spacing: 5) {
+                        Image(systemName: "eye.slash")
+                        Text(PermissionCardModel.clippedNote)
+                    }
+                    .font(IslandFont.caption)
+                    .foregroundStyle(Palette.amber)
+                    .lineLimit(1)
+                    .frame(height: IslandMetrics.permissionNoteHeight)
+                    .padding(.top, IslandMetrics.permissionNoteGap)
+                }
+
+                if !card.scopeLines.isEmpty {
+                    // 항상 허용하면 저장될 규칙과 범위
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(card.scopeLines.enumerated()), id: \.offset) { index, line in
+                            HStack(spacing: 0) {
+                                Text("항상 허용 → ")
+                                    .foregroundStyle(Palette.muted)
+                                    .opacity(index == 0 ? 1 : 0)
+                                Text(line)
+                                    .foregroundStyle(Palette.secondary)
+                                    .truncationMode(.middle)
+                            }
+                            .frame(height: IslandMetrics.scopeLineHeight)
+                        }
+                    }
+                    .font(IslandFont.caption)
+                    .lineLimit(1)
+                    .padding(.top, IslandMetrics.permissionNoteGap)
+                    .help("항상 허용하면 저장되는 규칙:\n" + card.fullScope.joined(separator: "\n"))
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("항상 허용 범위: " + card.fullScope.joined(separator: ", "))
+                }
 
                 HStack(spacing: 6) {
                     Button {
@@ -122,9 +156,10 @@ struct PermissionView: View {
                     } label: {
                         Text("허용 ⌘↩")
                     }
-                    .buttonStyle(IslandButtonStyle(prominent: true))
+                    .buttonStyle(IslandButtonStyle(prominent: card.canAllow))
+                    .disabled(!card.canAllow)
                     .accessibilityLabel("허용")
-                    .help("허용 (⌘↩)")
+                    .help(card.canAllow ? "허용 (⌘↩)" : "다 보이지 않는 요청은 여기서 허용할 수 없어 · 터미널로")
 
                     Button {
                         presentation.resolve(request, decision: .allowAlways)
@@ -132,9 +167,9 @@ struct PermissionView: View {
                         Text("항상 허용")
                     }
                     .buttonStyle(IslandButtonStyle())
-                    .disabled(!canAllowAlways)
+                    .disabled(!card.canAllowAlways)
                     .accessibilityLabel("항상 허용")
-                    .help(canAllowAlways ? "다음부터 묻지 않음 (⌥⌘↩)" : "이 요청은 항상 허용 규칙이 없어")
+                    .help(allowAlwaysHelp(card))
 
                     Button {
                         presentation.resolve(request, decision: .deny(message: nil))
@@ -164,16 +199,23 @@ struct PermissionView: View {
                             Text("터미널로")
                         }
                     }
-                    .buttonStyle(IslandButtonStyle())
+                    .buttonStyle(IslandButtonStyle(prominent: card.isClipped))
                     .accessibilityLabel("터미널로")
                     .help("터미널에서 직접 결정")
                 }
+                .padding(.top, 12)
             }
             .font(IslandFont.body)
             .padding(.horizontal, IslandMetrics.bodyPadding)
             .padding(.top, IslandMetrics.bodyTop)
             .padding(.bottom, 14)
         }
+    }
+
+    private func allowAlwaysHelp(_ card: PermissionCardModel) -> String {
+        if card.isClipped { return "다 보이지 않는 요청은 여기서 허용할 수 없어 · 터미널로" }
+        if !card.canAllowAlways { return "이 요청은 항상 허용 규칙이 없어" }
+        return "다음부터 묻지 않음 (⌥⌘↩)"
     }
 }
 
