@@ -36,6 +36,7 @@ public final class AppPreferences {
         static let muteWhenTerminalFrontmost = "muteWhenTerminalFrontmost"
         static let permissionTimeout = "permissionTimeout"
         static let staleSessionTimeout = "staleSessionTimeout"
+        static let passthroughWhenTerminalFrontmost = "passthroughWhenTerminalFrontmost"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -87,6 +88,12 @@ public final class AppPreferences {
         didSet { defaults.set(staleSessionTimeout, forKey: Key.staleSessionTimeout) }
     }
 
+    /// 권한 요청이 왔을 때 해당 세션의 터미널이 이미 앞에 있으면 노치에서 기다리지 않고 바로 터미널 프롬프트로 넘긴다.
+    /// (훅이 대기하는 동안 터미널 다이얼로그가 보류될 수 있어서, 터미널을 보고 있는 사용자를 막지 않기 위함)
+    public var passthroughWhenTerminalFrontmost: Bool {
+        didSet { defaults.set(passthroughWhenTerminalFrontmost, forKey: Key.passthroughWhenTerminalFrontmost) }
+    }
+
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         displayPolicy = defaults.string(forKey: Key.displayPolicy).flatMap(DisplayPolicy.init(rawValue:)) ?? .allScreens
@@ -99,5 +106,6 @@ public final class AppPreferences {
         muteWhenTerminalFrontmost = defaults.object(forKey: Key.muteWhenTerminalFrontmost) as? Bool ?? true
         permissionTimeout = defaults.object(forKey: Key.permissionTimeout) as? Double ?? 120
         staleSessionTimeout = defaults.object(forKey: Key.staleSessionTimeout) as? Double ?? 2 * 60 * 60
+        passthroughWhenTerminalFrontmost = defaults.object(forKey: Key.passthroughWhenTerminalFrontmost) as? Bool ?? true
     }
 }

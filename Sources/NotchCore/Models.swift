@@ -348,6 +348,21 @@ public struct AgentSession: Identifiable, Hashable, Sendable {
     }
 }
 
+extension AgentSession {
+    /// 아일랜드에 한 줄로 보여줄 최근 응답 텍스트.
+    /// 스트리밍 중이면 마지막 비어 있지 않은 줄, 아니면 `lastAssistantMessage` 의 마지막 비어 있지 않은 줄.
+    public var latestTextLine: String? {
+        func lastLine(_ text: String) -> String? {
+            text.split(whereSeparator: \.isNewline)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .last { !$0.isEmpty }
+        }
+        if let line = lastLine(streamingText) { return line }
+        if let message = lastAssistantMessage, let line = lastLine(message) { return line }
+        return nil
+    }
+}
+
 // MARK: - UI 신호
 
 /// UI 가 "잠깐 펼치기" 같은 일시적 반응을 하도록 스토어가 내보내는 신호
