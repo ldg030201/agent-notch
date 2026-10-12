@@ -1,0 +1,152 @@
+# AgentNotch 아키텍처
+
+맥북 노치를 다이나믹 아일랜드처럼 확장해서 Claude Code 세션의 **현재 작업 / 미니 diff / 권한 요청 / 완료**를
+실시간으로 보여주는 메뉴바 앱. 노치가 없는 외부 모니터에서는 메뉴바 아래 떠 있는 알약(pill) 형태로 같은 내용을 보여준다.
+
+## 1. 전체 흐름
+
+```
+Claude Code (CLI · 데스크톱 앱)
+  └─ hook (type: command) ─▶ notch-hook  (앱이 설치 시 ~/Library/Application Support/AgentNotch/bin 에 복사)
+        │  stdin 의 훅 JSON + 화이트리스트 환경변수 → HookEnvelope
+        ▼
+  Unix 소켓  ~/Library/Application Support/AgentNotch/notch.sock  (디렉터리 0700, 소켓 0600)
+        ▼
+  AgentNotch.app
+    SocketServer ─▶ SessionStore.ingest() ─▶ 포커스 계산 · 신호(latestSignal)
+         ▲                     │
+         │ HookReply           ▼
+         └──── 권한 결정 ◀── NotchUI (화면별 NSPanel + SwiftUI 아일랜드)
+```
+
+- 앱이 꺼져 있으면 `notch-hook` 은 소켓 연결 실패 → **조용히 exit 0** (Claude Code 동작에 영향 없음).
+- `PermissionRequest` 만 앱 응답을 기다린다. 나머지는 보내고 바로 종료(fire-and-forget).
+
+## 2. 모듈 구성 (SwiftPM)
+
+| 타깃 | 역할 | 의존 |
+|---|---|---|
+| `NotchShared` | 와이어 프로토콜(`HookEnvelope`, `HookReply`, `NotchWire`), `JSONValue` | - |
+| `notch-hook` | 훅 헬퍼 실행 파일 | NotchShared |
+| `NotchCore` | 모델, `SessionStore`, 이벤트 해석, 포커스 엔진, diff 계산, 툴 요약, 설정(`AppPreferences`), `IslandActions` 프로토콜 | NotchShared |
+| `NotchServices` | 소켓 서버, 훅 설치/제거, 터미널 점프, 사운드, 앞에 있는 앱 감지, 로그인 시 실행 | NotchShared, NotchCore |
+| `NotchUI` | 노치 기하 계산, `NSPanel`, 화면 관리, 표시 모드 컨트롤러, 아일랜드 SwiftUI 뷰, 설정 화면 | NotchCore |
+| `AgentNotch` | 앱 진입점, 메뉴바 아이템, 모듈 조립, 데모 모드 | 전부 |
+
+`NotchUI` 는 `NotchServices` 에 의존하지 않는다. UI 동작은 `IslandActions` 프로토콜로 App 이 주입한다.
+
+## 3. 와이어 프로토콜
+
+- 줄바꿈으로 끝나는 JSON 한 줄. 헬퍼 → 앱: `HookEnvelope`, 앱 → 헬퍼: `HookReply` (응답이 필요한 이벤트만).
+- `HookReply.output` 이 있으면 헬퍼는 그 JSON 을 stdout 에 그대로 출력하고 exit 0. 없으면 아무것도 출력하지 않는다.
+- 헬퍼의 응답 대기 시간은 훅 `timeout` 보다 짧아야 한다. 앱이 `AppPreferences.permissionTimeout` 이 지나면 `output: null` 로 응답한다.
+- 소켓 경로는 `AGENT_NOTCH_SOCKET` 환경변수로 덮어쓸 수 있다 (테스트용). `sun_path` 길이 제한(104바이트)에 주의.
+
+## 4. 훅 이벤트 → 세션 상태
+
+| 이벤트 | 처리 |
+|---|---|
+| `SessionStart` | 세션 생성(이미 있으면 갱신), phase `idle`, 신호 `sessionStarted` |
+| `UserPromptSubmit` | phase `thinking`, 턴 요약 초기화, `lastPrompt`(200자 제한), `streamingText` 초기화, 미확인 완료 해제 |
+| `PreToolUse` | phase `runningTool`, `currentActivity` 생성(툴 요약), 타임라인 추가. `AskUserQuestion` 이면 `waitingInput` + `needsInput` |
+| `PostToolUse` | 해당 `tool_use_id` 활동 성공 처리, diff 계산(Edit/MultiEdit/Write/NotebookEdit/Bash `bashEditDiff`) → `lastDiff`, 턴 요약 누적, 신호 `edited` |
+| `PostToolUseFailure` | 활동 실패 처리, phase `thinking` |
+| `PermissionRequest` | `PermissionRequestInfo` 생성 → 대기열, phase `waitingPermission`, 신호 `permissionRequested`, 요청 ID 반환 |
+| `Notification` | `lastNotification` 갱신. `elicitation_dialog`/`agent_needs_input` → `waitingInput` + `needsInput`. `permission_prompt` 인데 해당 세션의 훅 대기 요청이 없으면 `waitingPermission` + `needsInput` |
+| `MessageDisplay` | `delta` 를 `streamingText` 뒤에 붙임(최근 2000자 유지) |
+| `Stop` | phase `completed`, `lastAssistantMessage`, 미확인 완료 표시, 신호 `completed`, 해당 세션 남은 권한 대기 정리 |
+| `StopFailure` | phase `failed`, `errorMessage`, 신호 `failed` |
+| `SubagentStart` / `SubagentStop` | `activeSubagents` 증감 |
+| `PreCompact` / `PostCompact` | `compacting` / 이전 상태 복귀 |
+| `SessionEnd` | 세션 제거, 해당 세션 권한 대기 정리 |
+
+- 처음 보는 `session_id` 의 이벤트가 오면(앱을 세션 도중 켠 경우) payload 의 `cwd` 로 세션을 즉석 생성한다.
+- 모든 payload 필드는 선택적으로 취급한다 (버전에 따라 필드가 없거나 늘어날 수 있음). 세부 스키마는 `docs/hook-events.md`.
+
+## 5. 주로 볼 세션 (포커스) 규칙
+
+1. **끼어들기** — 주의가 필요한 세션이 있으면 그 세션이 포커스.
+   우선순위: 권한 대기(오래된 요청 먼저) → 입력 대기 → 실패(미확인) → 완료(미확인).
+2. 끼어들기가 없으면 **사용자가 직접 선택한 세션**(`focus(sessionID:)`) → 없으면 **고정 세션**.
+3. 그것도 없으면 **작업 중인 세션 중 가장 최근 이벤트**. 단, 현재 포커스 세션이 아직 작업 중이면 바꾸지 않는다
+   (작업 중 세션끼리 자동 전환으로 인한 깜빡임 방지).
+4. 작업 중인 세션도 없으면 가장 최근 이벤트가 있었던 세션.
+
+`rankedSessions` 정렬: 끼어들기 대상(위 우선순위) → 고정 → 작업 중(최근순) → 나머지(최근순). 종료된 세션 제외.
+
+## 6. 아일랜드 표시 모드
+
+| 모드 | 트리거 | 내용 | 크기(대략, pt) |
+|---|---|---|---|
+| idle | 작업 중인 세션 없음 | 오른쪽 날개에 세션 수만큼 점 (작업 중=초록, 나머지=회색) | 노치폭+50 × 노치높이 |
+| working | 포커스 세션 작업 중 | 왼쪽: 스피너 + 프로젝트명 / 오른쪽: 현재 툴 + `+N −M` | 노치폭+200 × 노치높이 |
+| peek | `edited` 신호 (설정 on) | 파일명·줄번호, 미니 diff 3줄, 스트리밍 텍스트 한 줄 | 460 × 160 |
+| permission | `permissionRequested` | 툴 · 명령어, [허용] [항상 허용] [거부] [터미널로]. 해결될 때까지 유지 | 480 × 170 |
+| needsInput | `needsInput` | 질문 메시지 + [터미널로] | 440 × 110 |
+| done / failed | `completed` / `failed` | 체크(또는 경고) + 소요 시간, 변경 파일 수 `+N −M`, 마지막 응답 한 줄. 일정 시간 후 접힘 | 430 × 105 |
+| expanded | 아일랜드 클릭 | 왼쪽: 세션 목록(우선순위순, 고정 핀) / 오른쪽: 포커스 세션 타임라인 · diff · 최근 응답 | 620 × 300 |
+
+- 접힌 상태(idle/working)는 노치 양옆 "날개"에만 내용을 둔다. 가운데 노치 폭만큼은 비워 카메라를 가리지 않는다.
+- 펼친 상태의 내용은 노치 높이 아래부터 시작한다.
+- 노치 없는 화면: 메뉴바 아래 `top = 메뉴바 높이 + 6pt`, 완전히 둥근 알약. 접힌 상태는 한 줄 (스피너 + 프로젝트 · 툴 + `+N −M`).
+- 전환 애니메이션: `spring(response: 0.42, dampingFraction: 0.82)`, 내용은 크기 변경 후 페이드인.
+- 우선순위: permission > needsInput > expanded(사용자가 연 경우) > done/failed > peek > working > idle.
+- 아일랜드는 활성화하지 않는 패널(non-activating)이라 알림이 와도 다른 앱의 키보드 포커스를 뺏지 않는다.
+  사용자가 아일랜드를 클릭해 키 윈도우가 됐을 때만 단축키가 동작한다:
+  `⌘↩` 허용, `⌥⌘↩` 항상 허용, `⌘⌫` 거부, `⎋` 접기(요청은 대기 유지).
+
+### 색상 (아일랜드는 항상 검정 배경 — 라이트/다크 공통)
+
+| 용도 | 값 |
+|---|---|
+| 배경 | `#0B0B0B` |
+| 기본 텍스트 | `#F1EFE8` |
+| 보조 텍스트 | `#B4B2A9` |
+| 흐린 텍스트 | `#888780` |
+| 진행/추가 (초록) | `#97C459`, diff 배경 `rgba(99,153,34,0.2)` |
+| 삭제/실패 (빨강) | `#F09595`, diff 배경 `rgba(226,75,74,0.2)` |
+| 주의 (주황) | `#EF9F27` |
+| 행 배경/버튼 | `#2C2C2A` |
+
+## 7. 멀티 모니터
+
+- `NSScreen.screens` 마다 패널 하나. `NSApplication.didChangeScreenParametersNotification` 으로 재구성.
+- 노치 감지: `safeAreaInsets.top > 0`. 노치 폭 = `frame.width − auxiliaryTopLeftArea.width − auxiliaryTopRightArea.width`,
+  노치 높이 = `safeAreaInsets.top`.
+- `DisplayPolicy`
+  - `allScreens`: 접힌 상태는 모든 화면, 일시적 펼침(peek/permission/done 등)은 **마우스가 있는 화면**에서만.
+  - `activeScreen`: 마우스가 있는 화면에서만 표시.
+  - `builtInOnly`: 내장(노치) 화면에서만 표시.
+- 사용자가 직접 펼친(expanded) 아일랜드는 클릭한 화면에서만 펼친다.
+- `FullscreenBehavior` (풀스크린 감지는 best-effort: 해당 화면 앞 앱의 창이 화면 전체를 덮고 메뉴바가 숨겨진 경우)
+  - `showAll` / `alertsOnly`(permission·needsInput 만) / `hide`.
+
+## 8. 패널(창) 동작
+
+- `NSPanel`, `styleMask: [.borderless, .nonactivatingPanel]`, 투명 배경, 그림자 없음.
+- `level`: 메뉴바 위 (`.statusBar` 보다 높게). `collectionBehavior: [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]`.
+- 패널은 최대 크기로 고정해 두고(아일랜드가 커져도 창 크기를 애니메이션하지 않음), 마우스가 아일랜드 영역 밖이면
+  `ignoresMouseEvents = true` 로 클릭을 아래 앱에 통과시킨다 (전역/로컬 mouseMoved 모니터).
+
+## 9. 보안 · 개인정보 원칙 (GitHub 공개 저장소)
+
+- 비밀 정보(API 키, 토큰, 개인 경로 등)를 코드·픽스처·로그에 넣지 않는다. 경로는 `homeDirectoryForCurrentUser` 로 계산.
+- 훅 헬퍼는 **화이트리스트 환경변수만** 전달한다 (`NotchWire.forwardedEnvironmentKeys`).
+- 소켓 디렉터리 0700, 소켓 0600, 연결 시 `getpeereid` 로 같은 사용자만 허용.
+- 프롬프트·코드·응답 내용을 디스크에 기록하지 않는다. 메모리에만 두고 오래된 세션은 정리한다.
+  디버그 로그는 `os.Logger` + `privacy: .private`.
+- 네트워크 통신 없음 (분석/텔레메트리 없음).
+- `~/.claude/settings.json` 수정 전 타임스탬프 백업(0600). AgentNotch 항목만 추가/제거하고 다른 훅(예: iTerm2 `cc-status`)은 보존.
+- 테스트 픽스처는 가짜 데이터만 사용 (`/Users/dev/projects/api-server` 같은 예시 경로).
+
+## 10. 배포
+
+애플 개발자 계정 없이 배포하므로 **Homebrew formula (소스 빌드)** 방식을 쓴다.
+
+- cask 로 빌드된 .app 을 배포하면 quarantine 속성 때문에 공증되지 않은 앱이 Gatekeeper 에 막힌다.
+  formula 는 사용자 맥에서 직접 빌드하므로 quarantine 이 붙지 않는다 (Command Line Tools 필요).
+- `scripts/build-app.sh` 가 `swift build -c release` 후 `AgentNotch.app` 번들을 만들고 ad-hoc 서명(`codesign -s -`)한다.
+- 로그인 시 실행: `brew services start agent-notch` (LaunchAgent).
+- 훅 헬퍼는 앱이 "훅 설치" 시 `~/Library/Application Support/AgentNotch/bin/notch-hook` 으로 복사해 경로를 고정한다
+  (brew 업그레이드로 Cellar 경로가 바뀌어도 훅이 깨지지 않게).
+- ad-hoc 서명은 빌드마다 서명이 바뀌어서, 업그레이드 후 자동화(AppleScript) 권한을 다시 물을 수 있다.

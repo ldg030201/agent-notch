@@ -1,0 +1,380 @@
+import Foundation
+import NotchShared
+
+// MARK: - 세션 상태
+
+/// 세션이 지금 어떤 단계에 있는지
+public enum SessionPhase: String, Codable, Sendable, CaseIterable {
+    /// 프롬프트 입력 대기 (턴 없음)
+    case idle
+    /// 턴 진행 중이지만 툴 실행은 아님 (응답 생성/추론)
+    case thinking
+    /// 툴 실행 중
+    case runningTool
+    /// 권한 승인 대기
+    case waitingPermission
+    /// 질문/입력 대기 (elicitation, idle_prompt 알림 등)
+    case waitingInput
+    /// 컨텍스트 압축 중
+    case compacting
+    /// 턴 완료 (Stop)
+    case completed
+    /// 턴 실패 (StopFailure)
+    case failed
+    /// 세션 종료 (SessionEnd)
+    case ended
+
+    /// 사용자의 주의가 필요한 상태인지
+    public var needsAttention: Bool {
+        switch self {
+        case .waitingPermission, .waitingInput, .failed: return true
+        default: return false
+        }
+    }
+
+    /// 에이전트가 일하는 중인지
+    public var isWorking: Bool {
+        switch self {
+        case .thinking, .runningTool, .compacting: return true
+        default: return false
+        }
+    }
+}
+
+/// 세션을 실행한 터미널/앱 정보 (터미널로 점프할 때 사용)
+public struct TerminalContext: Hashable, Sendable, Codable {
+    public var termProgram: String?
+    public var itermSessionID: String?
+    public var termSessionID: String?
+    public var bundleIdentifier: String?
+    public var entrypoint: String?
+    public var tmuxPane: String?
+
+    public init(
+        termProgram: String? = nil,
+        itermSessionID: String? = nil,
+        termSessionID: String? = nil,
+        bundleIdentifier: String? = nil,
+        entrypoint: String? = nil,
+        tmuxPane: String? = nil
+    ) {
+        self.termProgram = termProgram
+        self.itermSessionID = itermSessionID
+        self.termSessionID = termSessionID
+        self.bundleIdentifier = bundleIdentifier
+        self.entrypoint = entrypoint
+        self.tmuxPane = tmuxPane
+    }
+
+    /// `HookEnvelope.env` (화이트리스트 환경변수)로부터 생성
+    public init(environment: [String: String]) {
+        func value(_ key: String) -> String? {
+            guard let raw = environment[key], !raw.isEmpty else { return nil }
+            return raw
+        }
+        self.init(
+            termProgram: value("TERM_PROGRAM"),
+            itermSessionID: value("ITERM_SESSION_ID"),
+            termSessionID: value("TERM_SESSION_ID"),
+            bundleIdentifier: value("__CFBundleIdentifier"),
+            entrypoint: value("CLAUDE_CODE_ENTRYPOINT"),
+            tmuxPane: value("TMUX_PANE")
+        )
+    }
+}
+
+// MARK: - Diff
+
+public struct DiffLine: Hashable, Sendable {
+    public enum Kind: Hashable, Sendable {
+        case added
+        case removed
+        case context
+    }
+
+    public var kind: Kind
+    public var text: String
+
+    public init(kind: Kind, text: String) {
+        self.kind = kind
+        self.text = text
+    }
+}
+
+/// 파일 한 개에 대한 작은 diff 요약 (노치에 3줄 정도 보여주는 용도)
+public struct DiffSnippet: Hashable, Sendable {
+    /// 노치/펼침 화면에서 보관할 최대 미리보기 줄 수
+    public static let maxStoredLines = 8
+
+    public var filePath: String
+    public var added: Int
+    public var removed: Int
+    /// 새 파일 기준 첫 변경 줄 번호 (알 수 있을 때만)
+    public var startLine: Int?
+    /// 변경 줄 미리보기 (최대 `maxStoredLines`, 변경 줄 위주)
+    public var lines: [DiffLine]
+    public var isNewFile: Bool
+
+    public init(
+        filePath: String,
+        added: Int,
+        removed: Int,
+        startLine: Int? = nil,
+        lines: [DiffLine],
+        isNewFile: Bool = false
+    ) {
+        self.filePath = filePath
+        self.added = added
+        self.removed = removed
+        self.startLine = startLine
+        self.lines = lines
+        self.isNewFile = isNewFile
+    }
+
+    public var fileName: String { (filePath as NSString).lastPathComponent }
+}
+
+// MARK: - 활동 타임라인
+
+public enum ActivityKind: String, Hashable, Sendable {
+    case prompt
+    case tool
+    case message
+    case notification
+    case compaction
+    case subagent
+    case system
+}
+
+public enum ActivityStatus: String, Hashable, Sendable {
+    case running
+    case succeeded
+    case failed
+}
+
+public struct ActivityItem: Identifiable, Hashable, Sendable {
+    /// tool_use_id 가 있으면 그것, 없으면 생성한 UUID 문자열
+    public var id: String
+    public var kind: ActivityKind
+    public var toolName: String?
+    /// 짧은 제목 (예: "Edit session.ts", "Bash npm test")
+    public var title: String
+    /// 보조 설명 (예: 전체 명령어, 파일 경로)
+    public var detail: String?
+    /// SF Symbol 이름
+    public var symbolName: String
+    public var status: ActivityStatus
+    public var startedAt: Date
+    public var endedAt: Date?
+    public var diff: DiffSnippet?
+
+    public init(
+        id: String,
+        kind: ActivityKind,
+        toolName: String? = nil,
+        title: String,
+        detail: String? = nil,
+        symbolName: String,
+        status: ActivityStatus,
+        startedAt: Date,
+        endedAt: Date? = nil,
+        diff: DiffSnippet? = nil
+    ) {
+        self.id = id
+        self.kind = kind
+        self.toolName = toolName
+        self.title = title
+        self.detail = detail
+        self.symbolName = symbolName
+        self.status = status
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.diff = diff
+    }
+}
+
+/// 현재(또는 직전) 턴에서 바뀐 내용 요약
+public struct TurnSummary: Hashable, Sendable {
+    /// 변경된 파일 경로 (처음 바뀐 순서, 중복 없음)
+    public var changedFiles: [String]
+    public var added: Int
+    public var removed: Int
+    public var toolCount: Int
+    public var startedAt: Date?
+
+    public init(changedFiles: [String] = [], added: Int = 0, removed: Int = 0, toolCount: Int = 0, startedAt: Date? = nil) {
+        self.changedFiles = changedFiles
+        self.added = added
+        self.removed = removed
+        self.toolCount = toolCount
+        self.startedAt = startedAt
+    }
+}
+
+// MARK: - 권한 요청
+
+public struct PermissionRequestInfo: Identifiable, Hashable, Sendable {
+    /// 앱이 부여한 요청 ID (훅 연결과 매칭)
+    public var id: UUID
+    public var sessionID: String
+    public var toolName: String
+    /// 사람이 읽는 제목 (예: "Bash 실행 요청")
+    public var title: String
+    /// 핵심 내용 (명령어, 파일 경로 등)
+    public var detail: String
+    public var toolInput: JSONValue
+    /// 훅 입력의 `permission_suggestions` (항상 허용에 사용)
+    public var suggestions: JSONValue?
+    public var receivedAt: Date
+
+    public init(
+        id: UUID,
+        sessionID: String,
+        toolName: String,
+        title: String,
+        detail: String,
+        toolInput: JSONValue,
+        suggestions: JSONValue?,
+        receivedAt: Date
+    ) {
+        self.id = id
+        self.sessionID = sessionID
+        self.toolName = toolName
+        self.title = title
+        self.detail = detail
+        self.toolInput = toolInput
+        self.suggestions = suggestions
+        self.receivedAt = receivedAt
+    }
+}
+
+public enum PermissionDecision: Hashable, Sendable {
+    case allow
+    /// `permission_suggestions` 를 `updatedPermissions` 로 적용해 다음부터 묻지 않음
+    case allowAlways
+    case deny(message: String?)
+    /// 결정하지 않음 → Claude Code 기본 권한 프롬프트로 넘김
+    case passthrough
+}
+
+// MARK: - 세션
+
+public struct AgentSession: Identifiable, Hashable, Sendable {
+    public static let maxActivities = 40
+    public static let maxStreamingCharacters = 2_000
+
+    /// Claude Code `session_id`
+    public var id: String
+    public var cwd: String
+    /// cwd 의 마지막 경로 요소 (예: "api-server")
+    public var projectName: String
+    public var gitBranch: String?
+    public var transcriptPath: String?
+    public var model: String?
+    public var permissionMode: String?
+
+    public var phase: SessionPhase
+    public var startedAt: Date
+    public var lastEventAt: Date
+    public var turnStartedAt: Date?
+
+    public var lastPrompt: String?
+    public var currentActivity: ActivityItem?
+    /// 최신 항목이 마지막. 최대 `maxActivities`
+    public var activities: [ActivityItem]
+    public var lastDiff: DiffSnippet?
+    public var turn: TurnSummary
+
+    /// MessageDisplay delta 누적 (최근 `maxStreamingCharacters` 자)
+    public var streamingText: String
+    /// Stop 의 `last_assistant_message`
+    public var lastAssistantMessage: String?
+    public var lastNotification: String?
+    public var errorMessage: String?
+
+    /// 완료됐지만 사용자가 아직 확인하지 않음
+    public var hasUnseenCompletion: Bool
+    public var activeSubagents: Int
+    public var terminal: TerminalContext
+
+    public init(
+        id: String,
+        cwd: String,
+        projectName: String,
+        gitBranch: String? = nil,
+        transcriptPath: String? = nil,
+        model: String? = nil,
+        permissionMode: String? = nil,
+        phase: SessionPhase = .idle,
+        startedAt: Date,
+        lastEventAt: Date,
+        turnStartedAt: Date? = nil,
+        lastPrompt: String? = nil,
+        currentActivity: ActivityItem? = nil,
+        activities: [ActivityItem] = [],
+        lastDiff: DiffSnippet? = nil,
+        turn: TurnSummary = TurnSummary(),
+        streamingText: String = "",
+        lastAssistantMessage: String? = nil,
+        lastNotification: String? = nil,
+        errorMessage: String? = nil,
+        hasUnseenCompletion: Bool = false,
+        activeSubagents: Int = 0,
+        terminal: TerminalContext = TerminalContext()
+    ) {
+        self.id = id
+        self.cwd = cwd
+        self.projectName = projectName
+        self.gitBranch = gitBranch
+        self.transcriptPath = transcriptPath
+        self.model = model
+        self.permissionMode = permissionMode
+        self.phase = phase
+        self.startedAt = startedAt
+        self.lastEventAt = lastEventAt
+        self.turnStartedAt = turnStartedAt
+        self.lastPrompt = lastPrompt
+        self.currentActivity = currentActivity
+        self.activities = activities
+        self.lastDiff = lastDiff
+        self.turn = turn
+        self.streamingText = streamingText
+        self.lastAssistantMessage = lastAssistantMessage
+        self.lastNotification = lastNotification
+        self.errorMessage = errorMessage
+        self.hasUnseenCompletion = hasUnseenCompletion
+        self.activeSubagents = activeSubagents
+        self.terminal = terminal
+    }
+}
+
+// MARK: - UI 신호
+
+/// UI 가 "잠깐 펼치기" 같은 일시적 반응을 하도록 스토어가 내보내는 신호
+public enum IslandSignal: Hashable, Sendable {
+    /// 파일 수정 → 미니 diff 피크
+    case edited(sessionID: String, diff: DiffSnippet)
+    /// 권한 요청 → 즉시 펼치고 해결될 때까지 유지
+    case permissionRequested(id: UUID, sessionID: String)
+    /// 턴 완료
+    case completed(sessionID: String)
+    /// 턴 실패
+    case failed(sessionID: String)
+    /// 질문/입력 필요
+    case needsInput(sessionID: String, message: String)
+    /// 새 세션 시작
+    case sessionStarted(sessionID: String)
+}
+
+/// 같은 신호가 연달아 와도 UI 가 감지할 수 있도록 일련번호를 붙인 래퍼
+public struct SignalEvent: Hashable, Sendable {
+    public let seq: Int
+    public let signal: IslandSignal
+    public let at: Date
+
+    public init(seq: Int, signal: IslandSignal, at: Date) {
+        self.seq = seq
+        self.signal = signal
+        self.at = at
+    }
+}
