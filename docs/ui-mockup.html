@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentNotch UI 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
+<style>
+:root{--surface-1:#f5f4ef;--border:rgba(0,0,0,.12);--text-secondary:#5f5e5a;--bg-accent:#e6f1fb;--text-accent:#185fa5;--border-accent:#85b7eb;--font-mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+@media (prefers-color-scheme:dark){:root{--surface-1:#1f1f1e;--border:rgba(255,255,255,.14);--text-secondary:#b4b2a9;--bg-accent:#0c447c;--text-accent:#b5d4f4;--border-accent:#378add}}
+body{margin:0;padding:24px 16px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:var(--surface-1);color:var(--text-secondary)}
+main{max-width:680px;margin:0 auto}
+button{font:inherit;font-size:13px;padding:6px 12px;border-radius:8px;border:.5px solid var(--border);background:transparent;color:inherit;cursor:pointer}
+.scr{position:relative;background:var(--surface-1);border-radius:12px;height:370px;overflow:hidden;border:.5px solid var(--border)}
+.mb{height:28px;display:flex;justify-content:space-between;align-items:center;padding:0 14px;font-size:12px;border-bottom:.5px solid var(--border)}
+.isl{position:absolute;top:0;left:50%;transform:translateX(-50%);background:#0b0b0b;color:#f1efe8;overflow:hidden;font-size:12px;line-height:1.5;transition:width .5s cubic-bezier(.2,.9,.25,1.12),height .5s cubic-bezier(.2,.9,.25,1.12),border-radius .5s,top .5s;cursor:pointer}
+.in{transition:opacity .18s}
+.mono{font-family:var(--font-mono);font-size:11px}
+.sw button.on{background:var(--bg-accent);color:var(--text-accent);border-color:var(--border-accent)}
+.ib{background:#2c2c2a;color:#f1efe8;border:none;border-radius:8px;padding:5px 10px;font-size:12px}
+@keyframes sp{to{transform:rotate(360deg)}}@keyframes pl{50%{opacity:.25}}
+.spin{display:inline-block;animation:sp 1s linear infinite}.pulse{animation:pl 1s ease-in-out infinite}
+</style>
+</head>
+<body>
+<main>
+<div class="sw" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px" id="sw"></div>
+<div class="scr">
+<div class="mb"><span id="mbl">내장 디스플레이 · 노치</span><span>10:42</span></div>
+<div id="notch" style="position:absolute;top:0;left:50%;transform:translateX(-50%);width:170px;height:30px;background:#0b0b0b;border-radius:0 0 10px 10px"></div>
+<div class="isl" id="isl"><div class="in" id="in"></div></div>
+<div style="position:absolute;bottom:12px;left:14px;right:14px;font-size:12px" id="cap"></div>
+</div>
+</main>
+<script>
+const G='#97C459',R='#F09595',A='#EF9F27',M='#888780',S2='#b4b2a9';
+const w=(l,r)=>`<div style="display:flex;justify-content:space-between;align-items:center;height:30px;padding:0 14px">${l}${r}</div>`;
+const spin=`<i class="ti ti-loader-2 spin" style="color:${G};font-size:14px"></i>`;
+const dl=(t,s)=>`<div class="mono" style="padding:1px 8px;border-radius:4px;background:${s=='+'?'rgba(99,153,34,.2)':'rgba(226,75,74,.2)'};color:${s=='+'?G:R};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s} ${t}</div>`;
+const diff=dl('const ttl = 3600','-')+dl('const ttl = env.SESSION_TTL ?? 3600','+')+dl('if (!token) return null','+');
+const stat=`<span class="mono"><span style="color:${G}">+12</span> <span style="color:${R}">−3</span></span>`;
+const row=(c,n,s,on,ic)=>`<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;${on?'background:#2c2c2a':''}"><span style="width:7px;height:7px;border-radius:50%;background:${c}" class="${c==A?'pulse':''}"></span><div style="flex:1;min-width:0"><div>${n}</div><div style="color:${M};font-size:11px">${s}</div></div>${ic||''}</div>`;
+const S={
+idle:{w:220,h:30,r:'0 0 10px 10px',c:'아무 일도 없을 땐 노치에 세션 수 점만 표시',h1:w(`<span style="color:${M}">·</span>`,`<span style="display:flex;gap:3px"><span style="width:5px;height:5px;border-radius:50%;background:${G}"></span><span style="width:5px;height:5px;border-radius:50%;background:${M}"></span><span style="width:5px;height:5px;border-radius:50%;background:${M}"></span></span>`)},
+work:{w:370,h:30,r:'0 0 12px 12px',c:'작업 중: 왼쪽 날개 = 포커스 세션, 오른쪽 날개 = 지금 하는 일',h1:w(`<span style="display:flex;gap:6px;align-items:center">${spin}api-server</span>`,`<span style="display:flex;gap:6px;align-items:center">Edit ${stat}</span>`)},
+peek:{w:460,h:158,r:'0 0 22px 22px',c:'파일 수정 시 2~3초간 살짝 펼쳐서 미니 diff + 응답 스트리밍 한 줄',h1:w(`<span style="display:flex;gap:6px;align-items:center">${spin}api-server</span>`,`<span style="display:flex;gap:6px;align-items:center">Edit ${stat}</span>`)+`<div style="padding:4px 16px 12px"><div style="display:flex;justify-content:space-between;margin-bottom:6px"><span><i class="ti ti-file-code" style="color:${S2}"></i> src/auth/session.ts</span><span style="color:${M}">L42</span></div>${diff}<div style="color:${S2};margin-top:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">세션 만료 시간을 환경변수로 뺐어. 이제 테스트 돌려볼게…</div></div>`},
+perm:{w:480,h:166,r:'0 0 22px 22px',c:'권한 요청: 다른 세션 보고 있어도 즉시 끼어들어 펼침, 해결될 때까지 유지',h1:w(`<span style="display:flex;gap:6px;align-items:center"><span class="pulse" style="width:8px;height:8px;border-radius:50%;background:${A}"></span>web-app</span>`,`<span style="color:${A}">승인 필요</span>`)+`<div style="padding:4px 16px 12px"><div style="color:${S2};margin-bottom:4px">Bash 실행 요청</div><div class="mono" style="background:#2c2c2a;padding:6px 10px;border-radius:8px;margin-bottom:10px">npm run test -- --watch=false</div><div style="display:flex;gap:6px"><button class="ib" style="background:${G};color:#173404">허용 ⌘↩</button><button class="ib">항상 허용</button><button class="ib">거부 ⌘⌫</button><span style="flex:1"></span><button class="ib"><i class="ti ti-terminal-2"></i> 터미널로</button></div></div>`},
+done:{w:430,h:104,r:'0 0 20px 20px',c:'완료: 초록 체크 + 이번 턴 변경 요약, 몇 초 뒤 자동으로 접힘',h1:w(`<span style="display:flex;gap:6px;align-items:center"><i class="ti ti-circle-check" style="color:${G};font-size:15px"></i>api-server</span>`,`<span style="color:${M}">완료 · 2m 14s</span>`)+`<div style="padding:2px 16px 12px"><div style="margin-bottom:4px"><i class="ti ti-files" style="color:${S2}"></i> 파일 3개 <span class="mono"><span style="color:${G}">+40</span> <span style="color:${R}">−12</span></span></div><div style="color:${S2};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">세션 TTL 설정 분리하고 테스트 14개 전부 통과했어.</div></div>`},
+exp:{w:620,h:300,r:'0 0 26px 26px',c:'클릭하면 전체 펼침: 왼쪽 세션 목록(우선순위순), 오른쪽 포커스 세션 타임라인',h1:w(`<span style="color:${S2}">세션 3</span>`,`<i class="ti ti-settings" style="color:${S2}"></i>`)+`<div style="display:grid;grid-template-columns:180px minmax(0,1fr);gap:12px;padding:6px 14px 14px"><div>${row(A,'web-app','승인 대기',0)}${row(G,'api-server','Edit 중',1,`<i class="ti ti-pin" style="color:${S2}"></i>`)}${row(M,'blog','유휴 · 12분',0)}</div><div style="min-width:0"><div style="display:flex;justify-content:space-between;margin-bottom:6px"><span>api-server <span style="color:${M}">· main</span></span><span style="color:${M}">4m 02s</span></div><div style="color:${S2};display:grid;gap:3px;margin-bottom:8px"><span><i class="ti ti-eye"></i> Read session.ts</span><span><i class="ti ti-pencil"></i> Edit session.ts ${stat}</span><span>${spin} Bash npm test</span></div>${diff}<div style="color:${S2};margin-top:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">세션 만료 시간을 환경변수로 뺐어. 이제 테스트 돌려볼게…</div></div></div>`},
+ext:{w:380,h:32,r:'16px',top:38,c:'외부 모니터: 노치가 없으니 메뉴바 아래 떠 있는 알약 형태, 같은 내용',h1:`<div style="display:flex;justify-content:space-between;align-items:center;height:32px;padding:0 14px"><span style="display:flex;gap:6px;align-items:center">${spin}api-server</span><span style="display:flex;gap:6px;align-items:center">Edit session.ts ${stat}</span></div>`}
+};
+const L={idle:'유휴',work:'작업 중',peek:'수정 피크',perm:'권한 요청',done:'완료',exp:'전체 펼침',ext:'외부 모니터'};
+const isl=document.getElementById('isl'),inn=document.getElementById('in'),sw=document.getElementById('sw');
+let cur,timer;
+function go(k){cur=k;const s=S[k];inn.style.opacity=0;isl.style.width=s.w+'px';isl.style.height=s.h+'px';isl.style.borderRadius=s.r;isl.style.top=(s.top||0)+'px';
+document.getElementById('notch').style.display=k=='ext'?'none':'block';document.getElementById('mbl').textContent=k=='ext'?'외부 모니터 · 노치 없음':'내장 디스플레이 · 노치';
+document.getElementById('cap').textContent=s.c;setTimeout(()=>{inn.innerHTML=s.h1;inn.style.opacity=1},160);
+[...sw.children].forEach(b=>b.classList.toggle('on',b.dataset.k==k))}
+Object.keys(S).forEach(k=>{const b=document.createElement('button');b.textContent=L[k];b.dataset.k=k;b.onclick=()=>{clearInterval(timer);go(k)};sw.appendChild(b)});
+const pb=document.createElement('button');pb.textContent='흐름 재생';pb.onclick=()=>{clearInterval(timer);const seq=['idle','work','peek','work','perm','work','done','idle'];let i=0;go(seq[0]);timer=setInterval(()=>{i++;if(i>=seq.length){clearInterval(timer);return}go(seq[i])},1800)};sw.appendChild(pb);
+isl.onclick=()=>go(cur=='exp'?'work':'exp');
+go('work');
+</script>
+</body>
+</html>
