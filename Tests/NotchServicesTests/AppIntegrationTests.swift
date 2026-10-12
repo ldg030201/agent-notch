@@ -69,19 +69,6 @@ struct FrontmostAppMonitorTests {
     }
 }
 
-@Suite("SoundPlayer")
-struct SoundPlayerTests {
-    @Test func mapsSignalsToSystemSounds() {
-        let diff = DiffSnippet(filePath: "/Users/dev/projects/api-server/src/session.ts", added: 1, removed: 0, lines: [])
-        #expect(SoundPlayer.soundName(for: .permissionRequested(id: UUID(), sessionID: "s")) == "Glass")
-        #expect(SoundPlayer.soundName(for: .needsInput(sessionID: "s", message: "질문")) == "Tink")
-        #expect(SoundPlayer.soundName(for: .completed(sessionID: "s")) == "Ping")
-        #expect(SoundPlayer.soundName(for: .failed(sessionID: "s")) == "Basso")
-        #expect(SoundPlayer.soundName(for: .edited(sessionID: "s", diff: diff)) == nil)
-        #expect(SoundPlayer.soundName(for: .sessionStarted(sessionID: "s")) == nil)
-    }
-}
-
 @Suite("FileOpener")
 struct FileOpenerTests {
     @Test func classifiesFilesBeforeOpening() throws {

@@ -96,12 +96,6 @@ struct SettingsView: View {
                 Toggle("응답 스트리밍 표시", isOn: $preferences.showStreamingText)
             }
 
-            Section("소리") {
-                Toggle("소리", isOn: $preferences.soundsEnabled)
-                Toggle("터미널이 앞에 있으면 소리 끄기", isOn: $preferences.muteWhenTerminalFrontmost)
-                    .disabled(!preferences.soundsEnabled)
-            }
-
             Section("권한 요청") {
                 Toggle("터미널이 앞에 있으면 권한 요청을 터미널로 넘기기", isOn: $preferences.passthroughWhenTerminalFrontmost)
                 Stepper(value: $preferences.permissionTimeout, in: 15...540, step: 15) {

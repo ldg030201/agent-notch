@@ -32,8 +32,6 @@ public final class AppPreferences {
         static let peekDuration = "peekDuration"
         static let completionDisplayDuration = "completionDisplayDuration"
         static let showStreamingText = "showStreamingText"
-        static let soundsEnabled = "soundsEnabled"
-        static let muteWhenTerminalFrontmost = "muteWhenTerminalFrontmost"
         static let permissionTimeout = "permissionTimeout"
         static let staleSessionTimeout = "staleSessionTimeout"
         static let passthroughWhenTerminalFrontmost = "passthroughWhenTerminalFrontmost"
@@ -69,15 +67,6 @@ public final class AppPreferences {
         didSet { defaults.set(showStreamingText, forKey: Key.showStreamingText) }
     }
 
-    public var soundsEnabled: Bool {
-        didSet { defaults.set(soundsEnabled, forKey: Key.soundsEnabled) }
-    }
-
-    /// 해당 세션의 터미널이 이미 앞에 있으면 소리 생략
-    public var muteWhenTerminalFrontmost: Bool {
-        didSet { defaults.set(muteWhenTerminalFrontmost, forKey: Key.muteWhenTerminalFrontmost) }
-    }
-
     /// 권한 요청을 노치에서 기다리는 최대 시간(초). 지나면 결정을 Claude Code 기본 프롬프트로 넘긴다.
     public var permissionTimeout: Double {
         didSet { defaults.set(permissionTimeout, forKey: Key.permissionTimeout) }
@@ -102,8 +91,6 @@ public final class AppPreferences {
         peekDuration = defaults.object(forKey: Key.peekDuration) as? Double ?? 2.5
         completionDisplayDuration = defaults.object(forKey: Key.completionDisplayDuration) as? Double ?? 4
         showStreamingText = defaults.object(forKey: Key.showStreamingText) as? Bool ?? true
-        soundsEnabled = defaults.object(forKey: Key.soundsEnabled) as? Bool ?? true
-        muteWhenTerminalFrontmost = defaults.object(forKey: Key.muteWhenTerminalFrontmost) as? Bool ?? true
         permissionTimeout = defaults.object(forKey: Key.permissionTimeout) as? Double ?? 120
         staleSessionTimeout = defaults.object(forKey: Key.staleSessionTimeout) as? Double ?? 2 * 60 * 60
         passthroughWhenTerminalFrontmost = defaults.object(forKey: Key.passthroughWhenTerminalFrontmost) as? Bool ?? true

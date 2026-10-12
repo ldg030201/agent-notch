@@ -3,7 +3,7 @@ import NotchCore
 import Observation
 
 /// 지금 맨 앞에 있는 앱을 추적한다.
-/// (세션 터미널이 이미 앞에 있으면 소리를 생략하거나 권한 요청을 터미널로 넘기는 데 사용)
+/// (세션 터미널이 이미 앞에 있으면 권한 요청을 터미널로 넘기는 데 사용)
 @MainActor
 @Observable
 public final class FrontmostAppMonitor {

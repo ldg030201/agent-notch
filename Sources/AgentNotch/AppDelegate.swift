@@ -3,10 +3,9 @@ import NotchCore
 import NotchServices
 import NotchShared
 import NotchUI
-import Observation
 import os
 
-/// 모듈 조립: 소켓 서버 → 세션 스토어 → 노치 UI, 메뉴바, 사운드, 데모
+/// 모듈 조립: 소켓 서버 → 세션 스토어 → 노치 UI, 메뉴바, 데모
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
     /// 오래된 세션 정리 주기
@@ -18,7 +17,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
     private let store: SessionStore
     private let socketServer: SocketServer
     private let frontmost: FrontmostAppMonitor
-    private let soundPlayer: SoundPlayer
     private let hookInstaller: HookInstaller
     private let settings: AppSettingsProvider
     private let actions: AppActions
@@ -30,8 +28,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
     private var pruneTimer: Timer?
     /// SIGTERM(`brew services stop`, launchd) · SIGINT 에도 정상 종료 경로를 타게 한다 (소켓 파일 정리)
     private var signalSources: [DispatchSourceSignal] = []
-    private var lastSoundSeq: Int?
-    private var observingSignals = false
 
     init(options: LaunchOptions) {
         self.options = options
@@ -39,7 +35,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
         store = SessionStore()
         socketServer = SocketServer()
         frontmost = FrontmostAppMonitor()
-        soundPlayer = SoundPlayer()
         hookInstaller = HookInstaller()
         settings = AppSettingsProvider(
             installer: hookInstaller,
@@ -68,7 +63,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
         }
         if hotKey == nil { Self.log.info("전역 단축키 등록 실패 (다른 앱이 사용 중)") }
 
-        startSignalObservation()
         pruneTimer = Timer.scheduledTimer(withTimeInterval: Self.pruneInterval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.pruneStaleSessions() }
         }
@@ -84,7 +78,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
 
     func applicationWillTerminate(_ notification: Notification) {
         demo.stop()
-        observingSignals = false
         pruneTimer?.invalidate()
         hotKey?.invalidate()
         uiController.stop()
@@ -156,52 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
         }
     }
 
-    // MARK: - 사운드
-
-    private func startSignalObservation() {
-        observingSignals = true
-        // 시작 전에 쌓인 신호에는 소리를 내지 않는다
-        lastSoundSeq = store.latestSignal?.seq
-        armSignalObservation()
-    }
-
-    private func armSignalObservation() {
-        guard observingSignals else { return }
-        withObservationTracking {
-            _ = store.latestSignal
-        } onChange: { [weak self] in
-            // willSet 시점이라 다음 틱에서 새 값을 읽는다
-            Task { @MainActor [weak self] in
-                guard let self, self.observingSignals else { return }
-                self.playSoundForLatestSignal()
-                self.armSignalObservation()
-            }
-        }
-    }
-
-    private func playSoundForLatestSignal() {
-        guard let event = store.latestSignal, event.seq != lastSoundSeq else { return }
-        lastSoundSeq = event.seq
-        guard preferences.soundsEnabled else { return }
-        if preferences.muteWhenTerminalFrontmost,
-           let session = store.sessions[Self.sessionID(of: event.signal)],
-           frontmost.isFrontmost(session.terminal) {
-            return
-        }
-        soundPlayer.play(for: event.signal)
-    }
-
-    private static func sessionID(of signal: IslandSignal) -> String {
-        switch signal {
-        case let .edited(sessionID, _),
-             let .permissionRequested(_, sessionID),
-             let .completed(sessionID),
-             let .failed(sessionID),
-             let .needsInput(sessionID, _),
-             let .sessionStarted(sessionID):
-            return sessionID
-        }
-    }
+    // MARK: - 정리
 
     private func pruneStaleSessions() {
         store.pruneStaleSessions(olderThan: preferences.staleSessionTimeout)
