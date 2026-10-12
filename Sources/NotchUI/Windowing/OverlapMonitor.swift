@@ -100,7 +100,7 @@ final class OverlapMonitor {
     private static let idleInterval: Duration = .seconds(1)
     /// 이 시간 넘게 노치에 있으면 다른 노치 앱으로 본다
     private static let notchPersistence: TimeInterval = 1
-    private let logger = Logger(subsystem: "AgentNotch", category: "Overlap")
+    private let logger = Logger(subsystem: "com.ldg.agent-notch", category: "Overlap")
 
     /// `isIslandHit` 은 마우스 위치가 아일랜드 위인지 (아일랜드 안 컨텍스트 메뉴는 겹침으로 보지 않기 위함)
     func start(isIslandHit: @escaping @MainActor (CGPoint) -> Bool) {

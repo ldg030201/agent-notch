@@ -40,7 +40,7 @@ public final class SessionStore {
     @ObservationIgnored private var phaseBeforeCompact: [String: SessionPhase] = [:]
     @ObservationIgnored private var signalSeq = 0
 
-    private static let logger = Logger(subsystem: "AgentNotch", category: "SessionStore")
+    private static let logger = Logger(subsystem: "com.ldg.agent-notch", category: "SessionStore")
     /// `lastAssistantMessage` 보관 최대 길이 (뒤쪽 유지)
     private static let maxAssistantMessageCharacters = 4_000
 

@@ -46,22 +46,36 @@ struct VersionSettingsView: View {
         }
     }
 
+    /// 진행 중(받는 중 · 교체 중)이 아니면 새로 시작할 수 있다 (실패 후 재시도 포함)
+    private var canStartUpgrade: Bool {
+        switch provider.upgradePhase {
+        case .idle, .failed: return true
+        case .running, .ready, .swapping: return false
+        }
+    }
+
     private var statusRow: some View {
         HStack(spacing: 8) {
             status
                 .frame(maxWidth: .infinity, alignment: .leading)
-            if provider.hasUpdate {
+            if provider.upgradePhase == .ready {
+                // 진행 화면에서 "나중에" 를 눌렀어도 여기서 마저 끝낼 수 있게 한다
+                Button("다시 띄워서 마치기") {
+                    provider.relaunchAfterUpgrade()
+                }
+                .buttonStyle(SettingsButtonStyle(prominent: true))
+            } else if provider.hasUpdate {
                 Button("업데이트") {
                     provider.startUpgrade()
                 }
                 .buttonStyle(SettingsButtonStyle(prominent: true))
-                .disabled(provider.upgradePhase != .idle)
+                .disabled(!canStartUpgrade)
             }
             Button("업데이트 확인") {
                 provider.checkNow()
             }
             .buttonStyle(SettingsButtonStyle())
-            .disabled(provider.isChecking || provider.upgradePhase != .idle)
+            .disabled(provider.isChecking || !canStartUpgrade)
         }
         .font(.system(size: 13))
         .padding(.horizontal, 12)

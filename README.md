@@ -212,7 +212,7 @@ rm -rf /Applications/AgentNotch.app && cp -R "$(brew --prefix agent-notch)/Agent
 
 **더 자세한 로그**
 ```bash
-log stream --level debug --predicate 'subsystem == "com.ldg.agent-notch" OR subsystem == "AgentNotch"'
+log stream --level debug --predicate 'subsystem == "com.ldg.agent-notch"'
 AGENT_NOTCH_DEBUG=1 ~/Library/"Application Support"/AgentNotch/bin/notch-hook --ping   # 헬퍼 진단을 stderr 로 출력
 ```
 

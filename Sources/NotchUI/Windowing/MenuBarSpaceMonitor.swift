@@ -256,7 +256,7 @@ final class MenuBarSpaceMonitor {
     private static let pollInterval: Double = 1
     private static let appMenuInterval: TimeInterval = 5
     private static let statusInterval: TimeInterval = 10
-    private let logger = Logger(subsystem: "AgentNotch", category: "MenuBarSpace")
+    private let logger = Logger(subsystem: "com.ldg.agent-notch", category: "MenuBarSpace")
 
     func start() {
         guard !running else { return }

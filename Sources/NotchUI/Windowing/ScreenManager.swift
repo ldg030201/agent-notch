@@ -24,7 +24,7 @@ final class ScreenManager {
     /// stop/start 를 반복해도 관찰 루프가 겹치지 않게 하는 세대 번호
     private var generation = 0
 
-    private let logger = Logger(subsystem: "AgentNotch", category: "Screens")
+    private let logger = Logger(subsystem: "com.ldg.agent-notch", category: "Screens")
 
     /// 풀스크린 감지 주기(초). 설정이 "전부 표시"면 감지하지 않는다.
     private static let fullscreenPollInterval: Double = 2

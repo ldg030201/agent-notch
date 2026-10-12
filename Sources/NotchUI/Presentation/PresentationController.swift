@@ -68,7 +68,7 @@ final class PresentationController {
     /// 설정 창 열기 (NotchUIController 가 연결. 없으면 IslandActions.openSettings 사용)
     @ObservationIgnored var onOpenSettings: ((SettingsSection?) -> Void)?
 
-    @ObservationIgnored private let logger = Logger(subsystem: "AgentNotch", category: "Presentation")
+    @ObservationIgnored private let logger = Logger(subsystem: "com.ldg.agent-notch", category: "Presentation")
 
     init(store: SessionStore, preferences: AppPreferences, actions: IslandActions) {
         self.store = store
