@@ -1,0 +1,15 @@
+{
+  "session_id": "5f0c2a8e-0000-4000-8000-00000000a001",
+  "transcript_path": "/Users/dev/.claude/projects/-Users-dev-projects-api-server/5f0c2a8e-0000-4000-8000-00000000a001.jsonl",
+  "cwd": "/Users/dev/projects/api-server",
+  "hook_event_name": "PreToolUse",
+  "permission_mode": "default",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "/Users/dev/projects/api-server/src/auth/session.ts",
+    "old_string": "  return session.expiresAt < Date.now()",
+    "new_string": "  const now = Math.floor(Date.now() / 1000)\n  return session.expiresAt < now",
+    "replace_all": false
+  },
+  "tool_use_id": "toolu_fixture_edit_01"
+}

@@ -1,0 +1,20 @@
+{
+  "session_id": "5f0c2a8e-0000-4000-8000-00000000a001",
+  "transcript_path": "/Users/dev/.claude/projects/-Users-dev-projects-api-server/5f0c2a8e-0000-4000-8000-00000000a001.jsonl",
+  "cwd": "/Users/dev/projects/api-server",
+  "hook_event_name": "PostToolUse",
+  "permission_mode": "default",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "npm test -- auth",
+    "description": "인증 테스트 실행"
+  },
+  "tool_response": {
+    "stdout": "PASS src/auth/session.test.ts\nTests: 12 passed, 12 total\n",
+    "stderr": "",
+    "interrupted": false,
+    "isImage": false
+  },
+  "tool_use_id": "toolu_fixture_bash_01",
+  "duration_ms": 4210
+}

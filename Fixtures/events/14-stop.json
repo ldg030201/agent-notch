@@ -1,0 +1,10 @@
+{
+  "session_id": "5f0c2a8e-0000-4000-8000-00000000a001",
+  "transcript_path": "/Users/dev/.claude/projects/-Users-dev-projects-api-server/5f0c2a8e-0000-4000-8000-00000000a001.jsonl",
+  "cwd": "/Users/dev/projects/api-server",
+  "hook_event_name": "Stop",
+  "stop_hook_active": false,
+  "last_assistant_message": "만료 검사를 초 단위로 고쳤어요. 이제 만료된 세션은 401 을 돌려주고 인증 테스트 12개가 모두 통과해요.",
+  "background_tasks": [],
+  "session_crons": []
+}

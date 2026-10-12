@@ -1,0 +1,8 @@
+{
+  "session_id": "5f0c2a8e-0000-4000-8000-00000000a001",
+  "transcript_path": "/Users/dev/.claude/projects/-Users-dev-projects-api-server/5f0c2a8e-0000-4000-8000-00000000a001.jsonl",
+  "cwd": "/Users/dev/projects/api-server",
+  "hook_event_name": "UserPromptSubmit",
+  "permission_mode": "default",
+  "prompt": "세션이 만료되면 401 대신 500 이 나는 버그 고쳐줘"
+}

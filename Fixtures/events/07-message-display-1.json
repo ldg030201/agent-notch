@@ -1,0 +1,11 @@
+{
+  "session_id": "5f0c2a8e-0000-4000-8000-00000000a001",
+  "transcript_path": "/Users/dev/.claude/projects/-Users-dev-projects-api-server/5f0c2a8e-0000-4000-8000-00000000a001.jsonl",
+  "cwd": "/Users/dev/projects/api-server",
+  "hook_event_name": "MessageDisplay",
+  "turn_id": "turn_fixture_01",
+  "message_id": "msg_fixture_01",
+  "index": 0,
+  "final": false,
+  "delta": "만료 검사가 초와 밀리초를 섞어 비교하고 있었어요.\n"
+}

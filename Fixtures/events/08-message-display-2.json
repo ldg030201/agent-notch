@@ -1,0 +1,11 @@
+{
+  "session_id": "5f0c2a8e-0000-4000-8000-00000000a001",
+  "transcript_path": "/Users/dev/.claude/projects/-Users-dev-projects-api-server/5f0c2a8e-0000-4000-8000-00000000a001.jsonl",
+  "cwd": "/Users/dev/projects/api-server",
+  "hook_event_name": "MessageDisplay",
+  "turn_id": "turn_fixture_01",
+  "message_id": "msg_fixture_01",
+  "index": 1,
+  "final": true,
+  "delta": "초 단위로 맞췄으니 테스트를 돌려 볼게요.\n"
+}
