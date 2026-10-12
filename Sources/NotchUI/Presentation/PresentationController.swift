@@ -1,0 +1,538 @@
+import AppKit
+import Observation
+import NotchCore
+import os
+
+/// 스토어 상태 + 설정 + 일시 상태(피크/완료 타이머, 사용자 펼침, 접어 둔 알림)로부터
+/// 화면별 아일랜드 표시 모드를 계산한다.
+@MainActor
+@Observable
+final class PresentationController {
+    /// 스토어 신호로 생기는 일시적 펼침
+    enum Transient: Equatable {
+        case peek(sessionID: String, diff: DiffSnippet)
+        case done(sessionID: String)
+        case failed(sessionID: String)
+    }
+
+    /// 패널이 키 윈도우일 때의 단축키
+    enum Shortcut {
+        case allow, allowAlways, deny, collapse
+    }
+
+    let store: SessionStore
+    let preferences: AppPreferences
+    let actions: IslandActions
+
+    private(set) var geometries: [ScreenID: NotchGeometry] = [:]
+    /// NSScreen.screens 순서 (첫 번째 = 메뉴바가 있는 주 화면)
+    private(set) var screenOrder: [ScreenID] = []
+    /// 마우스가 있는 화면
+    private(set) var activeScreenID: ScreenID?
+    /// 마우스가 아일랜드 위에 있는 화면
+    private(set) var hoveredScreenID: ScreenID?
+    /// 사용자가 직접 펼친 화면 (클릭한 화면에서만 펼친다)
+    private(set) var expandedScreenID: ScreenID?
+    /// 풀스크린 앱이 덮고 있는 화면 (best-effort)
+    private(set) var fullscreenScreenIDs: Set<ScreenID> = []
+    private(set) var reduceMotion = false
+
+    private var transient: Transient?
+    /// ⎋ 로 접어 둔 권한 요청 (요청은 계속 대기)
+    private var suppressedPermissionIDs: Set<UUID> = []
+    /// ⎋ 로 접어 둔 입력 대기 알림
+    private var suppressedInputKey: String?
+    /// needsInput 신호로 받은 메시지 (세션별 최신)
+    private var inputMessages: [String: String] = [:]
+
+    @ObservationIgnored private var transientTask: Task<Void, Never>?
+    @ObservationIgnored private var lastSignalSeq: Int?
+    @ObservationIgnored private var observing = false
+    /// stop/start 를 반복해도 관찰 루프가 겹치지 않게 하는 세대 번호
+    @ObservationIgnored private var generation = 0
+    /// 사용자 동작으로 펼쳤을 때 해당 화면 패널을 키 윈도우로 만든다 (ScreenManager 가 연결)
+    @ObservationIgnored var onRequestKey: ((ScreenID) -> Void)?
+    /// 설정 창 열기 (NotchUIController 가 연결. 없으면 IslandActions.openSettings 사용)
+    @ObservationIgnored var onOpenSettings: (() -> Void)?
+
+    @ObservationIgnored private let logger = Logger(subsystem: "AgentNotch", category: "Presentation")
+
+    init(store: SessionStore, preferences: AppPreferences, actions: IslandActions) {
+        self.store = store
+        self.preferences = preferences
+        self.actions = actions
+    }
+
+    // MARK: - 생명주기
+
+    func start() {
+        guard !observing else { return }
+        observing = true
+        generation += 1
+        // 시작 전에 쌓인 신호에는 반응하지 않는다
+        lastSignalSeq = store.latestSignal?.seq
+        setReduceMotion(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        armSignalObservation()
+    }
+
+    func stop() {
+        observing = false
+        transientTask?.cancel()
+        transientTask = nil
+        transient = nil
+        expandedScreenID = nil
+    }
+
+    private func armSignalObservation() {
+        guard observing else { return }
+        let current = generation
+        withObservationTracking {
+            _ = store.latestSignal
+        } onChange: { [weak self] in
+            // willSet 시점에 불리므로 다음 틱에서 새 값을 읽는다
+            Task { @MainActor [weak self] in
+                guard let self, self.observing, self.generation == current else { return }
+                self.handleLatestSignal()
+                self.armSignalObservation()
+            }
+        }
+    }
+
+    // MARK: - 외부 상태 갱신 (ScreenManager)
+
+    func updateScreens(_ list: [NotchGeometry]) {
+        let map = Dictionary(list.map { ($0.screenID, $0) }, uniquingKeysWith: { first, _ in first })
+        let order = list.map(\.screenID)
+        if map != geometries { geometries = map }
+        if order != screenOrder { screenOrder = order }
+        if let expanded = expandedScreenID, map[expanded] == nil { expandedScreenID = nil }
+        if let active = activeScreenID, map[active] == nil { activeScreenID = nil }
+        if let hovered = hoveredScreenID, map[hovered] == nil { hoveredScreenID = nil }
+        let validFullscreen = fullscreenScreenIDs.filter { map[$0] != nil }
+        if validFullscreen != fullscreenScreenIDs { fullscreenScreenIDs = validFullscreen }
+    }
+
+    func setActiveScreen(_ id: ScreenID?) {
+        if activeScreenID != id { activeScreenID = id }
+    }
+
+    func setHoveredScreen(_ id: ScreenID?) {
+        if hoveredScreenID != id { hoveredScreenID = id }
+    }
+
+    func setFullscreenScreens(_ ids: Set<ScreenID>) {
+        if fullscreenScreenIDs != ids { fullscreenScreenIDs = ids }
+    }
+
+    func setReduceMotion(_ value: Bool) {
+        if reduceMotion != value { reduceMotion = value }
+    }
+
+    // MARK: - 화면 정책
+
+    /// 일시적 펼침(피크/권한/완료 등)을 보여줄 화면
+    var transientTargetScreenID: ScreenID? {
+        switch preferences.displayPolicy {
+        case .allScreens, .activeScreen:
+            if let active = activeScreenID, geometries[active] != nil { return active }
+            return screenOrder.first
+        case .builtInOnly:
+            return builtInScreenID
+        }
+    }
+
+    /// 내장 화면. 덮개를 닫아 내장 화면이 없으면 노치 화면 → 주 화면 순으로 대신한다.
+    var builtInScreenID: ScreenID? {
+        screenOrder.first { geometries[$0]?.isBuiltIn == true }
+            ?? screenOrder.first { geometries[$0]?.hasNotch == true }
+            ?? screenOrder.first
+    }
+
+    func isVisible(_ id: ScreenID) -> Bool {
+        switch preferences.displayPolicy {
+        case .allScreens: return true
+        case .activeScreen, .builtInOnly: return id == transientTargetScreenID
+        }
+    }
+
+    /// 사용자 동작(메뉴 등)으로 펼칠 화면: 마우스가 있는 화면이 보이면 그 화면, 아니면 정책상 대상 화면
+    var preferredUserScreenID: ScreenID? {
+        if let active = activeScreenID, geometries[active] != nil, isVisible(active) { return active }
+        return transientTargetScreenID
+    }
+
+    // MARK: - 모드 계산
+
+    func mode(for id: ScreenID) -> IslandMode {
+        guard geometries[id] != nil, isVisible(id) else { return .hidden }
+        let isTarget = id == transientTargetScreenID
+        let fullscreen = fullscreenScreenIDs.contains(id)
+        let behavior = preferences.fullscreenBehavior
+
+        if isTarget, !(fullscreen && behavior == .hide), let alert = alertMode() {
+            return alert
+        }
+        // 사용자가 직접 연 펼침은 풀스크린 설정보다 우선
+        if expandedScreenID == id { return .expanded }
+        if fullscreen && behavior != .showAll { return .hidden }
+        if isTarget, let transient = transientMode() { return transient }
+        return compactMode()
+    }
+
+    /// 접힌 상태에서 보여줄 세션: 포커스 세션이 활동 중이면 그것, 아니면 작업 중인 첫 세션
+    var compactSession: AgentSession? {
+        if let focused = store.focusedSession, Self.isActive(focused) { return focused }
+        return store.rankedSessions.first { $0.phase.isWorking }
+    }
+
+    private static func isActive(_ session: AgentSession) -> Bool {
+        session.phase.isWorking || session.phase.needsAttention || session.hasUnseenCompletion
+    }
+
+    private func compactMode() -> IslandMode {
+        guard !store.rankedSessions.isEmpty else { return .hidden }
+        return compactSession == nil ? .idle : .working
+    }
+
+    private func alertMode() -> IslandMode? {
+        let pending = store.pendingPermissions
+        if let request = pending.first(where: { !suppressedPermissionIDs.contains($0.id) }) {
+            return .permission(request, queueCount: pending.count)
+        }
+        if let input = pendingInput(), suppressedInputKey != Self.inputKey(input.sessionID, input.message) {
+            return .needsInput(sessionID: input.sessionID, message: input.message, isPermissionPrompt: input.isPermissionPrompt)
+        }
+        return nil
+    }
+
+    /// 입력 대기 중이거나, 훅 대기 없이 터미널에서 승인을 기다리는 세션
+    private func pendingInput() -> (sessionID: String, message: String, isPermissionPrompt: Bool)? {
+        var candidates: [AgentSession] = []
+        if let focused = store.focusedSession { candidates.append(focused) }
+        candidates.append(contentsOf: store.rankedSessions)
+        let hookPendingSessions = Set(store.pendingPermissions.map(\.sessionID))
+
+        for session in candidates {
+            switch session.phase {
+            case .waitingInput:
+                let message = inputMessages[session.id] ?? session.lastNotification ?? "입력이 필요해"
+                return (session.id, message, false)
+            case .waitingPermission where !hookPendingSessions.contains(session.id):
+                return (session.id, "터미널에서 승인 필요", true)
+            default:
+                continue
+            }
+        }
+        return nil
+    }
+
+    private func transientMode() -> IslandMode? {
+        guard let transient else { return nil }
+        switch transient {
+        case let .peek(sessionID, diff):
+            guard preferences.peekOnEdit, store.sessions[sessionID] != nil else { return nil }
+            return .peek(sessionID: sessionID, diff: diff)
+        case let .done(sessionID):
+            guard store.sessions[sessionID]?.phase == .completed else { return nil }
+            return .done(sessionID: sessionID)
+        case let .failed(sessionID):
+            guard store.sessions[sessionID]?.phase == .failed else { return nil }
+            return .failed(sessionID: sessionID)
+        }
+    }
+
+    private static func inputKey(_ sessionID: String, _ message: String) -> String {
+        sessionID + "\u{1F}" + message
+    }
+
+    // MARK: - 레이아웃
+
+    func layout(for id: ScreenID, mode: IslandMode) -> IslandLayout {
+        guard let geometry = geometries[id] else {
+            return IslandLayout(bodySize: .zero, earRadius: 0, topRadius: 0, bottomRadius: 0, headerHeight: 0)
+        }
+        return layout(for: mode, geometry: geometry)
+    }
+
+    func layout(for mode: IslandMode, geometry: NotchGeometry) -> IslandLayout {
+        typealias M = IslandMetrics
+        let header = geometry.headerHeight
+        let notch = geometry.hasNotch
+        let notchWidth = geometry.notchSize.width
+        let contentWidth: (CGFloat) -> CGFloat = { $0 - M.bodyPadding * 2 }
+
+        func open(width: CGFloat, body: CGFloat, radius: CGFloat) -> IslandLayout {
+            let minWidth = notch ? notchWidth + 80 : 0
+            return IslandLayout(
+                bodySize: CGSize(width: max(width, minWidth), height: header + body),
+                earRadius: notch ? 8 : 0,
+                topRadius: notch ? 0 : radius,
+                bottomRadius: radius,
+                headerHeight: header
+            )
+        }
+
+        switch mode {
+        case .hidden:
+            if notch {
+                return IslandLayout(
+                    bodySize: CGSize(width: notchWidth, height: header),
+                    earRadius: 0, topRadius: 0, bottomRadius: 10, headerHeight: header
+                )
+            }
+            return IslandLayout(bodySize: CGSize(width: 60, height: 22), earRadius: 0, topRadius: 11, bottomRadius: 11, headerHeight: 22)
+
+        case .idle:
+            let dots = M.idleDotsWidth(count: store.rankedSessions.count)
+            if notch {
+                let wing = max(28, dots + M.wingPadding + 8)
+                return IslandLayout(
+                    bodySize: CGSize(width: notchWidth + wing * 2, height: header),
+                    earRadius: 6, topRadius: 0, bottomRadius: 10, headerHeight: header
+                )
+            }
+            return IslandLayout(bodySize: CGSize(width: dots + 28, height: 22), earRadius: 0, topRadius: 11, bottomRadius: 11, headerHeight: 22)
+
+        case .working:
+            if notch {
+                return IslandLayout(
+                    bodySize: CGSize(width: notchWidth + M.workingWing * 2, height: header),
+                    earRadius: 6, topRadius: 0, bottomRadius: 12, headerHeight: header
+                )
+            }
+            let height = NotchGeometry.pillHeaderHeight
+            return IslandLayout(
+                bodySize: CGSize(width: M.pillWorkingWidth, height: height),
+                earRadius: 0, topRadius: height / 2, bottomRadius: height / 2, headerHeight: height
+            )
+
+        case let .peek(sessionID, diff):
+            let rows = DiffPresentation.visibleLines(diff).count
+            let hasText = streamingLine(for: sessionID) != nil
+            let body = M.bodyTop + M.lineHeight + 6 + M.diffRowsHeight(count: rows)
+                + (hasText ? 8 + M.lineHeight : 0) + M.bodyBottom
+            return open(width: M.peekWidth, body: body, radius: 22)
+
+        case let .permission(request, _):
+            let detailWidth = contentWidth(M.permissionWidth) - M.detailHorizontalPadding * 2
+            let lines = TextMeasure.lineCount(
+                request.detail, font: IslandFont.monoNS, lineHeight: M.monoLineHeight,
+                width: detailWidth, maxLines: M.maxDetailLines
+            )
+            let box = CGFloat(lines) * M.monoLineHeight + M.detailVerticalPadding * 2
+            let body = M.bodyTop + M.lineHeight + 6 + box + 12 + M.buttonHeight + 14
+            return open(width: M.permissionWidth, body: body, radius: 22)
+
+        case let .needsInput(_, message, _):
+            let lines = TextMeasure.lineCount(
+                message, font: IslandFont.bodyNS, lineHeight: M.bodyLineHeight,
+                width: contentWidth(M.needsInputWidth), maxLines: 2
+            )
+            let body = M.bodyTop + CGFloat(lines) * M.lineHeight + 10 + M.buttonHeight + 14
+            return open(width: M.needsInputWidth, body: body, radius: 22)
+
+        case let .done(sessionID):
+            let hasText = streamingLine(for: sessionID) != nil
+            let body = 2 + M.lineHeight + (hasText ? 4 + M.lineHeight : 0) + M.bodyBottom
+            return open(width: M.doneWidth, body: body, radius: 20)
+
+        case let .failed(sessionID):
+            let hasFiles = !(store.sessions[sessionID]?.turn.changedFiles.isEmpty ?? true)
+            let body = 2 + M.lineHeight + (hasFiles ? 4 + M.lineHeight : 0) + M.bodyBottom
+            return open(width: M.doneWidth, body: body, radius: 20)
+
+        case .expanded:
+            return open(width: M.expandedSize.width, body: M.expandedSize.height - header, radius: 26)
+        }
+    }
+
+    /// 설정이 켜져 있을 때만 보여줄 최근 응답 한 줄
+    func streamingLine(for sessionID: String) -> String? {
+        guard preferences.showStreamingText else { return nil }
+        return store.sessions[sessionID]?.latestTextLine
+    }
+
+    // MARK: - 사용자 동작
+
+    /// 아일랜드 배경 클릭 (버튼 클릭은 제외)
+    func handleIslandClick(on id: ScreenID) {
+        switch mode(for: id) {
+        case .hidden:
+            return
+        case .permission, .needsInput:
+            // 알림 카드는 클릭으로 접지 않는다. 키 윈도우만 되어 단축키를 받는다.
+            onRequestKey?(id)
+            return
+        default:
+            break
+        }
+        if restoreSuppressedAlerts() { return }
+        toggleExpanded(on: id)
+    }
+
+    /// 펼침/접기 토글 (펼칠 때 포커스 세션의 미확인 완료를 확인 처리)
+    func toggleExpanded(on id: ScreenID) {
+        if expandedScreenID == id {
+            expandedScreenID = nil
+            return
+        }
+        expandedScreenID = id
+        if let focused = store.focusedSession, focused.hasUnseenCompletion {
+            store.markSeen(sessionID: focused.id)
+        }
+        onRequestKey?(id)
+    }
+
+    /// ⎋: 지금 보이는 일시 펼침을 접는다. 권한 요청은 대기 상태로 남는다.
+    func collapse(on id: ScreenID) {
+        switch mode(for: id) {
+        case let .permission(request, _):
+            suppressedPermissionIDs.insert(request.id)
+        case let .needsInput(sessionID, message, _):
+            suppressedInputKey = Self.inputKey(sessionID, message)
+        case .expanded:
+            expandedScreenID = nil
+        case .peek, .done, .failed:
+            clearTransient()
+        case .hidden, .idle, .working:
+            break
+        }
+    }
+
+    /// 아일랜드 바깥(다른 앱)을 클릭하면 사용자가 연 펼침을 접는다.
+    func clickedOutside() {
+        if expandedScreenID != nil { expandedScreenID = nil }
+    }
+
+    /// 접어 둔 알림이 있으면 다시 펼친다
+    @discardableResult
+    func restoreSuppressedAlerts() -> Bool {
+        let pendingIDs = Set(store.pendingPermissions.map(\.id))
+        var restored = false
+        if !suppressedPermissionIDs.isDisjoint(with: pendingIDs) {
+            suppressedPermissionIDs.removeAll()
+            restored = true
+        }
+        if let key = suppressedInputKey, let input = pendingInput(), Self.inputKey(input.sessionID, input.message) == key {
+            suppressedInputKey = nil
+            restored = true
+        }
+        return restored
+    }
+
+    /// 펼침의 톱니 버튼: 펼침을 접고 설정 창을 연다
+    func openSettings() {
+        expandedScreenID = nil
+        if let onOpenSettings {
+            onOpenSettings()
+        } else {
+            actions.openSettings()
+        }
+    }
+
+    func resolve(_ request: PermissionRequestInfo, decision: PermissionDecision) {
+        logger.debug("권한 결정 전달")
+        actions.resolvePermission(id: request.id, decision: decision)
+    }
+
+    /// 터미널로: 노치에서 결정하지 않고 Claude Code 기본 프롬프트로 넘긴 뒤 터미널로 이동
+    func sendToTerminal(_ request: PermissionRequestInfo) {
+        actions.resolvePermission(id: request.id, decision: .passthrough)
+        actions.jumpToTerminal(sessionID: request.sessionID)
+    }
+
+    static func canAllowAlways(_ request: PermissionRequestInfo) -> Bool {
+        guard let suggestions = request.suggestions else { return false }
+        switch suggestions {
+        case .null: return false
+        case let .array(items): return !items.isEmpty
+        case let .object(object): return !object.isEmpty
+        default: return true
+        }
+    }
+
+    /// 키 윈도우일 때의 단축키 처리. 처리했으면 true.
+    func perform(_ shortcut: Shortcut, on id: ScreenID) -> Bool {
+        let mode = mode(for: id)
+        if shortcut == .collapse {
+            guard mode.isOpen else { return false }
+            collapse(on: id)
+            return true
+        }
+        guard case let .permission(request, _) = mode else { return false }
+        switch shortcut {
+        case .allow:
+            resolve(request, decision: .allow)
+        case .allowAlways:
+            guard Self.canAllowAlways(request) else { return false }
+            resolve(request, decision: .allowAlways)
+        case .deny:
+            resolve(request, decision: .deny(message: nil))
+        case .collapse:
+            break
+        }
+        return true
+    }
+
+    // MARK: - 신호 처리
+
+    private func handleLatestSignal() {
+        pruneTransientState()
+        guard let event = store.latestSignal, event.seq != lastSignalSeq else { return }
+        lastSignalSeq = event.seq
+
+        switch event.signal {
+        case let .edited(sessionID, diff):
+            guard preferences.peekOnEdit, sessionID == store.focusedSessionID else { return }
+            // 완료/실패 요약이 떠 있으면 피크로 덮지 않는다
+            if let current = transient {
+                switch current {
+                case .done, .failed: return
+                case .peek: break
+                }
+            }
+            showTransient(.peek(sessionID: sessionID, diff: diff), duration: preferences.peekDuration)
+        case let .completed(sessionID):
+            showTransient(.done(sessionID: sessionID), duration: preferences.completionDisplayDuration)
+        case let .failed(sessionID):
+            showTransient(.failed(sessionID: sessionID), duration: preferences.completionDisplayDuration)
+        case let .needsInput(sessionID, message):
+            inputMessages[sessionID] = message
+            suppressedInputKey = nil
+        case .permissionRequested, .sessionStarted:
+            break
+        }
+    }
+
+    private func showTransient(_ value: Transient, duration: Double) {
+        transient = value
+        transientTask?.cancel()
+        let seconds = max(0.5, duration)
+        transientTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled, let self, self.transient == value else { return }
+            self.transient = nil
+        }
+    }
+
+    private func clearTransient() {
+        transientTask?.cancel()
+        transientTask = nil
+        if transient != nil { transient = nil }
+    }
+
+    /// 해결된 요청·사라진 세션에 대한 일시 상태 정리
+    private func pruneTransientState() {
+        if !suppressedPermissionIDs.isEmpty {
+            let pendingIDs = Set(store.pendingPermissions.map(\.id))
+            let kept = suppressedPermissionIDs.intersection(pendingIDs)
+            if kept != suppressedPermissionIDs { suppressedPermissionIDs = kept }
+        }
+        if suppressedInputKey != nil {
+            let current = pendingInput().map { Self.inputKey($0.sessionID, $0.message) }
+            if current != suppressedInputKey { suppressedInputKey = nil }
+        }
+        let stale = inputMessages.keys.filter { store.sessions[$0]?.phase != .waitingInput }
+        for key in stale { inputMessages.removeValue(forKey: key) }
+    }
+}
