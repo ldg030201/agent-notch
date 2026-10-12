@@ -1,0 +1,63 @@
+name: build
+
+# 다른 macOS · Swift 조합에서도 빌드되는지, 명령줄 통로가 살아 있는지, 변경 내역 JSON 이 소스와 같은지 본다.
+#
+# 태그를 민 **뒤에** 도는 것이라 이미 나간 릴리스를 막아 주지는 못한다. 막는 쪽은 release.sh 가 태그 전에
+# 돌리는 로컬 빌드이고, 여기는 다른 환경에서도 되는지를 알려 주는 자리다. 깨졌으면 네 번째 자리로 바로 다시 낸다.
+
+on:
+  push:
+    tags:
+      - "v*"
+  pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - "docs/ui-mockup.html"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mac:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 최소 지원은 formula 의 depends_on macos: :sonoma 가 정한다. 여기는 "빌드되는지" 만 본다.
+          - os: macos-15   # arm64 Sequoia
+          - os: macos-26   # arm64 (macOS 26)
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 도구 버전
+        run: swift --version
+
+      - name: 빌드
+        run: swift build -c release
+
+      - name: 앱 번들 만들기
+        run: scripts/build.sh
+
+      - name: 명령줄 통로 확인
+        run: |
+          BIN=build/AgentNotch.app/Contents/MacOS/AgentNotch
+          "$BIN" --version
+          "$BIN" --version | grep -q '^agent-notch '
+          build/AgentNotch.app/Contents/MacOS/notch-hook --version
+          "$BIN" --render-island all /tmp/renders --style both
+          ls /tmp/renders
+          test -s /tmp/renders/working-notch.png
+          test -s /tmp/renders/working-menubar.png
+          test "$(ls /tmp/renders/*.png | wc -l)" -ge 2
+          "$BIN" --probe-upgrade
+
+      - name: 변경 내역 파일이 소스와 같은지
+        run: |
+          build/AgentNotch.app/Contents/MacOS/AgentNotch --dump-changelog /tmp/c.json
+          diff -q /tmp/c.json docs/changelog.json \
+            || { echo "docs/changelog.json 이 Changelog.swift 와 달라요 — source scripts/lib.sh && dump_changelog 로 다시 뽑아 주세요"; exit 1; }
+
+      - name: 테스트
+        run: scripts/test.sh

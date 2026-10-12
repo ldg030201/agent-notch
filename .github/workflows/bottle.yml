@@ -1,0 +1,128 @@
+name: bottle
+
+# 미리 빌드한 결과물(bottle)을 릴리스에 올린다.
+# 없으면 설치할 때마다 각자 맥에서 Swift 를 컴파일한다. bottle 이 있으면 압축만 풀어서 몇 초로 끝난다.
+# 맞는 bottle 이 없는 환경은 Homebrew 가 소스 빌드로 넘어가므로, 이 워크플로가 실패해도 설치는 된다.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "bottle 을 만들 태그 (예: v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # bottle 은 macOS 버전마다 따로 만들고 그 버전에서만 쓰인다.
+          # 여기 없는 버전(macOS 14, Intel)은 소스에서 빌드한다 (느릴 뿐 실패하지는 않는다).
+          - os: macos-15   # arm64 Sequoia
+          - os: macos-26   # arm64 (macOS 26)
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Homebrew 준비
+        uses: Homebrew/actions/setup-homebrew@2026.08.03.2
+
+      - name: tap 추가
+        run: |
+          # 러너에 미리 깔린 tap 이 신뢰되지 않아 매번 경고가 나온다. 쓰지 않으니 뗀다.
+          brew untap aws/tap 2>/dev/null || true
+          brew tap ldg030201/agent-notch https://github.com/ldg030201/agent-notch
+          brew trust ldg030201/agent-notch || true
+
+      - name: bottle 빌드
+        run: |
+          brew install --build-bottle ldg030201/agent-notch/agent-notch
+          brew bottle --json --no-rebuild ldg030201/agent-notch/agent-notch
+
+      - name: 결과 수집
+        uses: actions/upload-artifact@v7
+        with:
+          name: bottle-${{ matrix.os }}
+          path: |
+            *.bottle.tar.gz
+            *.bottle.json
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Homebrew 준비
+        uses: Homebrew/actions/setup-homebrew@2026.08.03.2
+
+      - name: tap 추가
+        run: |
+          brew untap aws/tap 2>/dev/null || true
+          brew tap ldg030201/agent-notch https://github.com/ldg030201/agent-notch
+          brew trust ldg030201/agent-notch || true
+
+      - name: bottle 내려받기
+        uses: actions/download-artifact@v8
+        with:
+          path: bottles
+          merge-multiple: true
+
+      - name: formula 에 bottle 블록 쓰기
+        env:
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          ROOT_URL="https://github.com/ldg030201/agent-notch/releases/download/$TAG"
+          cd bottles
+          # 파일 이름의 -- 를 - 로 바꿔 업로드 후 URL 과 맞춘다
+          for f in *.bottle.tar.gz; do mv "$f" "${f/--/-}"; done
+          brew bottle --merge --write --no-commit --root-url="$ROOT_URL" *.bottle.json
+          cd ..
+          # --write 는 tap 클론 쪽 formula 를 고친다. 저장소로 가져온다.
+          cp "$(brew --repository ldg030201/agent-notch)/Formula/agent-notch.rb" Formula/agent-notch.rb
+
+          # --root-url 이 formula 에 기록되지 않는 경우가 있다. 빠지면 Homebrew 가 ghcr.io 에서 찾다가 404 로 실패한다.
+          # BSD sed 는 치환문의 \n 을 개행으로 바꾸지 않으므로 awk 로 한 줄 끼워 넣는다.
+          if ! grep -q 'root_url' Formula/agent-notch.rb; then
+            awk -v url="$ROOT_URL" '
+              { print }
+              /^  bottle do$/ { print "    root_url \"" url "\"" }
+            ' Formula/agent-notch.rb > Formula/agent-notch.rb.tmp
+            mv Formula/agent-notch.rb.tmp Formula/agent-notch.rb
+          fi
+
+          # 문법이 깨지면 아무도 설치할 수 없다. 올리기 전에 막는다.
+          ruby -c Formula/agent-notch.rb
+          grep -A4 'bottle do' Formula/agent-notch.rb
+
+      - name: 릴리스에 올리기
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: gh release upload "$TAG" bottles/*.bottle.tar.gz --clobber
+
+      - name: formula 커밋
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/agent-notch.rb
+          git diff --cached --quiet && { echo "바뀐 게 없어요"; exit 0; }
+          git commit -m "📦 bottle 추가"
+
+          # 이 작업이 도는 사이 main 이 움직였을 수 있다. 그냥 밀면 거부되고,
+          # bottle 은 릴리스에 올라갔는데 formula 는 모르는 상태로 남는다. 따라잡고 다시 민다.
+          for attempt in 1 2 3; do
+            if git push; then exit 0; fi
+            echo "main 이 앞서 있어요 — 따라잡고 다시 시도 ($attempt/3)"
+            git pull --rebase origin main
+          done
+          echo "formula 를 올리지 못했어요" >&2
+          exit 1
