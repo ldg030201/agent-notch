@@ -40,16 +40,50 @@ enum AppInfo {
 
 /// 명령줄 인자 (`open AgentNotch.app --args --demo`)
 struct LaunchOptions {
+    /// `--render-island <장면|all> <폴더> [--style notch|menubar|both]`
+    struct RenderIsland: Equatable {
+        var scenario: String
+        var outputDirectory: String
+        var style = "notch"
+    }
+
     var demo = false
     var printVersion = false
+    var renderIsland: RenderIsland?
+    /// 인자 형식 오류 (값이 빠진 경우 등)
+    var usageError: String?
 
     init(arguments: [String]) {
-        for argument in arguments.dropFirst() {
+        var style: String?
+        var index = arguments.index(after: arguments.startIndex)
+        // 값을 하나 받는 인자: 다음 인자를 꺼내고, 없으면 nil
+        func nextValue() -> String? {
+            let next = arguments.index(after: index)
+            guard next < arguments.endIndex else { return nil }
+            index = next
+            return arguments[next]
+        }
+        while index < arguments.endIndex {
+            let argument = arguments[index]
             switch argument {
             case "--demo": demo = true
             case "--version", "-v": printVersion = true
+            case "--render-island":
+                guard let scenario = nextValue(), let directory = nextValue() else {
+                    usageError = "사용법: --render-island <장면|all> <폴더> [--style notch|menubar|both]"
+                    break
+                }
+                renderIsland = RenderIsland(scenario: scenario, outputDirectory: directory)
+            case "--style":
+                guard let value = nextValue() else {
+                    usageError = "--style 값이 필요해요 (notch|menubar|both)"
+                    break
+                }
+                style = value
             default: break  // -NSDocumentRevisionsDebugMode 같은 시스템 인자는 무시
             }
+            index = arguments.index(after: index)
         }
+        if let style { renderIsland?.style = style }
     }
 }

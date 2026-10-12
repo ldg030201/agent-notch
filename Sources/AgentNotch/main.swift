@@ -8,6 +8,15 @@ if options.printVersion {
     exit(0)
 }
 
+if let message = options.usageError {
+    RenderIslandCommand.printError(message)
+    exit(64)
+}
+
+if let request = options.renderIsland {
+    exit(MainActor.assumeIsolated { RenderIslandCommand.run(request) })
+}
+
 MainActor.assumeIsolated {
     let app = NSApplication.shared
     // NSApplication.delegate 는 약한 참조라 run() 이 끝날 때까지 여기서 붙잡아 둔다
