@@ -20,7 +20,8 @@ Claude Code (CLI · 데스크톱 앱)
 ```
 
 - 앱이 꺼져 있으면 `notch-hook` 은 소켓 연결 실패 → **조용히 exit 0** (Claude Code 동작에 영향 없음).
-- `PermissionRequest` 만 앱 응답을 기다린다. 나머지는 보내고 바로 종료(fire-and-forget).
+- 앱 응답을 기다리는 건 `PermissionRequest` 와 질문 · 계획 승인 툴(`AskUserQuestion` · `ExitPlanMode`)의 `PreToolUse` 뿐이다
+  (3장 "응답을 기다리는 호출"). 나머지는 보내고 바로 종료(fire-and-forget) — 다른 툴의 `PreToolUse` 도 마찬가지.
 
 ## 2. 모듈 구성 (SwiftPM)
 
@@ -41,6 +42,31 @@ Claude Code (CLI · 데스크톱 앱)
 - `HookReply.output` 이 있으면 헬퍼는 그 JSON 을 stdout 에 그대로 출력하고 exit 0. 없으면 아무것도 출력하지 않는다.
 - 헬퍼의 응답 대기 시간은 훅 `timeout` 보다 짧아야 한다. 앱이 `AppPreferences.permissionTimeout` 이 지나면 `output: null` 로 응답한다.
 - 소켓 경로는 `AGENT_NOTCH_SOCKET` 환경변수로 덮어쓸 수 있다 (테스트용). `sun_path` 길이 제한(104바이트)에 주의.
+- 응답 없이 끝난 대기는 이유와 함께 알린다 (`SocketServer.PendingEnd`): 연결 끊김 → `SessionStore.cancelPermission`,
+  앱의 대기 시간 초과(`output: null` 로 응답함) → `expirePermission`, 서버 정지 → `cancelPermission`.
+
+### 응답을 기다리는 호출
+
+헬퍼가 기다릴지는 `NotchWire.expectsReply(event:toolName:hasReplyTimeout:)` 가 정한다 (NotchShared, 테스트 있음).
+
+| 호출 | 훅 명령 (`HookInstaller`) | 훅 timeout | 앱 응답 (`PermissionReplyBuilder`) |
+|---|---|---|---|
+| `PermissionRequest` | `notch-hook PermissionRequest --reply-timeout 590` | 600 | `hookSpecificOutput.decision` (allow · 항상 허용 · deny) |
+| `PreToolUse` — `AskUserQuestion` · `ExitPlanMode` | `notch-hook PreToolUse --reply-timeout 590` | 600 | `permissionDecision: "allow"` + `updatedInput` |
+| `PreToolUse` — 그 밖의 툴 | (같은 명령) | 600 | 기다리지 않고 바로 종료 |
+| 나머지 이벤트 | `notch-hook <Event>` | 10 (MessageDisplay 5, SessionEnd 2) | 없음 |
+
+- `PreToolUse` 는 **명령에 `--reply-timeout` 이 있을 때만** 기다린다. 예전 버전이 설치한 설정(timeout 10, 대기 시간 없음)으로 불리면
+  Claude Code 가 10초 만에 훅을 끊으므로 기다리지 않고 예전처럼 입력 대기 카드 → 다이얼로그로 답한다.
+- 공식 문서(hooks "Tools that require user interaction"): 두 툴은 `"allow"` 만으로는 실행되지 않고 답을 담은 `updatedInput` 이 함께 있어야 한다.
+  - `AskUserQuestion`: 원래 입력을 그대로 두고(`questions` · 그 밖의 필드) `answers` 에 질문 원문 → 답. 여러 개 고른 답은 선택지 이름을
+    쉼표로 잇는다(`"린트, 단위 테스트"`). "기타" 에 쓴 글자는 그대로 답이 된다 (여러 개 고르는 질문이면 선택지 뒤에 이어 붙임).
+  - `ExitPlanMode`: Claude Code 가 넣어 준 입력(`plan` · `planFilePath`)을 그대로 돌려주면 승인. 거부 · 다른 승인 방식은 노치에서 하지 않는다.
+  - 답이 빠졌거나 모양이 맞지 않는 결정은 `SessionStore` 가 결정 없음(`.passthrough`)으로 바꿔 전달한다 (`effectiveDecision`).
+- 예전 설정 고치기: 앱이 켜질 때 `AppSettingsProvider.refreshHelperIfNeeded` 가 헬퍼를 다시 복사한 뒤
+  `HookInstaller.updateInstalledHooks()` 로 **이미 설치된 AgentNotch 항목만** 지금 형태(명령 · timeout)로 그 자리에서 고친다.
+  우리 항목이 없거나 이미 최신이면 아무것도 하지 않고, 빠진 이벤트를 새로 넣거나 다른 훅 · 설정을 건드리지 않는다.
+  바꾸기 전에 타임스탬프 백업(0600). 이미 떠 있는 Claude Code 세션은 설정을 다시 읽어야(재시작) 새 훅을 쓴다.
 
 ## 4. 훅 이벤트 → 세션 상태
 
@@ -48,11 +74,11 @@ Claude Code (CLI · 데스크톱 앱)
 |---|---|
 | `SessionStart` | 세션 생성(이미 있으면 갱신), phase `idle`, 신호 `sessionStarted` |
 | `UserPromptSubmit` | phase `thinking`, 턴 요약 초기화, `lastPrompt`(200자 제한), `streamingText` 초기화, 미확인 완료 해제 |
-| `PreToolUse` | phase `runningTool`, `currentActivity` 생성(툴 요약), 타임라인 추가. `AskUserQuestion` 이면 `waitingInput` + `needsInput` |
+| `PreToolUse` | phase `runningTool`, `currentActivity` 생성(툴 요약), 타임라인 추가. `AskUserQuestion` · `ExitPlanMode` 면 `waitingInput` + `needsInput`. 헬퍼가 답을 기다리고(지금 훅 설정) 노치에서 답할 수 있는 입력이면 요청 대기열에 넣고 요청 ID 반환 (질문 · 계획 승인 카드, 아래 "질문 · 계획 승인 카드") |
 | `PostToolUse` | 해당 `tool_use_id` 활동 성공 처리, diff 계산(Edit/MultiEdit/Write/NotebookEdit/Bash `bashEditDiff`) → `lastDiff`, 턴 요약 누적, 신호 `edited` |
 | `PostToolUseFailure` | 활동 실패 처리, phase `thinking` |
 | `PermissionRequest` | `PermissionRequestInfo` 생성 → 대기열, phase `waitingPermission`, 신호 `permissionRequested`, 요청 ID 반환. 단 `AskUserQuestion` / `ExitPlanMode` 는 대기열에 넣지 않고 바로 결정 없음(Claude Code 가 `updatedInput` 없는 allow 를 무시하므로) → 입력 대기 카드 |
-| `Notification` | `lastNotification` 갱신. `elicitation_dialog`/`agent_needs_input` → `waitingInput` + `needsInput`. `permission_prompt` 인데 해당 세션의 훅 대기 요청이 없으면 `waitingPermission` + `needsInput`. `idle_prompt` → 작업 중 · 훅 대기 없는 승인 대기 · 입력 대기를 `idle` 로 정리 (터미널에서 거부/Esc 한 경우 약 60초 뒤 복구) |
+| `Notification` | `lastNotification` 갱신. `elicitation_dialog`/`agent_needs_input` → `waitingInput` + `needsInput`. `permission_prompt` 인데 해당 세션의 훅 대기 요청이 없으면 `waitingPermission` + `needsInput` (단 노치에서 "터미널로" 넘긴 질문 · 계획 승인 다이얼로그면 무시). `idle_prompt` → 작업 중 · 훅 대기 없는 승인 대기 · 입력 대기를 `idle` 로 정리 (터미널에서 거부/Esc 한 경우 약 60초 뒤 복구) |
 | `MessageDisplay` | `delta` 를 `streamingText` 뒤에 붙임(최근 2000자 유지) |
 | `Stop` | phase `completed`, `lastAssistantMessage`, 미확인 완료 표시, 신호 `completed`, 해당 세션 남은 권한 대기 정리. `background_tasks` 로 백그라운드 작업 수(서브에이전트 포함)를 맞춤 |
 | `StopFailure` | phase `failed`, `errorMessage`, 신호 `failed` |
@@ -94,7 +120,7 @@ Claude Code (CLI · 데스크톱 앱)
 | idle | 작업 중인 세션 없음 | 모든 세션 상태 요약 `● N` (아래 "다른 세션 상태 요약"). 양쪽 날개면 왼쪽엔 작은 점, 오른쪽에 요약 | 노치폭+50 × 노치높이 |
 | working | 포커스 세션 작업 중 | 왼쪽: 스피너 + 프로젝트명 / 오른쪽: 현재 툴 짧은 이름 + `+N −M`. 다른 세션이 있으면 그 상태 요약도 | 노치폭+200 × 노치높이 |
 | peek | `edited` 신호 (설정 on) | 파일명·줄번호, 미니 diff 3줄, 스트리밍 텍스트 한 줄 | 460 × 160 |
-| permission | `permissionRequested` | 툴 · 명령어, [허용] [항상 허용] [거부] [접기] [터미널로]. 해결될 때까지 유지 (아래 "권한 카드 안전 규칙") | 480 × 170 |
+| permission | 훅 대기 요청 (`pendingPermissions`) | 권한 요청: 툴 · 명령어, [허용] [항상 허용] [거부] [접기] [터미널로]. 해결될 때까지 유지 (아래 "권한 카드 안전 규칙"). 질문 · 계획 승인도 같은 모드 · 대기열의 다른 카드 (아래 "질문 · 계획 승인 카드") | 480 × 170 (질문은 선택지 수만큼) |
 | needsInput | `needsInput` | 질문 메시지 + [터미널로] | 440 × 110 |
 | done / failed | `completed` / `failed` | 체크(또는 경고) + 소요 시간, 변경 파일 수 `+N −M`, 마지막 응답 한 줄. 일정 시간 후 접힘 | 430 × 105 |
 | expanded | 아일랜드 클릭 | 머리: "세션 N" + 모든 세션 상태 요약 / 왼쪽: 세션 목록(우선순위순, 고정 핀) / 오른쪽: 포커스 세션 타임라인 · diff · 최근 응답 | 620 × 300 |
@@ -178,6 +204,35 @@ Claude Code (CLI · 데스크톱 앱)
 - 아일랜드는 활성화하지 않는 패널(non-activating)이라 알림이 와도 다른 앱의 키보드 포커스를 뺏지 않는다.
   사용자가 아일랜드를 클릭해 키 윈도우가 됐을 때만 단축키가 동작한다:
   `⌘↩` 허용, `⌥⌘↩` 항상 허용, `⌘⌫` 거부, `⎋` 접기(요청은 대기 유지).
+  질문 카드: `1`–`4` 선택지, `↩` · `⌘↩` 다음 · 보내기 ("기타" 입력란에 커서가 있으면 숫자 · `↩` 는 입력란이 받고 `↩` 는 입력란에서 보내기).
+  계획 카드: `↩` · `⌘↩` 승인. 질문 · 계획 카드의 행 · 버튼을 누르면 그 패널이 키 윈도우가 된다 (카드가 뜨기만 해서는 포커스를 뺏지 않음).
+
+### 질문 · 계획 승인 카드 (AskUserQuestion · ExitPlanMode)
+
+Claude 의 객관식 질문과 계획 승인을 다이얼로그 대신 노치에서 답한다. 권한 요청과 **같은 대기열 · 같은 모드(`permission`) · 같은 카드 레이아웃**
+(`PresentationController` 의 카드 경로, 부분 1 규칙 · 노치 화면 · 외부 모니터 알약 모두 같음)을 쓰고 `PermissionRequestInfo.kind` 로 구분한다.
+
+- 대기열에 넣는 조건: 헬퍼가 답을 기다리는 `PreToolUse`(지금 훅 설정), payload 를 줄이지 않음(원래 입력을 그대로 돌려줘야 함),
+  해석 가능한 입력(`InteractionParser`: 질문 1–4개 · 선택지 1–4개 · 질문 원문이 비지 않고 겹치지 않음, 계획은 내용이 있을 때).
+  아니면 nil → 훅은 바로 결정 없음 → Claude Code 다이얼로그 + 입력 대기 카드 (예전과 같음).
+- 질문 카드: 상단 행 "답변 필요" (대기열이 여럿이면 " · N"), 머리말 칩 + 질문(2줄까지), 선택지 행(번호 · 이름 · 한 줄 설명),
+  "기타" 직접 입력 행, [이전] … [접기] [터미널로 · Claude로] [다음 · 보내기 ↩].
+  - 한 개만 고르는 질문: 행을 누르면 그 질문의 답 → 다음 쪽(아직 답하지 않은 질문 먼저). 마지막 쪽에서 모두 답했으면 바로 보낸다.
+    카드가 보인 지 0.5초(`shortcutSettleDelay`) 안의 클릭은 고르기만 하고 보내지 않는다 (카드가 뜨는 순간의 잘못된 클릭).
+  - 여러 개 고르는 질문: 행을 켜고 끈 뒤 [다음] · [보내기]. "기타" 에 글자를 쓰면 기타를 고른 것 (한 개 고르는 질문이면 선택지 대신).
+  - 여러 질문은 쪽 넘김 "1/2". 카드 높이는 모든 질문 중 가장 큰 쪽에 맞춰(`QuestionCardModel`) 쪽을 넘겨도 카드 크기가 바뀌지 않는다.
+  - 고르는 중인 답(`QuestionDraft`)은 요청마다 메모리에만 두고, 접었다 펼쳐도 남는다. 요청이 대기열에서 빠지면 지운다.
+  - "기타" 입력란은 아일랜드 안의 유일한 AppKit 컨트롤(TextField)이다. 스냅숏에서는 같은 자리의 글자 그림으로 대신한다.
+- 계획 카드: 상단 행 "승인 필요", "계획" 칩 + 제목(첫 줄), 다음 5줄 미리보기, 계획 파일 이름 · 줄 수 · [파일 열기], [접기] [터미널로] [승인 ⌘↩].
+  계획은 카드에 다 들어가지 않으므로 파일 열기로 전체를 본다 (권한 카드처럼 승인을 막지는 않는다: 승인해도 이후 툴 호출은 권한 규칙을 따른다).
+- 권한 요청과 같은 정책: 대기 시간 `permissionTimeout`(기본 120초)이 지나면 결정 없이 넘겨 다이얼로그가 뜬다(입력 대기 카드로 안내),
+  세션의 터미널 · 앱이 이미 앞에 있으면(`passthroughWhenTerminalFrontmost`) 바로 넘긴다(입력 대기 카드), 대기열 · 포커스 우선순위도 같다.
+- 훅 연결이 응답 전에 끊기면(Claude Code 에서 Esc · 중단 · 종료) 카드를 내리고 입력 대기도 푼다 (그 툴은 실패, 세션은 쉬는 중).
+- [터미널로 · Claude로] (`SessionStore.handOff`): 결정 없이 넘기고 세션 앱으로 이동한다. 같은 호출로 이어서 오는 `PermissionRequest` ·
+  `permission_prompt` 알림에 입력 대기 카드를 다시 띄우지 않는다 (`handedOffInputs`: 입력 대기가 끝나거나 새 입력 요청이 오면 풀림).
+  권한 요청의 [터미널로] 는 예전처럼 "터미널에서 승인 필요" 카드로 안내한다.
+- 접힌 상태는 입력 대기(주황 점), 툴 이름은 `질문` · `Plan`. 질문 카드가 열려 있거나 접혀 있는 동안 같은 세션의 입력 대기 카드는 띄우지 않는다.
+- 개인정보: 질문 · 답 · 계획 글자는 메모리에만 두고 디스크 · 로그에 남기지 않는다 (로그는 "질문 답 전달" 같은 문구만).
 
 ### 권한 카드 안전 규칙
 
@@ -345,7 +400,11 @@ Claude Code (CLI · 데스크톱 앱)
 - `AgentNotch --render-island <장면|all> <폴더> [--style notch|menubar|both]` 로 실제 뷰를 PNG 로 그린다
   (화면 기록 권한 불필요, 가짜 데이터). 파일 이름 `<장면>-<notch|menubar>.png`.
 - 오프스크린 렌더링은 AppKit 기반 컨트롤(Picker, Slider, 스위치, ScrollView 등)을 그리지 못하므로 스냅숏에서만 같은 모양의
-  SwiftUI 그림으로 대체한다. 아일랜드 안에는 AppKit 기반 컨트롤을 넣지 않는다.
+  SwiftUI 그림으로 대체한다. 아일랜드 안에는 AppKit 기반 컨트롤을 넣지 않는다 (질문 카드 "기타" 입력란만 예외 — 스냅숏은 글자 그림).
+- 질문 · 계획 카드 장면: `question` (한 개 고르기) · `question-multi` (여러 개) · `question-pages` (질문 두 개, 1/2) ·
+  `question-other` ("기타" 입력) · `plan` (계획 승인) · `menubar-question` (메뉴바 알약 아래). 전환 시트 `anim-working-question` ·
+  `anim-question-working` · `anim-working-question-pages` · `anim-working-plan` · `anim-plan-working` · `anim-menubar-working-menubar-question` ·
+  `anim-menubar-question-menubar-working`.
 - 전환 시트(`anim-<전>-<후>`): 실제 패널과 같은 스프링으로 24프레임을 그리고 프레임마다 모양 검사(경로 조각 · 자기 교차 ·
   노치 드러남 · 양 끝 상태 밖 반경 · 가려지는 아이콘 · 글자)를, 스프링 값 0 → 최대값을 촘촘히 훑어 불연속을 출력한다.
   카드를 펼치기 전엔 접힌 상태를 한 번 그려(실제 앱처럼) 카드의 부분 1 이 접힌 모양을 이어받게 한다.
@@ -383,6 +442,7 @@ Claude Code (CLI · 데스크톱 앱)
 - 네트워크 통신은 **업데이트 확인 하나뿐** — 하루 한 번 GitHub 의 `docs/changelog.json` (raw) 을 받는다. 설정에서 끌 수 있다.
   분석/텔레메트리 없음.
 - `~/.claude/settings.json` 수정 전 타임스탬프 백업(0600). AgentNotch 항목만 추가/제거하고 다른 훅(예: iTerm2 `cc-status`)은 보존.
+  앱 업데이트 후 예전 형태의 우리 항목을 고칠 때(`updateInstalledHooks`)도 같은 규칙 (우리 항목만 그 자리에서, 백업 후).
 - 테스트 픽스처는 가짜 데이터만 사용 (`/Users/dev/projects/api-server` 같은 예시 경로).
 
 ## 10. 배포 · 업데이트 (dong-csu 방식)
@@ -411,4 +471,5 @@ brew tap ldg030201/agent-notch https://github.com/ldg030201/agent-notch && brew 
   분리된 스크립트가 앱을 종료 · `/Applications` 사본 교체 · 재실행.
 - 로그인 시 실행: `SMAppService.mainApp` (시스템 설정의 로그인 항목과 항상 일치).
 - 훅 헬퍼는 앱이 "훅 설치" 시 `~/Library/Application Support/AgentNotch/bin/notch-hook` 으로 복사해 경로를 고정한다
-  (brew 업그레이드로 Cellar 경로가 바뀌어도 훅이 깨지지 않게). 업데이트 후 첫 실행 때 헬퍼가 다르면 다시 복사한다.
+  (brew 업그레이드로 Cellar 경로가 바뀌어도 훅이 깨지지 않게). 업데이트 후 첫 실행 때 헬퍼가 다르면 다시 복사하고,
+  예전 버전이 설치한 훅 항목(예: 응답 대기 없는 PreToolUse)이 있으면 지금 형태로 고친다 (3장 "응답을 기다리는 호출").

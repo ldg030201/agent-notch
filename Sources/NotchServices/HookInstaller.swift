@@ -73,6 +73,10 @@ public final class HookInstaller {
     /// `matcher: "*"` 를 붙이는 툴 이벤트
     static let toolEvents: Set<String> = ["PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest"]
 
+    /// 헬퍼가 앱 응답을 기다리는 이벤트: 권한 요청, 질문 · 계획 승인 툴의 PreToolUse
+    /// (PreToolUse 는 그 두 툴일 때만 기다리고 다른 툴은 바로 끝난다 — `NotchWire.expectsReply`)
+    static let replyEvents: Set<String> = ["PermissionRequest", "PreToolUse"]
+
     /// 헬퍼가 앱 응답을 기다리는 최대 시간 (훅 timeout 600 보다 짧게)
     static let permissionReplyTimeout = 590
 
@@ -184,6 +188,43 @@ public final class HookInstaller {
         return try installHelper(from: helperSource)
     }
 
+    /// 설치된 AgentNotch 항목 중 지금 형태(명령 · timeout)와 다른 것이 있는지
+    /// (예: 질문 · 계획 승인 응답 대기 전에 설치한 PreToolUse — timeout 10, `--reply-timeout` 없음)
+    public func hasOutdatedHooks() -> Bool {
+        guard let root = try? readSettings()?.value, let hooks = root["hooks"]?.objectValue else { return false }
+        for event in Self.managedEvents {
+            guard let groups = hooks[event]?.arrayValue else { continue }
+            let desired = hookEntry(for: event)
+            for group in groups {
+                for entry in group["hooks"]?.arrayValue ?? [] where isManaged(entry) && entry != desired {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    /// 이미 설치된 AgentNotch 항목만 지금 형태로 고친다 (앱 업데이트 후 실행 때 `refreshHelperIfInstalled` 다음에 부른다).
+    /// - 우리 항목이 없거나(설치한 적 없음) 이미 지금 형태면 아무것도 하지 않는다 (nil).
+    /// - 우리 항목이 있는 이벤트만 그 자리에서 고친다. 빠진 이벤트를 새로 넣거나 다른 훅(예: iTerm2 `cc-status`) · 설정은 건드리지 않는다.
+    /// - 바꾸기 전에 타임스탬프 백업(0600)을 남기고 그 URL 을 돌려준다. settings.json 이 잘못된 JSON 이면 throw (파일은 그대로).
+    @discardableResult
+    public func updateInstalledHooks() throws -> URL? {
+        guard hasOutdatedHooks(), let existing = try readSettings() else { return nil }
+        var root = try Self.rootObject(existing.value)
+        var hooks = try Self.hooksObject(in: root)
+        for event in Self.managedEvents {
+            guard let value = hooks[event], containsManagedHook(value) else { continue }
+            let groups = try Self.groups(for: event, in: hooks)
+            hooks[event] = .array(upserting(event: event, into: groups))
+        }
+        root["hooks"] = .object(hooks)
+
+        let backup = try save(.object(root), replacing: existing)
+        log.info("예전 훅 항목을 지금 형태로 고침")
+        return backup
+    }
+
     /// 복사해 둔 헬퍼 실행 파일 삭제
     public func removeHelper() throws {
         guard fileManager.fileExists(atPath: helperInstallURL.path) else { return }
@@ -193,9 +234,10 @@ public final class HookInstaller {
     // MARK: - 훅 항목 만들기
 
     /// 셸 형식 명령. 경로에 공백이 있어 작은따옴표로 감싼다.
+    /// 응답을 기다리는 이벤트는 `--reply-timeout` 을 붙인다 (헬퍼는 이 옵션이 있을 때만 PreToolUse 에서 기다린다)
     public func command(for event: String) -> String {
         var command = "\(Self.shellQuoted(helperInstallURL.path)) \(event)"
-        if event == "PermissionRequest" {
+        if Self.replyEvents.contains(event) {
             command += " --reply-timeout \(Self.permissionReplyTimeout)"
         }
         return command
@@ -203,7 +245,7 @@ public final class HookInstaller {
 
     static func timeout(for event: String) -> Int {
         switch event {
-        case "PermissionRequest": return 600
+        case "PermissionRequest", "PreToolUse": return 600
         case "MessageDisplay": return 5
         case "SessionEnd": return 2
         default: return 10

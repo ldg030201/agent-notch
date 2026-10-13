@@ -223,6 +223,8 @@ public struct TurnSummary: Hashable, Sendable {
 
 // MARK: - 권한 요청
 
+/// 훅이 노치의 결정을 기다리는 요청. 권한 요청(PermissionRequest)과
+/// 노치에서 답하는 질문 · 계획 승인(AskUserQuestion · ExitPlanMode 의 PreToolUse)이 같은 대기열 · 시간 제한 · 정리 규칙을 쓴다 (`kind`).
 public struct PermissionRequestInfo: Identifiable, Hashable, Sendable {
     /// 앱이 부여한 요청 ID (훅 연결과 매칭)
     public var id: UUID
@@ -238,6 +240,10 @@ public struct PermissionRequestInfo: Identifiable, Hashable, Sendable {
     public var receivedAt: Date
     /// `detail` 이 `tool_input` 을 다 담지 못함 (글자 수 제한 등). 카드는 이때 허용을 막는다
     public var isDetailTruncated: Bool
+    /// 권한 요청 · 질문 · 계획 승인
+    public var kind: HookRequestKind
+    /// 툴 호출 ID (PreToolUse 에서 온 질문 · 계획 승인만. PermissionRequest 에는 없다)
+    public var toolUseID: String?
 
     public init(
         id: UUID,
@@ -248,7 +254,9 @@ public struct PermissionRequestInfo: Identifiable, Hashable, Sendable {
         toolInput: JSONValue,
         suggestions: JSONValue?,
         receivedAt: Date,
-        isDetailTruncated: Bool = false
+        isDetailTruncated: Bool = false,
+        kind: HookRequestKind = .permission,
+        toolUseID: String? = nil
     ) {
         self.id = id
         self.sessionID = sessionID
@@ -259,16 +267,24 @@ public struct PermissionRequestInfo: Identifiable, Hashable, Sendable {
         self.suggestions = suggestions
         self.receivedAt = receivedAt
         self.isDetailTruncated = isDetailTruncated
+        self.kind = kind
+        self.toolUseID = toolUseID
     }
+
+    /// 노치에서 답하는 질문 · 계획 승인인지 (권한 요청이 아님)
+    public var isInteraction: Bool { kind != .permission }
 }
 
 public enum PermissionDecision: Hashable, Sendable {
+    /// 허용. 계획 승인(ExitPlanMode)에서는 계획 승인
     case allow
     /// `permission_suggestions` 를 `updatedPermissions` 로 적용해 다음부터 묻지 않음
     case allowAlways
     case deny(message: String?)
     /// 결정하지 않음 → Claude Code 기본 권한 프롬프트로 넘김
     case passthrough
+    /// 질문(AskUserQuestion)의 답 (질문 순서대로)
+    case answer([QuestionAnswer])
 }
 
 // MARK: - 세션

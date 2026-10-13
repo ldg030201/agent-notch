@@ -60,6 +60,12 @@ struct SnapshotTransition {
             t(.peek, .working, env: .working),
             t(.working, .permission),
             t(.permission, .working, env: .working),
+            // 노치에서 답하는 질문 · 계획 승인 카드 (권한 카드와 같은 카드 규칙)
+            t(.working, .question),
+            t(.question, .working, env: .working),
+            t(.working, .questionPages),
+            t(.working, .plan),
+            t(.plan, .working, env: .working),
             t(.working, .expanded),
             t(.expanded, .working, env: .working),
             t(.working, .done),
@@ -78,6 +84,8 @@ struct SnapshotTransition {
             // 메뉴바 알약 → 카드
             t(.menubarWorking, .menubarPermission, env: .menubarWorking),
             t(.menubarPermission, .menubarWorking, env: .menubarWorking),
+            t(.menubarWorking, .menubarQuestion, env: .menubarWorking),
+            t(.menubarQuestion, .menubarWorking, env: .menubarWorking),
             // 메뉴바 아래 알약 ↔ 카드 (외부 모니터 "메뉴바 아래" 방식)
             t(.menubarBelowWorking, .menubarBelowPermission, env: .menubarBelowWorking),
             t(.menubarBelowPermission, .menubarBelowWorking, env: .menubarBelowWorking),

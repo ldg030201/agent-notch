@@ -108,6 +108,16 @@ enum SnapshotScenario: String, CaseIterable {
     case needsInputDesktop = "needs-input-desktop"
     /// Claude 데스크톱 앱 세션의 권한 요청을 "Claude로" 넘긴 뒤: 훅 대기 없이 앱에서 승인을 기다림 (문구 · 버튼이 Claude 앱)
     case permissionHandoffDesktop = "permission-handoff-desktop"
+    /// 노치에서 답하는 질문: 한 개 고르기 (선택지 설명 있음)
+    case question
+    /// 여러 개 고르는 질문 (둘 고름)
+    case questionMulti = "question-multi"
+    /// 질문 두 개 (1/2 쪽, 첫 질문 답 고름)
+    case questionPages = "question-pages"
+    /// "기타" 에 직접 쓴 답
+    case questionOther = "question-other"
+    /// 계획 승인 (ExitPlanMode)
+    case plan
     case done
     case failed
     case expanded
@@ -125,6 +135,8 @@ enum SnapshotScenario: String, CaseIterable {
     case menubarBackground = "menubar-background"
     case menubarDot = "menubar-dot"
     case menubarPermission = "menubar-permission"
+    /// 메뉴바 알약 아래로 펼친 질문 카드
+    case menubarQuestion = "menubar-question"
     /// 외부 모니터 "메뉴바 아래" 방식: 메뉴바 아래 알약 · 그 아래로 펼친 카드
     case menubarBelowWorking = "menubar-below-working"
     case menubarBelowPermission = "menubar-below-permission"
@@ -135,7 +147,7 @@ enum SnapshotScenario: String, CaseIterable {
     var forcesMenuBar: Bool {
         switch self {
         case .menubarWorking, .menubarWorkingLongTool, .menubarWorkingTight, .menubarBackground, .menubarDot, .menubarPermission,
-             .menubarBelowWorking, .menubarBelowPermission: return true
+             .menubarQuestion, .menubarBelowWorking, .menubarBelowPermission: return true
         default: return false
         }
     }
@@ -570,6 +582,36 @@ enum SnapshotStage {
             world.apiServerRunsTests()
             showCompact()
             world.blogAsksQuestion()
+            presentation.handleLatestSignal()
+        case .question, .questionMulti, .questionPages, .questionOther, .menubarQuestion:
+            world.apiServerEdits()
+            world.apiServerRunsTests()
+            showCompact()
+            switch scene {
+            case .questionMulti: world.blogAsksInNotch([SnapshotWorld.deployChecksQuestion])
+            case .questionPages: world.blogAsksInNotch([SnapshotWorld.deployTargetQuestion, SnapshotWorld.deployNoticeQuestion])
+            default: world.blogAsksInNotch([SnapshotWorld.deployImageQuestion])
+            }
+            presentation.handleLatestSignal()
+            // 고르는 중인 답 (카드 상태만, 보내지 않는다)
+            if let request = world.store.pendingPermissions.first, let draft = presentation.questionDraft(for: request) {
+                switch scene {
+                case .questionMulti:
+                    draft.pick(0, question: 0)
+                    draft.pick(2, question: 0)
+                case .questionPages:
+                    draft.pick(1, question: 0)
+                case .questionOther:
+                    draft.setOtherText("새 이미지만, 썸네일은 그대로", question: 0)
+                default:
+                    break
+                }
+            }
+        case .plan:
+            world.apiServerEdits()
+            world.apiServerRunsTests()
+            showCompact()
+            world.blogAsksPlanApproval()
             presentation.handleLatestSignal()
         case .done:
             world.apiServerEdits()

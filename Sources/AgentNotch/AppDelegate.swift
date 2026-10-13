@@ -121,8 +121,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
         socketServer.onEnvelope = { [weak self] envelope in
             self?.receive(envelope)
         }
-        socketServer.onPendingCancelled = { [weak self] id in
-            self?.store.cancelPermission(id: id)
+        socketServer.onPendingCancelled = { [weak self] id, reason in
+            switch reason {
+            case .timedOut:
+                // 노치에서 기다리는 시간이 지남: 질문 · 계획 승인은 이어서 뜨는 다이얼로그로 안내한다
+                self?.store.expirePermission(id: id)
+            case .clientClosed, .serverStopped:
+                self?.store.cancelPermission(id: id)
+            }
         }
         socketServer.replyTimeout = { [weak self] in
             self?.preferences.permissionTimeout ?? 120
@@ -132,7 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
         }
     }
 
-    /// 훅 이벤트 반영. 터미널을 보고 있으면 권한 요청은 노치에 보여만 주고 바로 터미널 프롬프트로 넘긴다.
+    /// 훅 이벤트 반영. 터미널을 보고 있으면 권한 요청 · 질문 · 계획 승인은 노치에 보여만 주고 바로 터미널 프롬프트로 넘긴다.
     private func receive(_ envelope: HookEnvelope) -> UUID? {
         guard let requestID = store.ingest(envelope) else { return nil }
         if preferences.passthroughWhenTerminalFrontmost,

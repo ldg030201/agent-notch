@@ -39,6 +39,7 @@ final class SnapshotClock {
 @MainActor
 final class SnapshotActions: IslandActions {
     func resolvePermission(id: UUID, decision: PermissionDecision) {}
+    func handOff(requestID: UUID) {}
     func jumpToTerminal(sessionID: String) {}
     func openFile(path: String, line: Int?) {}
     func togglePin(sessionID: String) {}
@@ -338,9 +339,76 @@ struct SnapshotWorld {
         clock.set(772)
     }
 
+    /// blog: 노치에서 답하는 질문 (지금 훅 설정: 질문 툴의 PreToolUse 가 노치의 답을 기다림)
+    mutating func blogAsksInNotch(_ questions: [[String: Any]]) {
+        let blog = Self.blog
+        send(blog, "UserPromptSubmit", at: 760, ["prompt": "새 글 배포해줘"])
+        startWaiting(blog, "AskUserQuestion", at: 770, input: ["questions": questions])
+        clock.set(772)
+    }
+
+    /// 노치 질문 장면의 질문들 (예시 내용)
+    static let deployImageQuestion: [String: Any] = [
+        "question": "배포 전에 이미지도 같이 최적화할까요?",
+        "header": "이미지",
+        "multiSelect": false,
+        "options": [
+            ["label": "같이 하기", "description": "WebP 로 바꾸고 용량을 줄임 (약 2분)"],
+            ["label": "건너뛰기", "description": "지금 이미지 그대로 배포"],
+            ["label": "새 이미지만", "description": "이번 글에 추가된 이미지 3개만 최적화"],
+        ],
+    ]
+    static let deployChecksQuestion: [String: Any] = [
+        "question": "배포 전에 어떤 검사를 돌릴까요?",
+        "header": "검사",
+        "multiSelect": true,
+        "options": [
+            ["label": "링크 검사", "description": "깨진 내부 · 외부 링크 찾기"],
+            ["label": "맞춤법", "description": "새 글 본문만"],
+            ["label": "빌드", "description": "정적 사이트 전체 빌드"],
+            ["label": "미리보기 배포", "description": "스테이징 주소에 먼저 올리기"],
+        ],
+    ]
+    static let deployTargetQuestion: [String: Any] = [
+        "question": "어느 환경에 배포할까요?",
+        "header": "환경",
+        "multiSelect": false,
+        "options": [["label": "프로덕션"], ["label": "스테이징"]],
+    ]
+    static let deployNoticeQuestion: [String: Any] = [
+        "question": "배포가 끝나면 어디로 알릴까요?",
+        "header": "알림",
+        "multiSelect": true,
+        "options": [["label": "메일"], ["label": "슬랙 #blog"], ["label": "알리지 않음"]],
+    ]
+
+    /// blog: 계획 모드에서 세운 배포 계획 승인 요청 (지금 훅 설정)
+    mutating func blogAsksPlanApproval() {
+        let blog = Self.blog
+        send(blog, "UserPromptSubmit", at: 760, ["prompt": "새 글 배포 계획 세워줘"])
+        startWaiting(blog, "ExitPlanMode", at: 770, input: [
+            "plan": """
+            # 새 글 배포 계획
+
+            1. 이미지 최적화 (WebP 변환, 최대 폭 1600px)
+            2. 정적 사이트 빌드 후 링크 검사
+            3. 스테이징에 먼저 올려 미리보기 확인
+            4. 프로덕션 배포 · 캐시 무효화
+            5. RSS · 사이트맵 갱신 확인
+            6. 배포 결과를 변경 내역에 기록
+            """,
+            "planFilePath": "/Users/dev/.claude/plans/blog-deploy.md",
+        ])
+        clock.set(772)
+    }
+
     // MARK: 이벤트 만들기
 
-    mutating func send(_ project: Project, _ event: String, at seconds: TimeInterval, _ fields: [String: Any]) {
+    /// 훅 이벤트 하나. `expectsReply` 가 nil 이면 늘 기다리는 이벤트(PermissionRequest)만 응답을 기다린다
+    /// (예전 훅 설정처럼 질문 툴의 PreToolUse 는 기다리지 않음 → 입력 대기 카드)
+    mutating func send(
+        _ project: Project, _ event: String, at seconds: TimeInterval, _ fields: [String: Any], expectsReply: Bool? = nil
+    ) {
         clock.set(seconds)
         var payload: [String: JSONValue] = [
             "session_id": .string(project.id),
@@ -353,7 +421,7 @@ struct SnapshotWorld {
             event: event,
             sentAt: clock.now.timeIntervalSince1970,
             env: hostEnvironment[project.id] ?? [:],
-            expectsReply: NotchWire.replyEvents.contains(event),
+            expectsReply: expectsReply ?? NotchWire.replyEvents.contains(event),
             payload: .object(payload)
         ))
     }
@@ -363,6 +431,18 @@ struct SnapshotWorld {
         toolSeq += 1
         let id = "toolu_snapshot_\(toolSeq)"
         send(project, "PreToolUse", at: seconds, ["tool_name": name, "tool_input": input, "tool_use_id": id])
+        return id
+    }
+
+    /// 헬퍼가 노치의 답을 기다리는 툴 호출 (질문 · 계획 승인의 PreToolUse)
+    @discardableResult
+    private mutating func startWaiting(_ project: Project, _ name: String, at seconds: TimeInterval, input: [String: Any]) -> String {
+        toolSeq += 1
+        let id = "toolu_snapshot_\(toolSeq)"
+        let fields: [String: Any] = ["tool_name": name, "tool_input": input, "tool_use_id": id]
+        send(project, "PreToolUse", at: seconds, fields, expectsReply: NotchWire.expectsReply(
+            event: "PreToolUse", toolName: name, hasReplyTimeout: true
+        ))
         return id
     }
 

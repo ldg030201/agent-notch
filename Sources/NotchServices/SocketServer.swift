@@ -26,13 +26,23 @@ public enum SocketServerError: Error, Equatable, LocalizedError {
 /// 훅 헬퍼(`notch-hook`)가 붙는 Unix 도메인 소켓 서버.
 ///
 /// - 연결마다 `HookEnvelope` 한 줄을 읽어 메인 액터에서 `onEnvelope` 를 호출한다.
-/// - `expectsReply` 인 연결(PermissionRequest)은 `onEnvelope` 가 돌려준 ID 로 보관해 두었다가
+/// - `expectsReply` 인 연결(PermissionRequest, 질문 · 계획 승인의 PreToolUse)은 `onEnvelope` 가 돌려준 ID 로 보관해 두었다가
 ///   `reply(to:output:)` 로 `HookReply` 한 줄을 보내고 닫는다.
-/// - 응답 전에 클라이언트가 끊기거나 `replyTimeout` 이 지나면 `onPendingCancelled` 를 호출한다
+/// - 응답 전에 클라이언트가 끊기거나 `replyTimeout` 이 지나면 `onPendingCancelled` 를 이유(`PendingEnd`)와 함께 호출한다
 ///   (시간 초과 시에는 `output: null` 로 응답해 Claude Code 기본 권한 흐름으로 넘긴다).
 ///
 /// 소켓 관련 상태는 전부 내부 직렬 큐에서만 다룬다. 콜백은 항상 메인 액터에서 호출된다.
 public final class SocketServer: @unchecked Sendable {
+    /// 대기 중이던 요청이 앱의 응답 없이 끝난 이유
+    public enum PendingEnd: Sendable, Equatable {
+        /// 헬퍼 연결이 끊김 (Claude Code 가 훅을 끊음 · 종료)
+        case clientClosed
+        /// 응답 대기 시간(`replyTimeout`)이 지나 "결정 없음" 으로 응답함 (Claude Code 가 이어서 기본 프롬프트를 띄운다)
+        case timedOut
+        /// 서버가 멈춤 ("결정 없음" 으로 응답함)
+        case serverStopped
+    }
+
     /// 한 줄(envelope)의 최대 크기. 넘으면 연결을 끊는다.
     public static let maxLineBytes = NotchWire.maxEnvelopeBytes + 64 * 1024
     /// 헬퍼의 `--reply-timeout 590` 보다 먼저 응답하도록 대기 시간을 이 값으로 자른다
@@ -52,7 +62,7 @@ public final class SocketServer: @unchecked Sendable {
 
     private let callbackLock = NSLock()
     private var storedOnEnvelope: (@MainActor (HookEnvelope) -> UUID?)?
-    private var storedOnPendingCancelled: (@MainActor (UUID) -> Void)?
+    private var storedOnPendingCancelled: (@MainActor (UUID, PendingEnd) -> Void)?
     private var storedReplyTimeout: @MainActor () -> TimeInterval = { 120 }
 
     /// envelope 수신. 응답이 필요한 이벤트면 대기시킬 요청 ID 를 돌려준다 (nil 이면 즉시 `output: null` 응답).
@@ -62,7 +72,7 @@ public final class SocketServer: @unchecked Sendable {
     }
 
     /// 대기 중이던 요청이 응답 없이 끝남 (클라이언트 끊김, 시간 초과, 서버 정지)
-    public var onPendingCancelled: (@MainActor (UUID) -> Void)? {
+    public var onPendingCancelled: (@MainActor (UUID, PendingEnd) -> Void)? {
         get { withCallbackLock { storedOnPendingCancelled } }
         set { withCallbackLock { storedOnPendingCancelled = newValue } }
     }
@@ -268,7 +278,7 @@ public final class SocketServer: @unchecked Sendable {
         for (id, connection) in pending {
             send(HookReply(output: nil), to: connection)
             finish(connection)
-            if notify { notifyCancelled(id) }
+            if notify { notifyCancelled(id, .serverStopped) }
         }
         pending.removeAll()
         // ID 를 기다리던 연결은 닫기만 한다 (attach 에서 취소를 알린다)
@@ -429,7 +439,7 @@ public final class SocketServer: @unchecked Sendable {
 
         guard case .awaitingID = connection.state else {
             // ID 를 받기 전에 클라이언트가 끊겼거나 서버가 멈춤
-            if let id, earlyReply == nil { notifyCancelled(id) }
+            if let id, earlyReply == nil { notifyCancelled(id, .clientClosed) }
             return
         }
         guard let id, pending[id] == nil else {
@@ -448,11 +458,11 @@ public final class SocketServer: @unchecked Sendable {
         pending[id] = connection
         armTimer(for: connection, after: timeout) { [weak self, weak connection] in
             guard let self, let connection, case .pending(let id) = connection.state else { return }
-            self.log.info("권한 응답 시간 초과 → 결정 위임")
+            self.log.info("응답 시간 초과 → 결정 위임")
             self.pending[id] = nil
             self.send(HookReply(output: nil), to: connection)
             self.finish(connection)
-            self.notifyCancelled(id)
+            self.notifyCancelled(id, .timedOut)
         }
     }
 
@@ -473,7 +483,7 @@ public final class SocketServer: @unchecked Sendable {
             log.info("권한 대기 중 클라이언트 연결 끊김")
             pending[id] = nil
             finish(connection)
-            notifyCancelled(id)
+            notifyCancelled(id, .clientClosed)
         case .closed:
             break
         }
@@ -511,10 +521,10 @@ public final class SocketServer: @unchecked Sendable {
         connections[ObjectIdentifier(connection)] = nil
     }
 
-    private func notifyCancelled(_ id: UUID) {
+    private func notifyCancelled(_ id: UUID, _ reason: PendingEnd) {
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated {
-                self?.onPendingCancelled?(id)
+                self?.onPendingCancelled?(id, reason)
             }
         }
     }

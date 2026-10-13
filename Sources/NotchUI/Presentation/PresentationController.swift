@@ -16,8 +16,12 @@ final class PresentationController {
     }
 
     /// 패널이 키 윈도우일 때의 단축키
-    enum Shortcut {
+    enum Shortcut: Equatable {
         case allow, allowAlways, deny, collapse
+        /// ↩ (질문 카드: 다음 · 보내기, 계획 카드: 승인)
+        case submit
+        /// 숫자 키 1–4 (질문 카드 선택지, 0부터)
+        case pick(Int)
     }
 
     let store: SessionStore
@@ -59,6 +63,8 @@ final class PresentationController {
 
     /// 지금 카드에 보이는 권한 요청과 처음 보인 시각(부팅 후 초). 막 바뀐 요청은 단축키로 결정하지 않는다.
     @ObservationIgnored private var displayedPermission: (id: UUID, since: TimeInterval)?
+    /// 질문 카드에서 고르는 중인 답 (요청 ID → 답). 요청이 대기열에서 빠지면 지운다
+    @ObservationIgnored private var questionDrafts: [UUID: QuestionDraft] = [:]
     /// 새 권한 요청이 보이고 나서 단축키 결정을 받기 시작할 때까지의 시간
     static let shortcutSettleDelay: TimeInterval = 0.5
 
@@ -325,7 +331,8 @@ final class PresentationController {
 
         for session in candidates {
             switch session.phase {
-            case .waitingInput:
+            case .waitingInput where !hookPendingSessions.contains(session.id) && !store.isInputHandedOff(session.id):
+                // 노치에서 답하는 질문 카드가 있거나(접어 둔 경우 포함) "터미널로" 넘긴 질문이면 입력 대기 카드를 따로 띄우지 않는다
                 let message = inputMessages[session.id] ?? session.lastNotification ?? "입력이 필요해"
                 return (session.id, message, false)
             case .waitingPermission where !hookPendingSessions.contains(session.id):
@@ -559,8 +566,18 @@ final class PresentationController {
             return card(M.peekWidth, radius: 22) { _ in body }
 
         case let .permission(request, _):
-            return card(M.permissionWidth, radius: 22) { width in
-                PermissionCardModel(request: request, cardWidth: width).bodyHeight
+            switch request.kind {
+            case .permission:
+                return card(M.permissionWidth, radius: 22) { width in
+                    PermissionCardModel(request: request, cardWidth: width).bodyHeight
+                }
+            case let .question(questions):
+                return card(M.permissionWidth, radius: 22) { width in
+                    QuestionCardModel(questions: questions, cardWidth: width).bodyHeight
+                }
+            case let .plan(plan):
+                let body = PlanCardModel(plan: plan).bodyHeight
+                return card(M.permissionWidth, radius: 22) { _ in body }
             }
 
         case let .needsInput(_, message, _):
@@ -700,10 +717,76 @@ final class PresentationController {
         actions.resolvePermission(id: request.id, decision: decision)
     }
 
-    /// 터미널로: 노치에서 결정하지 않고 Claude Code 기본 프롬프트로 넘긴 뒤 터미널로 이동
+    /// 터미널로: 노치에서 결정하지 않고 Claude Code 기본 프롬프트로 넘긴 뒤 터미널로 이동.
+    /// 질문 · 계획 승인은 그 다이얼로그에 답할 때까지 입력 대기 카드를 다시 띄우지 않는다 (`SessionStore.handOff`)
     func sendToTerminal(_ request: PermissionRequestInfo) {
-        actions.resolvePermission(id: request.id, decision: .passthrough)
+        actions.handOff(requestID: request.id)
         actions.jumpToTerminal(sessionID: request.sessionID)
+    }
+
+    // MARK: - 질문 · 계획 승인 카드
+
+    /// 알림 카드(질문 · 계획 승인)의 행 · 버튼을 누름: 카드가 보이는 화면 패널을 키 윈도우로 만들어
+    /// 이어서 숫자 키 · ↩ · "기타" 글자 입력을 받는다 (카드가 뜨기만 해서는 다른 앱의 키보드 포커스를 뺏지 않는다)
+    func requestAlertKey() {
+        guard let id = transientTargetScreenID else { return }
+        onRequestKey?(id)
+    }
+
+    /// 질문 카드의 답 (요청마다 하나, 처음 부를 때 만든다). 질문이 아니면 nil
+    func questionDraft(for request: PermissionRequestInfo) -> QuestionDraft? {
+        guard case let .question(questions) = request.kind else { return nil }
+        if let draft = questionDrafts[request.id] { return draft }
+        let pendingIDs = Set(store.pendingPermissions.map(\.id))
+        questionDrafts = questionDrafts.filter { pendingIDs.contains($0.key) }
+        let draft = QuestionDraft(questions: questions)
+        questionDrafts[request.id] = draft
+        return draft
+    }
+
+    /// 선택지를 고름 (클릭 · 숫자 키). 한 개만 고르는 질문이면 그 질문의 답이 되어 다음 쪽으로 넘어가고
+    /// (아직 답하지 않은 질문 먼저), 마지막 쪽에서 모두 답했으면 바로 보낸다. 여러 개 고르는 질문은 켜고 끄기만 한다.
+    /// 카드가 막 보였을 때(`shortcutSettleDelay` 안)는 고르기만 하고 보내지 않는다 (카드가 뜨는 순간의 잘못된 클릭)
+    func pickOption(_ option: Int, in request: PermissionRequestInfo) {
+        guard let draft = questionDraft(for: request) else { return }
+        let question = draft.page
+        draft.pick(option, question: question)
+        guard !draft.questions[question].multiSelect, draft.isAnswered(question) else { return }
+        if !draft.isLastPage {
+            draft.go(to: draft.nextUnanswered ?? question + 1)
+        } else if draft.allAnswered {
+            if isSettled(request) { submitAnswers(request) }
+        } else if let next = draft.nextUnanswered {
+            draft.go(to: next)
+        }
+    }
+
+    /// 질문 카드 주 버튼 (↩): 지금 질문에 답했으면 다음 질문으로, 마지막 쪽에서 모두 답했으면 보낸다
+    func advanceOrSubmit(_ request: PermissionRequestInfo) {
+        guard let draft = questionDraft(for: request) else { return }
+        if draft.isLastPage {
+            if draft.allAnswered {
+                submitAnswers(request)
+            } else if let next = draft.nextUnanswered {
+                draft.go(to: next)
+            }
+        } else if draft.isAnswered(draft.page) {
+            draft.go(to: draft.page + 1)
+        }
+    }
+
+    /// 고른 답을 보낸다 (모든 질문에 답했을 때만)
+    func submitAnswers(_ request: PermissionRequestInfo) {
+        guard let answers = questionDraft(for: request)?.answers else { return }
+        logger.debug("질문 답 전달")
+        actions.resolvePermission(id: request.id, decision: .answer(answers))
+    }
+
+    /// 계획 승인
+    func approvePlan(_ request: PermissionRequestInfo) {
+        guard case .plan = request.kind else { return }
+        logger.debug("계획 승인 전달")
+        actions.resolvePermission(id: request.id, decision: .allow)
     }
 
     /// 키 윈도우일 때의 단축키 처리. 처리했으면(또는 일부러 무시했으면) true.
@@ -715,6 +798,14 @@ final class PresentationController {
             return true
         }
         guard case let .permission(request, _) = mode else { return false }
+        switch request.kind {
+        case .permission:
+            // ↩ · 숫자 키는 권한 카드에서 쓰지 않는다
+            if case .submit = shortcut { return false }
+            if case .pick = shortcut { return false }
+        case .question, .plan:
+            return performInteraction(shortcut, request: request)
+        }
         // 방금 바뀐 요청은 아직 읽지 못했을 수 있다 → 결정하지 않고 키만 소비 (경고음 없이 무시)
         guard isSettled(request) else {
             logger.debug("새 권한 요청 직후 단축키 무시")
@@ -730,7 +821,29 @@ final class PresentationController {
             resolve(request, decision: .allowAlways)
         case .deny:
             resolve(request, decision: .deny(message: nil))
-        case .collapse:
+        case .collapse, .submit, .pick:
+            break
+        }
+        return true
+    }
+
+    /// 질문 · 계획 승인 카드의 단축키: ↩ · ⌘↩ 다음 · 보내기 · 승인, 숫자 키 선택지. 거부 · 항상 허용은 없다 (키만 소비)
+    private func performInteraction(_ shortcut: Shortcut, request: PermissionRequestInfo) -> Bool {
+        switch shortcut {
+        case .pick(let option):
+            guard case .question = request.kind else { return false }
+            pickOption(option, in: request)
+        case .allow, .submit:
+            guard isSettled(request) else {
+                logger.debug("새 질문 직후 단축키 무시")
+                return true
+            }
+            if case .plan = request.kind {
+                approvePlan(request)
+            } else {
+                advanceOrSubmit(request)
+            }
+        case .allowAlways, .deny, .collapse:
             break
         }
         return true
@@ -829,6 +942,10 @@ final class PresentationController {
         }
         let stale = inputMessages.keys.filter { store.sessions[$0]?.phase != .waitingInput }
         for key in stale { inputMessages.removeValue(forKey: key) }
+        if !questionDrafts.isEmpty {
+            let pendingIDs = Set(store.pendingPermissions.map(\.id))
+            questionDrafts = questionDrafts.filter { pendingIDs.contains($0.key) }
+        }
     }
 }
 

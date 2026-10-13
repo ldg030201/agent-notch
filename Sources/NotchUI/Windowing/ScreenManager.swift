@@ -346,23 +346,35 @@ final class ScreenManager {
         guard let window = event.window as? NotchPanel,
               let id = panels.first(where: { $0.value === window })?.key else { return false }
         let flags = event.modifierFlags.intersection([.command, .option, .shift, .control])
+        // 질문 카드의 "기타" 글자 입력 중: ↩ · 숫자 · ⌫ 는 입력란이 받는다 (↩ 는 입력란이 보내기로 처리)
+        let fieldEditor = window.firstResponder as? NSTextView
         switch event.keyCode {
         case 53: // ⎋
+            // 한글 등 조합 중인 글자가 있으면 입력기가 먼저 받는다
+            if fieldEditor?.hasMarkedText() == true { return false }
             return presentation.perform(.collapse, on: id)
         case 36, 76: // ↩, 키패드 엔터
             // 키를 누르고 있어 반복 입력된 이벤트로는 결정하지 않는다 (다음 요청까지 승인되지 않게)
-            if event.isARepeat, flags.contains(.command) { return true }
+            if event.isARepeat, flags.contains(.command) || flags.isEmpty { return true }
             if flags == [.command] { return presentation.perform(.allow, on: id) }
             if flags == [.command, .option] { return presentation.perform(.allowAlways, on: id) }
+            if flags.isEmpty, fieldEditor == nil { return presentation.perform(.submit, on: id) }
             return false
         case 51, 117: // ⌫, ⌦
             if event.isARepeat, flags == [.command] { return true }
-            if flags == [.command] { return presentation.perform(.deny, on: id) }
+            if flags == [.command], fieldEditor == nil { return presentation.perform(.deny, on: id) }
             return false
         default:
+            // 숫자 1–4 (위 줄 · 키패드): 질문 카드 선택지
+            if flags.isEmpty, fieldEditor == nil, !event.isARepeat, let digit = Self.optionDigits[event.keyCode] {
+                return presentation.perform(.pick(digit), on: id)
+            }
             return false
         }
     }
+
+    /// 숫자 키 → 선택지 위치 (1–4 위 줄, 키패드)
+    private static let optionDigits: [UInt16: Int] = [18: 0, 19: 1, 20: 2, 21: 3, 83: 0, 84: 1, 85: 2, 86: 3]
 
     // MARK: - 알림 (화면 변경, 스페이스 전환, 동작 줄이기)
 

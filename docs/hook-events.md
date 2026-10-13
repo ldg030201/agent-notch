@@ -120,10 +120,26 @@ command 훅은 제어 터미널이 없어 `/dev/tty` 를 열 수 없다.
   - `WebFetch`: `url`, `prompt`
   - `WebSearch`: `query`
   - `Agent`: `prompt`, `description`, `subagent_type`, `model`?
-  - `AskUserQuestion`: `questions`, `answers`?
-  - `ExitPlanMode`: `plan`, `planFilePath`
+  - `AskUserQuestion`: `questions` (1–4개: `question`, `header` 12자 이내, `options` 2–4개 `{label, description, preview?}`, `multiSelect`?),
+    `answers`? (Claude 는 넣지 않음), `annotations`?
+  - `ExitPlanMode`: `plan`, `planFilePath` (모델이 보낸 입력은 보통 비어 있고 Claude Code 가 계획 파일 내용 · 경로를 넣어 준다),
+    `allowedPrompts` (v2.1.205 부터 무시)
   - MCP 툴 이름: `mcp__<server>__<tool>`
   - `MultiEdit`, `NotebookEdit` 은 문서화되지 않음 → 방어적으로 파싱 (`edits: [{old_string, new_string}]`, `notebook_path` 등 **(추정)**)
+
+- stdout (`hookSpecificOutput`): `permissionDecision` (`allow` 권한 프롬프트 생략 · `deny` 호출 막음 · `ask` 확인 · `defer` 는 `-p` 에서만),
+  `permissionDecisionReason`, `updatedInput` (입력 전체를 바꾼다 — 바꾸지 않는 필드도 넣어야 함), `additionalContext`.
+  여러 훅의 결정은 `deny` > `defer` > `ask` > `allow`. 출력 없이 exit 0 → 결정 없음, 평소 권한 흐름.
+- **사용자 상호작용 툴 (`AskUserQuestion` · `ExitPlanMode`)**: `"allow"` 만으로는 실행되지 않는다. 훅이 직접 답을 받아
+  `permissionDecision: "allow"` + 답을 담은 `updatedInput` 을 돌려주면 다이얼로그 없이 실행된다 (문서 "Tools that require user interaction").
+  - `AskUserQuestion`: 원래 `questions` 를 그대로 두고 `answers` 에 `{질문 원문: 답}`. 여러 개 고른 답은 선택지 이름을 쉼표로 잇는다.
+    ```json
+    {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","updatedInput":{"questions":[{"question":"Which framework?","header":"Framework","options":[{"label":"React","description":"Component library"},{"label":"Vue","description":"Progressive framework"}],"multiSelect":false}],"answers":{"Which framework?":"React"}}}}
+    ```
+  - `ExitPlanMode`: 입력(`plan` · `planFilePath`)을 그대로 돌려주면 승인 **(추정 — 승인 뒤 권한 모드가 어떻게 되는지는 문서에 없음, 실측 필요)**.
+  - "기타" 직접 입력은 문서에 없음 → 고른 답 대신 쓴 글자를 그대로 답으로 보낸다 **(추정)**.
+  - MCP 툴이 `_meta["anthropic/requiresUserInteraction"]` 이면 `updatedInput` 이 있어도 훅으로 승인할 수 없다.
+- 훅이 결정하지 않으면 평소 흐름: 이 두 툴도 다이얼로그 직전에 `PermissionRequest` 가 온다 (AgentNotch 는 여기서는 결정 없음으로 둔다).
 
 ### PermissionRequest
 - 권한을 물으려는 순간 발생. **`tool_use_id` 없음.**

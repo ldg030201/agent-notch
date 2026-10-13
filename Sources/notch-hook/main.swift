@@ -1,7 +1,7 @@
 // Claude Code 훅 헬퍼 진입점.
 //
 // stdin 의 훅 JSON 을 앱의 Unix 소켓으로 한 줄(HookEnvelope) 보내고,
-// 응답이 필요한 이벤트(PermissionRequest)만 앱의 HookReply 를 기다려 stdout 으로 출력한다.
+// 응답이 필요한 호출(PermissionRequest, 질문 · 계획 승인 툴의 PreToolUse)만 앱의 HookReply 를 기다려 stdout 으로 출력한다.
 // 앱이 꺼져 있거나 어떤 오류가 나도 Claude Code 동작에 영향이 없도록 항상 조용히 exit 0 (--ping 제외).
 import Foundation
 import NotchShared
@@ -63,7 +63,12 @@ guard let connection = HookSocket.connect(path: socketPath, sendTimeout: HookHel
 
 let payload = EnvelopeBuilder.reduceTaskLists(EnvelopeBuilder.parsePayload(input.data))
 let event = EnvelopeBuilder.eventName(payload: payload, argument: options.eventName)
-let expectsReply = NotchWire.replyEvents.contains(event)
+// 질문 · 계획 승인 툴의 PreToolUse 는 훅 명령에 --reply-timeout 이 있을 때만 기다린다 (예전 설정의 10초 timeout 보호)
+let expectsReply = NotchWire.expectsReply(
+    event: event,
+    toolName: payload["tool_name"]?.stringValue,
+    hasReplyTimeout: options.replyTimeout != nil
+)
 let line = EnvelopeBuilder.encodeLine(
     event: event,
     env: EnvelopeBuilder.forwardedEnvironment(environment),

@@ -4,8 +4,10 @@ import Foundation
 /// (UI 모듈이 Services 모듈에 직접 의존하지 않도록 하기 위한 경계)
 @MainActor
 public protocol IslandActions: AnyObject {
-    /// 권한 요청 결정
+    /// 권한 요청 결정 (질문의 답 · 계획 승인 포함)
     func resolvePermission(id: UUID, decision: PermissionDecision)
+    /// 노치에서 정하지 않고 세션 앱(터미널 · Claude 앱)의 다이얼로그로 넘김 (`SessionStore.handOff`)
+    func handOff(requestID: UUID)
     /// 세션을 실행한 터미널/앱으로 이동
     func jumpToTerminal(sessionID: String)
     /// 파일 열기 (기본 에디터)

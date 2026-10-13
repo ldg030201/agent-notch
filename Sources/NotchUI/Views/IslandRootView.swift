@@ -372,14 +372,37 @@ struct IslandContentView: View {
                 reduceMotion: reduceMotion
             )
         case let .permission(request, queueCount):
-            PermissionView(
-                request: request,
-                queueCount: queueCount,
-                session: presentation.store.sessions[request.sessionID],
-                layout: layout,
-                presentation: presentation,
-                reduceMotion: reduceMotion
-            )
+            switch request.kind {
+            case .permission:
+                PermissionView(
+                    request: request,
+                    queueCount: queueCount,
+                    session: presentation.store.sessions[request.sessionID],
+                    layout: layout,
+                    presentation: presentation,
+                    reduceMotion: reduceMotion
+                )
+            case let .question(questions):
+                QuestionView(
+                    request: request,
+                    questions: questions,
+                    queueCount: queueCount,
+                    session: presentation.store.sessions[request.sessionID],
+                    layout: layout,
+                    presentation: presentation,
+                    reduceMotion: reduceMotion
+                )
+            case let .plan(plan):
+                PlanApprovalView(
+                    request: request,
+                    plan: plan,
+                    queueCount: queueCount,
+                    session: presentation.store.sessions[request.sessionID],
+                    layout: layout,
+                    presentation: presentation,
+                    reduceMotion: reduceMotion
+                )
+            }
         case let .needsInput(sessionID, message, isPermissionPrompt):
             NeedsInputView(
                 session: presentation.store.sessions[sessionID],

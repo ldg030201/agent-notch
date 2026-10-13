@@ -2,6 +2,7 @@ import Foundation
 import NotchCore
 import NotchServices
 import NotchUI
+import os
 
 /// 설정 화면·메뉴가 쓰는 훅 설치 / 로그인 시 실행 / 버전 정보
 @MainActor
@@ -48,11 +49,22 @@ final class AppSettingsProvider: SettingsProvider {
         }
     }
 
-    /// 앱 업데이트 후 헬퍼가 바뀌었으면 다시 복사 (설치한 적 없으면 아무것도 안 함)
+    /// 앱 업데이트 후 헬퍼가 바뀌었으면 다시 복사하고, 예전 버전이 설치한 훅 항목을 지금 형태로 고친다
+    /// (예: 질문 · 계획 승인을 노치에서 답하도록 PreToolUse 에 응답 대기 시간 · timeout 600).
+    /// 설치한 적 없으면 아무것도 안 한다. 설정은 우리 항목만 고치고 바꾸기 전에 백업을 남긴다
     func refreshHelperIfNeeded() {
         guard let helper = AppInfo.helperURL() else { return }
         _ = try? installer.refreshHelperIfInstalled(helperSource: helper)
+        do {
+            if try installer.updateInstalledHooks() != nil {
+                Self.log.info("예전 훅 설정을 고침 (백업 남김)")
+            }
+        } catch {
+            Self.log.error("훅 설정을 고치지 못함: \(error.localizedDescription, privacy: .public)")
+        }
     }
+
+    private static let log = Logger(subsystem: NotchServices.logSubsystem, category: "hooks")
 
     /// 시스템 설정 > 로그인 항목의 실제 상태 (`SMAppService.mainApp`)
     var launchAtLoginEnabled: Bool { loginItem.isEnabled }

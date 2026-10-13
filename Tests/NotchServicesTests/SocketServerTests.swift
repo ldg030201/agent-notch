@@ -9,6 +9,7 @@ import Testing
 final class SocketRecorder {
     var envelopes: [HookEnvelope] = []
     var cancelled: [UUID] = []
+    var reasons: [SocketServer.PendingEnd] = []
 }
 
 /// 동시 시작 결과 기록용 (인덱스별 오류, nil 이면 시작 성공)
@@ -42,8 +43,9 @@ struct SocketServerTests {
             recorder.envelopes.append(envelope)
             return envelope.expectsReply ? replyID : nil
         }
-        server.onPendingCancelled = { id in
+        server.onPendingCancelled = { id, reason in
             recorder.cancelled.append(id)
+            recorder.reasons.append(reason)
         }
         return server
     }
@@ -171,6 +173,7 @@ struct SocketServerTests {
 
         client.close()
         #expect(await waitUntil { recorder.cancelled == [id] })
+        #expect(recorder.reasons == [.clientClosed])
 
         // 끊긴 뒤 들어온 응답은 무시된다
         server.reply(to: id, output: .object([:]))
@@ -199,6 +202,7 @@ struct SocketServerTests {
         #expect(raw["output"] == nil || raw["output"] == .null)
         #expect(try JSONDecoder().decode(HookReply.self, from: data).output == nil)
         #expect(await waitUntil { recorder.cancelled == [id] })
+        #expect(recorder.reasons == [.timedOut])
     }
 
     @Test func stopRepliesNullToPendingAndCancels() async throws {
@@ -221,6 +225,7 @@ struct SocketServerTests {
         let reply = try JSONDecoder().decode(HookReply.self, from: try #require(await line))
         #expect(reply.output == nil)
         #expect(await waitUntil { recorder.cancelled == [id] })
+        #expect(recorder.reasons == [.serverStopped])
         #expect(!FileManager.default.fileExists(atPath: path))
     }
 

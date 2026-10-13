@@ -22,6 +22,10 @@ final class AppActions: IslandActions {
         store.resolvePermission(id: id, decision: decision)
     }
 
+    func handOff(requestID: UUID) {
+        store.handOff(id: requestID)
+    }
+
     func jumpToTerminal(sessionID: String) {
         guard let session = store.sessions[sessionID] else { return }
         terminalJumper.jump(to: session.terminal)

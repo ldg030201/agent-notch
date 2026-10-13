@@ -1,8 +1,10 @@
 import Foundation
 import NotchShared
 
-/// 사용자 결정을 PermissionRequest 훅 출력 JSON 으로 변환한다.
-/// 반환값이 nil 이면 훅은 아무것도 출력하지 않는다 (= Claude Code 기본 권한 프롬프트로 넘김).
+/// 사용자 결정을 훅 출력 JSON 으로 변환한다.
+/// - 권한 요청: PermissionRequest 의 `decision`
+/// - 질문 · 계획 승인: PreToolUse 의 `permissionDecision: "allow"` + `updatedInput` (원래 입력 + 답)
+/// 반환값이 nil 이면 훅은 아무것도 출력하지 않는다 (= Claude Code 기본 프롬프트 · 다이얼로그로 넘김).
 ///
 /// NOTE: 공개 시그니처는 NotchServices/App 이 의존하는 계약이므로 변경하지 않는다.
 public enum PermissionReplyBuilder {
@@ -10,6 +12,19 @@ public enum PermissionReplyBuilder {
     static let defaultDenyMessage = "AgentNotch 에서 거부됨"
 
     public static func output(for request: PermissionRequestInfo, decision: PermissionDecision) -> JSONValue? {
+        switch request.kind {
+        case .permission: return permissionOutput(decision: decision, request: request)
+        case .question(let questions): return questionOutput(request, questions: questions, decision: decision)
+        case .plan: return planOutput(request, decision: decision)
+        }
+    }
+
+    /// 실제로 훅에 전달되는 결정. 출력을 만들 수 없는 결정(질문에 답 없이 허용, 답 개수가 다름 등)은 결정 없음으로 본다
+    public static func effectiveDecision(for request: PermissionRequestInfo, decision: PermissionDecision) -> PermissionDecision {
+        output(for: request, decision: decision) == nil ? .passthrough : decision
+    }
+
+    private static func permissionOutput(decision: PermissionDecision, request: PermissionRequestInfo) -> JSONValue? {
         var body: [String: JSONValue]
         switch decision {
         case .allow:
@@ -26,13 +41,54 @@ public enum PermissionReplyBuilder {
                 "behavior": .string("deny"),
                 "message": .string(TextUtils.nonEmpty(trimmed) ?? defaultDenyMessage),
             ]
-        case .passthrough:
+        case .passthrough, .answer:
             return nil
         }
         return .object([
             "hookSpecificOutput": .object([
                 "hookEventName": .string("PermissionRequest"),
                 "decision": .object(body),
+            ]),
+        ])
+    }
+
+    // MARK: - 질문 · 계획 승인 (PreToolUse)
+
+    /// AskUserQuestion: 원래 입력(`questions` 등)을 그대로 두고 `answers` 에 질문 원문 → 답을 넣는다.
+    /// 답이 빠졌거나, 한 개만 고르는 질문에 답이 둘 이상이면 nil (다이얼로그로 넘긴다)
+    private static func questionOutput(
+        _ request: PermissionRequestInfo,
+        questions: [QuestionItem],
+        decision: PermissionDecision
+    ) -> JSONValue? {
+        guard case .answer(let answers) = decision, answers.count == questions.count,
+              var input = request.toolInput.objectValue else { return nil }
+        var map: [String: JSONValue] = [:]
+        for (question, answer) in zip(questions, answers) {
+            guard let value = answer.value else { return nil }
+            if !question.multiSelect {
+                let hasOther = answer.otherText.map { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? false
+                guard answer.labels.count + (hasOther ? 1 : 0) == 1 else { return nil }
+            }
+            map[question.question] = .string(value)
+        }
+        input["answers"] = .object(map)
+        return preToolUseAllow(updatedInput: .object(input))
+    }
+
+    /// ExitPlanMode: 승인(`.allow`)이면 Claude Code 가 넣어 준 입력(계획 · 경로)을 그대로 돌려준다
+    private static func planOutput(_ request: PermissionRequestInfo, decision: PermissionDecision) -> JSONValue? {
+        guard decision == .allow, request.toolInput.objectValue != nil else { return nil }
+        return preToolUseAllow(updatedInput: request.toolInput)
+    }
+
+    /// 사용자 상호작용 툴은 `allow` 만으로는 실행되지 않고 답을 담은 `updatedInput` 이 함께 있어야 한다
+    private static func preToolUseAllow(updatedInput: JSONValue) -> JSONValue {
+        .object([
+            "hookSpecificOutput": .object([
+                "hookEventName": .string("PreToolUse"),
+                "permissionDecision": .string("allow"),
+                "updatedInput": updatedInput,
             ]),
         ])
     }

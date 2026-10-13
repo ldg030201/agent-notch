@@ -132,6 +132,12 @@ struct HookInstallerTests {
         let permission = try #require(managedEntries(in: settings, event: "PermissionRequest").first)
         #expect(permission["timeout"] == .number(600))
         #expect(permission["command"]?.stringValue?.hasSuffix("' PermissionRequest --reply-timeout 590") == true)
+        // 질문 · 계획 승인을 노치에서 답하도록 PreToolUse 도 응답을 기다린다 (그 두 툴만 — 헬퍼가 판단)
+        let preToolUse = try #require(managedEntries(in: settings, event: "PreToolUse").first)
+        #expect(preToolUse["timeout"] == .number(600))
+        #expect(preToolUse["command"]?.stringValue?.hasSuffix("' PreToolUse --reply-timeout 590") == true)
+        #expect(managedEntries(in: settings, event: "PostToolUse").first?["timeout"] == .number(10))
+        #expect(managedEntries(in: settings, event: "PostToolUse").first?["command"]?.stringValue?.contains("--reply-timeout") == false)
         #expect(managedEntries(in: settings, event: "SessionEnd").first?["timeout"] == .number(2))
         #expect(managedEntries(in: settings, event: "Stop").first?["timeout"] == .number(10))
 
@@ -219,6 +225,115 @@ struct HookInstallerTests {
         #expect(entry["command"]?.stringValue == installer.command(for: "Stop"))
         #expect(entry["timeout"] == .number(10))
         #expect(entry["async"] == nil)
+    }
+
+    // MARK: - 예전 설정 고치기 (앱 업데이트 후 실행)
+
+    /// 질문 · 계획 승인 응답 대기 전 버전이 설치한 설정: PreToolUse 가 timeout 10 · `--reply-timeout` 없음.
+    /// 우리 PreToolUse 항목은 다른 훅과 같은 그룹에 있고, SubagentStart 등 일부 이벤트는 빠져 있다
+    private func oldInstalledSettings(helper: String) -> String {
+        let command = { (event: String) in "'\(helper)' \(event)" }
+        return """
+        {
+          "env": { "EXAMPLE_FLAG": "1" },
+          "permissions": { "allow": ["Bash(npm test:*)"], "deny": [] },
+          "hooks": {
+            "SessionStart": [
+              { "hooks": [ { "type": "command", "command": "\\"/Applications/iTerm.app/Contents/Resources/utilities/cc-status\\" SessionStart", "async": true } ] },
+              { "hooks": [ { "type": "command", "command": "\(command("SessionStart"))", "timeout": 10 } ] }
+            ],
+            "PreToolUse": [
+              { "matcher": "*", "hooks": [
+                { "type": "command", "command": "\\"/Applications/iTerm.app/Contents/Resources/utilities/cc-status\\" PreToolUse", "async": true },
+                { "type": "command", "command": "\(command("PreToolUse"))", "timeout": 10 }
+              ] },
+              { "matcher": "Bash", "hooks": [ { "type": "command", "command": "/Users/dev/bin/guard.sh", "timeout": 15 } ] }
+            ],
+            "PermissionRequest": [
+              { "matcher": "*", "hooks": [ { "type": "command", "command": "\(command("PermissionRequest")) --reply-timeout 590", "timeout": 600 } ] }
+            ],
+            "Stop": [
+              { "hooks": [ { "type": "command", "command": "\(command("Stop"))", "timeout": 10 } ] }
+            ]
+          }
+        }
+        """
+    }
+
+    @Test func outdatedHooksAreUpdatedOnlyInPlace() throws {
+        let fixture = try InstallerFixture()
+        defer { fixture.temp.remove() }
+        let installer = fixture.makeInstaller()
+        try fixture.writeSettings(oldInstalledSettings(helper: fixture.helperInstallURL.path), permissions: 0o644)
+        let originalData = try fixture.settingsData()
+        let original = try fixture.settings()
+        #expect(installer.hasOutdatedHooks())
+
+        let backup = try #require(try installer.updateInstalledHooks())
+        #expect(posixPermissions(backup.path) == 0o600)
+        #expect(try Data(contentsOf: backup) == originalData)
+        #expect(posixPermissions(fixture.settingsURL.path) == 0o644)
+
+        let updated = try fixture.settings()
+        // hooks 밖의 설정은 그대로
+        for (key, value) in try #require(original.objectValue) where key != "hooks" {
+            #expect(updated[key] == value, "\(key) 변경됨")
+        }
+        // 같은 그룹의 다른 훅 · 다른 그룹은 그대로, 우리 항목만 그 자리에서 지금 형태로
+        let groups = try #require(updated["hooks"]?["PreToolUse"]?.arrayValue)
+        let before = try #require(original["hooks"]?["PreToolUse"]?.arrayValue)
+        #expect(groups.count == 2)
+        #expect(groups[1] == before[1])
+        #expect(groups[0]["matcher"] == .string("*"))
+        #expect(groups[0]["hooks"]?[0] == before[0]["hooks"]?[0])
+        let ours = try #require(groups[0]["hooks"]?[1])
+        #expect(ours["command"]?.stringValue == installer.command(for: "PreToolUse"))
+        #expect(ours["command"]?.stringValue?.hasSuffix(" PreToolUse --reply-timeout 590") == true)
+        #expect(ours["timeout"] == .number(600))
+        #expect(managedEntries(in: updated, event: "PreToolUse").count == 1)
+        // 이미 지금 형태인 이벤트 · 다른 훅이 있는 이벤트도 그대로
+        #expect(updated["hooks"]?["PermissionRequest"] == original["hooks"]?["PermissionRequest"])
+        #expect(updated["hooks"]?["SessionStart"] == original["hooks"]?["SessionStart"])
+        #expect(updated["hooks"]?["Stop"] == original["hooks"]?["Stop"])
+        // 빠진 이벤트를 새로 넣지 않는다 (설치 · 제거는 사용자가 고른다)
+        #expect(Set(try #require(updated["hooks"]?.objectValue).keys) == ["SessionStart", "PreToolUse", "PermissionRequest", "Stop"])
+
+        // 한 번 고친 뒤엔 바뀌는 게 없다 (백업도 더 안 남김)
+        #expect(!installer.hasOutdatedHooks())
+        #expect(try installer.updateInstalledHooks() == nil)
+        #expect(fixture.backups().count == 1)
+    }
+
+    @Test func updateDoesNothingWithoutOurHooksOrWhenCurrent() throws {
+        let fixture = try InstallerFixture()
+        defer { fixture.temp.remove() }
+        let installer = fixture.makeInstaller()
+
+        // 설정 파일이 없음
+        #expect(try installer.updateInstalledHooks() == nil)
+        #expect(!FileManager.default.fileExists(atPath: fixture.settingsURL.path))
+
+        // 다른 훅만 있음 (설치한 적 없음)
+        try fixture.writeSettings(existingSettings)
+        let foreign = try fixture.settingsData()
+        #expect(!installer.hasOutdatedHooks())
+        #expect(try installer.updateInstalledHooks() == nil)
+        #expect(try fixture.settingsData() == foreign)
+
+        // 지금 버전으로 설치한 설정
+        try installer.install(helperSource: fixture.helperSource, includeMessageDisplay: false)
+        let installed = try fixture.settingsData()
+        let backups = fixture.backups().count
+        #expect(!installer.hasOutdatedHooks())
+        #expect(try installer.updateInstalledHooks() == nil)
+        #expect(try fixture.settingsData() == installed)
+        #expect(fixture.backups().count == backups)
+
+        // 잘못된 JSON 은 건드리지 않는다
+        let broken = "{ \"hooks\": { \"PreToolUse\": [ "
+        try fixture.writeSettings(broken)
+        #expect(try installer.updateInstalledHooks() == nil)
+        #expect(try fixture.settingsData() == Data(broken.utf8))
     }
 
     @Test func uninstallRemovesOnlyOurEntries() throws {

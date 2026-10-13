@@ -9,6 +9,7 @@ import NotchShared
 /// - 포커스(주로 볼 세션)를 계산한다.
 /// - UI 가 일시적으로 반응할 신호(`latestSignal`)를 내보낸다.
 /// - 권한 요청 대기열을 관리하고, 사용자 결정을 `onPermissionResolved` 로 알린다.
+///   노치에서 답하는 질문 · 계획 승인(AskUserQuestion · ExitPlanMode 의 PreToolUse)도 같은 대기열을 쓴다 (`PermissionRequestInfo.kind`).
 ///
 /// NOTE: 공개 API 시그니처는 다른 모듈(UI, Services, App)이 의존하는 계약이므로 변경하지 않는다.
 @MainActor
@@ -22,8 +23,11 @@ public final class SessionStore {
     public private(set) var focusedSessionID: String?
     /// 사용자가 고정한 세션
     public private(set) var pinnedSessionID: String?
-    /// 응답 대기 중인 권한 요청 (오래된 순)
+    /// 응답 대기 중인 권한 요청 · 질문 · 계획 승인 (오래된 순)
     public private(set) var pendingPermissions: [PermissionRequestInfo] = []
+    /// 노치에서 답하지 않고 세션 앱(터미널 · Claude 앱)으로 넘긴 질문 · 계획 승인 (세션 ID → tool_use_id).
+    /// 그 다이얼로그에 답할 때까지(입력 대기가 끝나거나 새 입력 요청이 올 때까지) 입력 대기 카드를 다시 띄우지 않는다
+    public private(set) var handedOffInputs: [String: String] = [:]
     /// UI 일시 반응용 최신 신호
     public private(set) var latestSignal: SignalEvent?
 
@@ -59,7 +63,8 @@ public final class SessionStore {
 
     // MARK: - 이벤트 반영
 
-    /// 훅 이벤트를 반영한다. 응답을 기다려야 하는 이벤트(PermissionRequest)면 권한 요청 ID 를 반환한다.
+    /// 훅 이벤트를 반영한다. 응답을 기다려야 하는 호출(PermissionRequest, 노치에서 답할 질문 · 계획 승인의 PreToolUse)이면
+    /// 요청 ID 를 반환한다. nil 이면 훅은 바로 "결정 없음" 응답을 받는다.
     @discardableResult
     public func ingest(_ envelope: HookEnvelope) -> UUID? {
         let payload = HookPayload(envelope.payload)
@@ -96,6 +101,10 @@ public final class SessionStore {
             handleUserPromptSubmit(&session, payload: payload, now: now)
         case "PreToolUse":
             signal = handlePreToolUse(&session, payload: payload, now: now)
+            // 헬퍼가 답을 기다리는 질문 · 계획 승인이면 노치에서 답하도록 대기열에 넣는다 (예전 설정의 fire-and-forget 이면 입력 대기 카드만)
+            if envelope.expectsReply {
+                requestID = queueInteraction(&session, payload: payload, agentID: agentID, now: now)?.id
+            }
         case "PostToolUse":
             signal = handlePostToolUse(&session, payload: payload, now: now)
         case "PostToolUseFailure":
@@ -140,9 +149,15 @@ public final class SessionStore {
         pruneConsentWatches(session)
         _ = applyConsentWait(&session, now: now, allowSignal: false)
 
-        // 다른 에이전트(서브에이전트)의 권한 요청이 아직 남아 있으면 승인 대기로 표시
-        if hasPending(sessionID), session.phase == .thinking || session.phase == .runningTool {
-            session.phase = .waitingPermission
+        // 다른 에이전트(서브에이전트)의 권한 요청 · 질문이 아직 남아 있으면 승인 · 입력 대기로 표시
+        if let waiting = pendingPhase(sessionID), session.phase == .thinking || session.phase == .runningTool {
+            session.phase = waiting
+        }
+        // 넘긴 다이얼로그가 끝났거나(입력 대기가 아님) 새 입력 요청이 왔으면 다시 카드로 알린다
+        if handedOffInputs[sessionID] != nil {
+            var asksAgain = false
+            if case .needsInput? = signal { asksAgain = true }
+            if session.phase != .waitingInput || asksAgain { handedOffInputs[sessionID] = nil }
         }
         trimActivities(&session)
         sessions[sessionID] = session
@@ -155,27 +170,31 @@ public final class SessionStore {
 
     // MARK: - 사용자 동작
 
-    /// 사용자가 권한 요청에 대해 결정함 → 대기열에서 제거하고 `onPermissionResolved` 호출
+    /// 사용자가 권한 요청 · 질문 · 계획 승인에 대해 결정함 → 대기열에서 제거하고 `onPermissionResolved` 호출.
+    /// 훅 출력을 만들 수 없는 결정(질문에 답이 빠짐 등)은 결정 없음(`.passthrough`)으로 바꿔 전달한다
     public func resolvePermission(id: UUID, decision: PermissionDecision) {
         guard let index = pendingPermissions.firstIndex(where: { $0.id == id }) else { return }
         let info = pendingPermissions.remove(at: index)
+        let decision = PermissionReplyBuilder.effectiveDecision(for: info, decision: decision)
         pendingAgentIDs[id] = nil
         // 거부하면 툴이 실행되지 않아 PostToolUse 가 오지 않을 수 있고, 터미널로 넘기면 결과를 모른다 → 그 호출은 지켜보지 않는다.
         // 허용이면 승인 대기 동안 툴이 실행되지 않았으니 앱 확인 카드 지연은 지금부터 잰다
         switch decision {
-        case .allow, .allowAlways: unlinkConsentWatch(permissionID: id, sessionID: info.sessionID)
+        case .allow, .allowAlways, .answer: unlinkConsentWatch(permissionID: id, sessionID: info.sessionID)
         case .deny, .passthrough: dropConsentWatch(permissionID: id, sessionID: info.sessionID)
         }
         restartConsentClocks(info.sessionID, at: clock())
 
-        if var session = sessions[info.sessionID], session.phase == .waitingPermission, !hasPending(info.sessionID) {
+        // 권한 요청은 승인 대기, 질문 · 계획 승인은 입력 대기에서 풀린다
+        let waiting: SessionPhase = info.isInteraction ? .waitingInput : .waitingPermission
+        if var session = sessions[info.sessionID], session.phase == waiting, !hasPending(info.sessionID) {
             switch decision {
-            case .allow, .allowAlways:
+            case .allow, .allowAlways, .answer:
                 session.phase = .runningTool
             case .deny:
                 session.phase = .thinking
             case .passthrough:
-                // 터미널에서 직접 답해야 하므로 승인 대기 유지
+                // 터미널(세션 앱)에서 직접 답해야 하므로 대기 유지
                 break
             }
             sessions[info.sessionID] = session
@@ -184,15 +203,58 @@ public final class SessionStore {
         onPermissionResolved?(info, decision)
     }
 
-    /// 훅 연결이 끊기거나 타임아웃 → 대기열에서만 제거 (`onPermissionResolved` 호출 안 함)
+    /// 카드의 "터미널로" · "Claude로": 노치에서 정하지 않고 결정 없이 풀어 세션 앱의 다이얼로그로 넘긴다.
+    /// 질문 · 계획 승인이면 그 다이얼로그에 답할 때까지 같은 호출로 입력 대기 카드를 다시 띄우지 않게 기억한다
+    /// (이어서 오는 같은 툴의 PermissionRequest · permission_prompt 알림 포함). 권한 요청은 `.passthrough` 와 같다
+    public func handOff(id: UUID) {
+        guard let info = pendingPermissions.first(where: { $0.id == id }) else { return }
+        if info.isInteraction { handedOffInputs[info.sessionID] = info.toolUseID ?? "" }
+        resolvePermission(id: id, decision: .passthrough)
+    }
+
+    /// 이 세션의 질문 · 계획 승인을 사용자가 세션 앱으로 넘겼고 아직 그 다이얼로그를 기다리는 중인지
+    public func isInputHandedOff(_ sessionID: String) -> Bool {
+        handedOffInputs[sessionID] != nil
+    }
+
+    /// 훅 연결이 응답 전에 끊김 → 대기열에서만 제거 (`onPermissionResolved` 호출 안 함).
+    /// 질문 · 계획 승인이면 Claude Code 가 기다리던 훅을 끊은 것(Esc · 중단 · 종료)이라 다이얼로그도 뜨지 않는다 →
+    /// 입력 대기를 풀고(쉬는 중) 그 툴을 실패로 닫는다 (카드도, 이어지는 입력 대기 카드도 남지 않게)
     public func cancelPermission(id: UUID) {
-        guard let index = pendingPermissions.firstIndex(where: { $0.id == id }) else { return }
+        guard let info = takePending(id) else { return }
+        if info.isInteraction, var session = sessions[info.sessionID], session.phase == .waitingInput, !hasPending(info.sessionID) {
+            let now = clock()
+            if let toolUseID = info.toolUseID {
+                for index in session.activities.indices
+                where session.activities[index].id == toolUseID && session.activities[index].status == .running {
+                    session.activities[index].status = .failed
+                    session.activities[index].endedAt = now
+                }
+                if session.currentActivity?.id == toolUseID { session.currentActivity = nil }
+            }
+            session.phase = .idle
+            sessions[info.sessionID] = session
+        }
+        recomputeFocus()
+    }
+
+    /// 노치에서 기다리는 시간(`permissionTimeout`)이 지나 결정 없이 풀어 줌 (SocketServer 가 이미 "결정 없음" 으로 응답함).
+    /// 권한 요청은 `cancelPermission` 과 같다. 질문 · 계획 승인은 이어서 Claude Code 다이얼로그가 뜨므로 입력 대기를 그대로 둔다
+    /// (그 다이얼로그로 안내하는 입력 대기 카드)
+    public func expirePermission(id: UUID) {
+        guard takePending(id) != nil else { return }
+        recomputeFocus()
+    }
+
+    /// 대기열에서 하나를 꺼낸다 (결정 없이 끝난 요청: 허용됐는지 모르므로 그 호출은 앱 확인 카드 추정에서 뺀다)
+    private func takePending(_ id: UUID) -> PermissionRequestInfo? {
+        guard let index = pendingPermissions.firstIndex(where: { $0.id == id }) else { return nil }
         let info = pendingPermissions.remove(at: index)
         pendingAgentIDs[id] = nil
         // 다른 곳(Claude 앱 · 터미널)에서 먼저 답했거나 시간이 지났다: 허용됐는지 모른다 → 그 호출은 지켜보지 않는다
         dropConsentWatch(permissionID: id, sessionID: info.sessionID)
         restartConsentClocks(info.sessionID, at: clock())
-        recomputeFocus()
+        return info
     }
 
     /// 고정 토글 (이미 고정된 세션이면 해제)
@@ -353,8 +415,42 @@ public final class SessionStore {
         return nil
     }
 
-    /// 사용자가 터미널 다이얼로그에서 직접 답해야 하는 툴 (권한 카드로 승인할 수 없음)
-    static let userInteractionTools: Set<String> = ["AskUserQuestion", "ExitPlanMode"]
+    /// 사용자가 직접 답하는 툴 (질문 · 계획 승인). 권한 카드의 허용만으로는 답할 수 없어서
+    /// PreToolUse 에서 노치가 답을 받거나(`queueInteraction`), Claude Code 다이얼로그로 넘긴다
+    static let userInteractionTools: Set<String> = NotchWire.interactiveTools
+
+    /// 질문 · 계획 승인 툴의 PreToolUse (헬퍼가 답을 기다림): 노치에서 답할 수 있으면 대기열에 넣는다.
+    /// 헬퍼가 payload 를 줄였거나(원래 입력을 그대로 돌려줄 수 없음) 노치에서 답할 수 없는 입력이면 nil →
+    /// 훅은 바로 "결정 없음" 응답을 받고 Claude Code 다이얼로그로 답한다 (입력 대기 카드)
+    private func queueInteraction(
+        _ session: inout AgentSession,
+        payload: HookPayload,
+        agentID: String?,
+        now: Date
+    ) -> PermissionRequestInfo? {
+        let toolName = payload.string("tool_name") ?? ""
+        guard Self.userInteractionTools.contains(toolName), !Self.isShrunk(payload),
+              let toolInput = payload["tool_input"],
+              let kind = InteractionParser.kind(toolName: toolName, toolInput: toolInput)
+        else { return nil }
+        let info = PermissionRequestInfo(
+            id: UUID(),
+            sessionID: session.id,
+            toolName: toolName,
+            title: toolName == "ExitPlanMode" ? "계획 승인" : "질문",
+            detail: Self.inputMessage(toolName: toolName, toolInput: toolInput),
+            toolInput: toolInput,
+            suggestions: nil,
+            receivedAt: now,
+            kind: kind,
+            toolUseID: payload.string("tool_use_id")
+        )
+        pendingPermissions.append(info)
+        if let agentID { pendingAgentIDs[info.id] = agentID }
+        if handedOffInputs[session.id] != nil { handedOffInputs[session.id] = nil }
+        session.phase = .waitingInput
+        return info
+    }
 
     private static func inputMessage(toolName: String, toolInput: JSONValue?) -> String {
         if toolName == "ExitPlanMode" { return "계획 승인 필요" }
@@ -455,6 +551,8 @@ public final class SessionStore {
         case "permission_prompt":
             // 훅 대기 요청이 있으면 PermissionRequest 로 이미 표시 중
             guard !hasPending(session.id) else { return nil }
+            // 노치에서 "터미널로" 넘긴 질문 · 계획 승인 다이얼로그 알림: 사용자는 이미 그쪽으로 갔다
+            if session.phase == .waitingInput, handedOffInputs[session.id] != nil { return nil }
             session.phase = .waitingPermission
             return .needsInput(sessionID: session.id, message: message ?? "승인 필요")
         case "elicitation_complete", "elicitation_response":
@@ -464,8 +562,7 @@ public final class SessionStore {
             // 프롬프트 입력 대기 알림 = 턴이 끝났고 열린 다이얼로그도 없다.
             // - 아직 작업 중으로 보이면 종료 이벤트를 놓친 것 (인터럽트 등)
             // - 훅 대기 없는 승인 대기 · 입력 대기는 터미널에서 거부/Esc 로 끝난 것 (그때는 아무 이벤트도 오지 않는다)
-            let endedWait = (session.phase == .waitingPermission && !hasPending(session.id))
-                || session.phase == .waitingInput
+            let endedWait = (session.phase == .waitingPermission || session.phase == .waitingInput) && !hasPending(session.id)
             if session.phase.isWorking || endedWait {
                 for index in session.activities.indices
                 where session.activities[index].kind == .tool && session.activities[index].status == .running {
@@ -735,6 +832,7 @@ public final class SessionStore {
     private func removeSession(_ sessionID: String) -> [PermissionRequestInfo] {
         sessions[sessionID] = nil
         phaseBeforeCompact[sessionID] = nil
+        if handedOffInputs[sessionID] != nil { handedOffInputs[sessionID] = nil }
         consentWatches[sessionID] = nil
         if manualFocusID == sessionID { manualFocusID = nil }
         if pinnedSessionID == sessionID { pinnedSessionID = nil }
@@ -850,6 +948,16 @@ public final class SessionStore {
 
     private func hasPending(_ sessionID: String) -> Bool {
         pendingPermissions.contains { $0.sessionID == sessionID }
+    }
+
+    /// 훅 대기 요청이 남은 세션의 대기 상태: 권한 요청이 하나라도 있으면 승인 대기, 질문 · 계획 승인만 있으면 입력 대기
+    private func pendingPhase(_ sessionID: String) -> SessionPhase? {
+        var phase: SessionPhase?
+        for request in pendingPermissions where request.sessionID == sessionID {
+            if !request.isInteraction { return .waitingPermission }
+            phase = .waitingInput
+        }
+        return phase
     }
 
     /// 조건에 맞는 권한 요청을 대기열에서 꺼낸다 (agentID: 요청이 발생한 서브에이전트, 메인이면 nil)
