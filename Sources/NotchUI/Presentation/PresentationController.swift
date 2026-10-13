@@ -73,9 +73,9 @@ final class PresentationController {
     @ObservationIgnored private var peekBodyHold: CGFloat = 0
     /// 화면별 직전 접힌 날개 (아이콘이 조금 밀려도 날개 끝을 붙잡는 데 쓴다)
     @ObservationIgnored private var lastWings: [ScreenID: WingsSpec] = [:]
-    /// 화면별 열린 카드의 상단 행 자리 (카드가 열려 있는 동안 아이콘이 조금 밀려도 상단 행 자리를 붙잡는 데 쓴다. 접히면 지운다)
-    @ObservationIgnored private var lastCardRoom: [ScreenID: CardNeckRoom] = [:]
-    /// 화면별 직전 메뉴바 알약 (노치 없는 화면). 펼친 카드가 같은 알약을 목으로 쓴다
+    /// 화면별 직전에 그린 부분 1 (접힌 모양 또는 열린 카드 위의 접힌 모양). 카드를 펼치고 접는 동안 부분 1 을 그대로 두는 데 쓴다
+    @ObservationIgnored private var lastPart1: [ScreenID: IslandLayout] = [:]
+    /// 화면별 직전 메뉴바 알약 (노치 없는 화면). 펼친 카드가 같은 알약을 부분 1 로 쓴다
     @ObservationIgnored private var lastPill: [ScreenID: CompactPlacement] = [:]
     /// 화면별 지금 열린 카드의 띠 · 목 알약 자리 (`IslandLayoutEngine.cardBand`). 카드가 접히기 시작하면 `collapseHolds` 로 넘긴다
     @ObservationIgnored private var lastCardBand: [ScreenID: CompactPlacement] = [:]
@@ -364,9 +364,9 @@ final class PresentationController {
             notchConflict: notchConflicts[id] != nil,
             retracted: retractedWings[id] ?? [],
             previousWings: lastWings[id],
-            previousCardRoom: lastCardRoom[id],
             previousPill: lastPill[id],
-            collapseHold: activeCollapseHold(for: id)
+            collapseHold: activeCollapseHold(for: id),
+            previousPart1: lastPart1[id]
         )
     }
 
@@ -450,10 +450,9 @@ final class PresentationController {
         guard let engine = layoutEngine(for: id) else {
             return IslandLayout(size: .zero, origin: .zero, shape: IslandShapeSpec(), compact: nil)
         }
-        let (result, placement) = resolvedLayout(for: mode, engine: engine)
-        // 카드가 열려 있는 동안만 상단 행 자리를 기억한다 (새로 열 때는 지금 메뉴바로 다시 잰다)
-        lastCardRoom[id] = mode.isOpen ? engine.cardNeckRoom : nil
+        let (result, placement, part1) = resolvedLayout(for: mode, engine: engine)
         if mode == .idle || mode == .working {
+            lastPart1[id] = result
             // 날개 없이 그렸으면(노치 아래 띠 · 선 · 알약) 그것도 기억한다 (날개로 다시 바꿀 때도 이력을 적용하게)
             if case let .wings(spec)? = result.compact {
                 lastWings[id] = spec
@@ -462,8 +461,9 @@ final class PresentationController {
             }
             if case .menuBarPill? = placement { lastPill[id] = placement } else { lastPill[id] = nil }
         } else if mode.isOpen, let placement {
-            // 펼친 카드의 띠(노치 화면) · 알약(노치 없는 화면)을 접힌 이력으로 기억한다:
-            // 카드가 열려 있는 동안 띠가 그대로이고, 접을 때도 같은 띠에서 시작해(`collapseHolds`) 접힌 뒤 이력대로 접힌 모양을 고른다
+            // 펼친 카드의 부분 1 (띠 · 알약)을 접힌 이력으로 기억한다:
+            // 카드가 열려 있는 동안 부분 1 이 그대로이고, 접을 때도 같은 부분 1 에서 시작해(`collapseHolds`) 접힌 뒤 이력대로 접힌 모양을 고른다
+            if let part1 { lastPart1[id] = part1 }
             let band = engine.cardBand(for: placement)
             lastCardBand[id] = band
             if engine.geometry.hasNotch {
@@ -479,23 +479,28 @@ final class PresentationController {
         resolvedLayout(for: mode, engine: engine).layout
     }
 
-    /// 레이아웃과 그때 쓴 접힌 자리 (접힌 상태면 그 자리, 펼친 카드면 카드 뒤의 접힌 자리, 숨김이면 nil)
-    private func resolvedLayout(for mode: IslandMode, engine: IslandLayoutEngine) -> (layout: IslandLayout, placement: CompactPlacement?) {
+    /// 레이아웃과 그때 쓴 접힌 자리 (접힌 상태면 그 자리, 펼친 카드면 카드 뒤의 접힌 자리, 숨김이면 nil), 펼친 카드의 부분 1
+    private func resolvedLayout(
+        for mode: IslandMode,
+        engine: IslandLayoutEngine
+    ) -> (layout: IslandLayout, placement: CompactPlacement?, part1: IslandLayout?) {
         typealias M = IslandMetrics
         let contentWidth: (CGFloat) -> CGFloat = { $0 - M.bodyPadding * 2 }
 
-        func card(_ width: CGFloat, radius: CGFloat, body: @escaping (CGFloat) -> CGFloat) -> (IslandLayout, CompactPlacement?) {
-            let compact = engine.compactPlacement(for: compactContent(for: compactSession == nil ? .idle : .working))
-            return (engine.cardLayout(preferredWidth: width, radius: radius, compact: compact, bodyHeight: body), compact)
+        func card(_ width: CGFloat, radius: CGFloat, body: @escaping (CGFloat) -> CGFloat) -> (IslandLayout, CompactPlacement?, IslandLayout?) {
+            let content = compactContent(for: compactSession == nil ? .idle : .working)
+            let compact = engine.compactPlacement(for: content)
+            let part1 = engine.cardPart1(for: compact, content: content)
+            return (engine.cardLayout(preferredWidth: width, radius: radius, part1: part1, bodyHeight: body), compact, part1)
         }
 
         switch mode {
         case .hidden:
-            return (engine.hiddenLayout(), nil)
+            return (engine.hiddenLayout(), nil, nil)
 
         case .idle, .working:
             let content = compactContent(for: mode)
-            return (engine.compactLayout(for: content), engine.compactPlacement(for: content))
+            return (engine.compactLayout(for: content), engine.compactPlacement(for: content), nil)
 
         case let .peek(sessionID, diff):
             let rows = DiffPresentation.visibleLines(diff).count
@@ -744,7 +749,7 @@ final class PresentationController {
     /// (스냅숏 전환 시트용: 전 상태를 그린 앱이 후 상태를 계산하는 것과 같게)
     func adoptLayoutHistory(from other: PresentationController) {
         lastWings = other.lastWings
-        lastCardRoom = other.lastCardRoom
+        lastPart1 = other.lastPart1
         lastPill = other.lastPill
         lastCardBand = other.lastCardBand
     }

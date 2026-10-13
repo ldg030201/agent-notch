@@ -129,12 +129,8 @@ enum IslandMetrics {
     static let menuBarDotSize: CGFloat = 12
     /// 메뉴바 안 알약 최소 폭 (이보다 좁으면 점)
     static let minMenuBarPill: CGFloat = 80
-    /// 카드 상단 행을 목 안(날개)에 두려면 필요한 날개 폭
-    static let headerWingMin: CGFloat = 96
-    /// 목 아래에 따로 두는 상단 행 높이
+    /// 카드 상단 행 높이 (부분 1 아래 카드 몸통 맨 위)
     static let headerRowHeight: CGFloat = 28
-    /// 메뉴바 알약 안에 카드 상단 행을 둘 최소 폭
-    static let pillHeaderMin: CGFloat = 220
 
     /// 권한 요청 상세(고정폭) 최대 줄 수. 넘으면 노치에서 허용하지 않는다 (`PermissionCardModel.isClipped`)
     static let maxDetailLines = 4

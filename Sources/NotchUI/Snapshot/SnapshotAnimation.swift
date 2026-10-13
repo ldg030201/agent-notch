@@ -73,6 +73,9 @@ struct SnapshotTransition {
             // 메뉴바 알약 → 카드
             t(.menubarWorking, .menubarPermission, env: .menubarWorking),
             t(.menubarPermission, .menubarWorking, env: .menubarWorking),
+            // 메뉴바 아래 알약 ↔ 카드 (외부 모니터 "메뉴바 아래" 방식)
+            t(.menubarBelowWorking, .menubarBelowPermission, env: .menubarBelowWorking),
+            t(.menubarBelowPermission, .menubarBelowWorking, env: .menubarBelowWorking),
             // 화면 가운데가 좁아 빈 곳 안으로 밀어 놓은 메뉴바 알약 ↔ 카드
             t(.menubarWorkingLongTool, .menubarPermission, env: .menubarWorkingLongTool),
             t(.menubarPermission, .menubarWorkingLongTool, env: .menubarWorkingLongTool),
@@ -483,8 +486,7 @@ enum SnapshotInterpolation {
             top: mix(a.header.top, b.header.top, v),
             height: mix(a.header.height, b.header.height, v),
             leftInset: mix(a.header.leftInset, b.header.leftInset, v),
-            rightInset: mix(a.header.rightInset, b.header.rightInset, v),
-            notchGap: mix(a.header.notchGap, b.header.notchGap, v)
+            rightInset: mix(a.header.rightInset, b.header.rightInset, v)
         )
         if case let .wings(from) = a.compact, case var .wings(to) = b.compact {
             to.left = mix(from.left, to.left, v)
@@ -545,8 +547,29 @@ enum SnapshotShapeCheck {
         return false
     }
 
+    /// 주 외곽선 (목 + 몸통 = 부분 2. 접힌 상태에서는 그리지 않지만 펼치고 접는 전환의 끝값)
     static func outline(_ layout: IslandLayout) -> IslandOutline {
         IslandShape.outline(layout.shapeSpec, in: CGRect(origin: .zero, size: layout.size))
+    }
+
+    /// 접힌 상태(부분 1 만 그림)인지
+    static func drawsPart1Only(_ layout: IslandLayout) -> Bool {
+        if case .part1 = IslandShape.drawn(layout.shapeSpec, in: CGRect(origin: .zero, size: layout.size)) { return true }
+        return false
+    }
+
+    /// 실제로 그리는 외곽선: 접힌 상태면 부분 1, 아니면 주 외곽선 (부분 1 은 그대로 합쳐 그린다)
+    static func drawnOutline(_ layout: IslandLayout) -> IslandOutline {
+        switch IslandShape.drawn(layout.shapeSpec, in: CGRect(origin: .zero, size: layout.size)) {
+        case let .part1(o), let .main(o): return o
+        case let .union(main, _): return main
+        }
+    }
+
+    /// 그리는 모양 전체의 가로 범위 (부분 1 을 합쳐 그리면 둘 다)
+    static func drawnExtent(_ layout: IslandLayout) -> (minX: CGFloat, maxX: CGFloat) {
+        let outlines = IslandShape.drawn(layout.shapeSpec, in: CGRect(origin: .zero, size: layout.size)).outlines.filter { !$0.isEmpty }
+        return (outlines.map(\.minX).min() ?? 0, outlines.map(\.maxX).max() ?? 0)
     }
 
     static func check(layout: IslandLayout, context: Context) -> [String] {
@@ -554,7 +577,10 @@ enum SnapshotShapeCheck {
         let size = layout.size
         let rect = CGRect(origin: .zero, size: size)
         let spec = layout.shape
-        let o = outline(layout)
+        // 접힌 상태끼리 바뀌는 중(부분 1 만 그림)이면 부분 1 끼리, 아니면 주 외곽선끼리 비교한다
+        let part1Only = drawsPart1Only(layout) && drawsPart1Only(context.from) && drawsPart1Only(context.to)
+        let pick: (IslandLayout) -> IslandOutline = { part1Only ? drawnOutline($0) : outline($0) }
+        let o = pick(layout)
 
         if size.width <= 1 || size.height <= 1 { issues.append("크기 0 → 모양 사라짐") }
         if o.isEmpty { issues.append("목 폭 ≤ 1 → 모양 사라짐") }
@@ -574,8 +600,8 @@ enum SnapshotShapeCheck {
         }
 
         // 양 끝 상태에 없는 모양: 보이는 반경 · 턱이 두 끝값 범위를 벗어남
-        let a = outline(context.from)
-        let b = outline(context.to)
+        let a = pick(context.from)
+        let b = pick(context.to)
         func outside(_ name: String, _ value: CGFloat, _ x: CGFloat, _ y: CGFloat) {
             // 스프링이 목표를 살짝 지나치는 만큼(0.2%)과 반올림은 정상
             let tolerance = 0.75 + abs(x - y) * 0.003
@@ -594,7 +620,7 @@ enum SnapshotShapeCheck {
 
         // 실제 경로 검사
         let path = IslandShape(spec: layout.shapeSpec).path(in: rect)
-        issues.append(contentsOf: pathCheck(path, rect: rect, expected: o))
+        issues.append(contentsOf: pathCheck(path, rect: rect, expected: o, extent: drawnExtent(layout)))
 
         // 하드웨어 노치를 덮는지
         if context.geometry.hasNotch {
@@ -633,7 +659,7 @@ enum SnapshotShapeCheck {
     }
 
     /// 경로 조각 수 · 경계 · 자기 교차
-    static func pathCheck(_ path: Path, rect: CGRect, expected: IslandOutline) -> [String] {
+    static func pathCheck(_ path: Path, rect: CGRect, expected: IslandOutline, extent: (minX: CGFloat, maxX: CGFloat)? = nil) -> [String] {
         var issues: [String] = []
         if path.isEmpty {
             if !expected.isEmpty { issues.append("빈 경로") }
@@ -646,8 +672,9 @@ enum SnapshotShapeCheck {
             // 노치 보호로 프레임 밖까지 그리는 것은 0.5pt 이내만 정상
             issues.append(String(format: "경로가 프레임 밖 (%.1f,%.1f %.1f×%.1f)", bounds.minX, bounds.minY, bounds.width, bounds.height))
         }
-        if abs(bounds.minX - expected.minX) > 1 || abs(bounds.maxX - expected.maxX) > 1 {
-            issues.append(String(format: "경로 가로 범위가 치수와 다름 (경로 x %.1f…%.1f, 예상 %.1f…%.1f)", bounds.minX, bounds.maxX, expected.minX, expected.maxX))
+        let range = extent ?? (expected.minX, expected.maxX)
+        if abs(bounds.minX - range.minX) > 1 || abs(bounds.maxX - range.maxX) > 1 {
+            issues.append(String(format: "경로 가로 범위가 치수와 다름 (경로 x %.1f…%.1f, 예상 %.1f…%.1f)", bounds.minX, bounds.maxX, range.minX, range.maxX))
         }
         for polygon in polygons {
             if let point = selfIntersection(polygon) {
@@ -755,9 +782,21 @@ enum SnapshotShapeCheck {
         let rawStep = (rawDeltas.map(abs).max() ?? 0) * CGFloat(step)
         let threshold = max(1.0, rawStep * 12)
 
+        // 접힌 상태끼리면 부분 1 (그리는 모양), 아니면 주 외곽선 + 부분 1 층
+        let part1Only = drawsPart1Only(from) && drawsPart1Only(to)
         func features(_ v: Double) -> [(String, CGFloat)] {
-            let o = outline(SnapshotInterpolation.mix(from, to, v))
-            return [
+            let layout = SnapshotInterpolation.mix(from, to, v)
+            let o = part1Only ? drawnOutline(layout) : outline(layout)
+            var part1: [(String, CGFloat)] = []
+            if !part1Only {
+                let p = IslandShape.part1Outline(layout.shapeSpec, in: CGRect(origin: .zero, size: layout.size)) ?? IslandOutline()
+                let x = layout.origin.x
+                part1 = [
+                    ("부분1 왼쪽", x + p.nx0), ("부분1 오른쪽", x + p.nx1), ("부분1 아래", layout.origin.y + p.bottom),
+                    ("부분1 아래반경", p.bottomR), ("부분1 어깨L", p.shoulderL), ("부분1 어깨R", p.shoulderR),
+                ]
+            }
+            return part1 + [
                 ("목왼쪽", o.nx0), ("목오른쪽", o.nx1), ("목높이", o.neckBottom), ("아래", o.bottom),
                 ("계단L", o.stepL), ("계단R", o.stepR),
                 ("몸통왼쪽", o.bx0), ("몸통오른쪽", o.bx1),
@@ -875,6 +914,13 @@ enum SnapshotAnimationSheet {
         var finished = false
         var frames: [Frame] = []
         let seamEnds = SnapshotSeamCheck.Ends(from: fromLayout, to: toLayout)
+        // 부분 1 검사 (카드 ↔ 접힌 상태): 촘촘한 훑기를 먼저 해서 맞닿아 늘어나 보이는 구간을 프레임에도 표시한다
+        let peak = timeline.spring.peak
+        let part1Ends = SnapshotPart1Check.Ends(from: fromLayout, to: toLayout)
+        let part1Dense = part1Ends.map {
+            SnapshotPart1Check.dense(ends: $0, from: fromLayout, to: toLayout, maxValue: max(1, peak.value), timeline: timeline)
+        }
+        let part1Header = part1Ends.map { SnapshotPart1Check.headerIssues(ends: $0) } ?? []
         for ms in SnapshotTimeline.frameTimes {
             let v = timeline.value(ms: ms)
             let layout = SnapshotInterpolation.mix(fromLayout, toLayout, v)
@@ -909,7 +955,13 @@ enum SnapshotAnimationSheet {
                 content = Content(mode: toMode, layout: toLayout, presentation: to.presentation, opacity: opacity, offset: .zero, label: String(format: "새 내용 %.2f", opacity))
             }
             // 모양 검사 + 이음매 검사 (목 ↔ 몸통 끊김 · 물림 · 거의 겹친 이음매)
-            let issues = SnapshotShapeCheck.check(layout: layout, context: context) + SnapshotSeamCheck.check(layout: layout, ends: seamEnds)
+            var issues = SnapshotShapeCheck.check(layout: layout, context: context) + SnapshotSeamCheck.check(layout: layout, ends: seamEnds)
+            if let ends = part1Ends {
+                issues += SnapshotPart1Check.issues(layout, ends: ends)
+                if let hit = SnapshotPart1Check.merged(layout, ends: ends), part1Dense?.mergedRanges.contains(where: { $0.contains(v) }) == true {
+                    issues.append(String(format: "부분 1 늘어나 보임 %@ (%.1fpt)", hit.side, hit.depth))
+                }
+            }
             frames.append(Frame(ms: ms, value: v, layout: layout, content: content, issues: issues))
         }
         if !sameKey, swapState.outgoing != nil || swapState.lastShown?.key != IslandContentKey(mode: toMode, layout: toLayout) {
@@ -917,7 +969,6 @@ enum SnapshotAnimationSheet {
         }
 
         // 연속성 검사 (스프링 값 0 → 최대값)
-        let peak = timeline.spring.peak
         let jumps = SnapshotShapeCheck.discontinuities(from: fromLayout, to: toLayout, maxValue: max(1, peak.value), timeline: timeline)
         // 시트 프레임 사이의 이음매 (거의 겹친 목 끝 · 몸통 끝)
         let seamRuns = SnapshotSeamCheck.denseJointIssues(from: fromLayout, to: toLayout, maxValue: max(1, peak.value), timeline: timeline)
@@ -967,12 +1018,21 @@ enum SnapshotAnimationSheet {
         for run in seamRuns { report.append("   ✗ 촘촘히 \(run)") }
         let seamFrames = frames.reduce(0) { $0 + $1.issues.filter { $0.hasPrefix("이음매") }.count }
         report.append("   이음매 검사: 위반 \(seamFrames + seamRuns.count) (프레임 \(seamFrames) · 촘촘히 \(seamRuns.count))")
+        let part1Runs = part1Dense?.reports ?? []
+        for run in part1Runs { report.append("   ✗ 촘촘히 \(run)") }
+        for issue in part1Header { report.append("   ✗ \(issue)") }
+        if part1Ends != nil {
+            let part1Frames = frames.reduce(0) { $0 + $1.issues.filter { $0.hasPrefix("부분 1") }.count }
+            report.append("   부분 1 검사: 위반 \(part1Frames + part1Runs.count + part1Header.count) (프레임 \(part1Frames) · 촘촘히 \(part1Runs.count) · 상단 행 \(part1Header.count))")
+        }
         for frame in frames where !frame.issues.isEmpty {
             report.append(String(format: "   ✗ t=%3.0fms v=%.3f: ", frame.ms, frame.value) + frame.issues.joined(separator: " · "))
         }
-        if jumps.isEmpty, seamRuns.isEmpty, report0.isEmpty, frames.allSatisfy({ $0.issues.isEmpty }) { report.append("   ✓ 문제 없음") }
-        // 시트 머리에 적을 프레임 사이 문제 (불연속 · 이음매)
-        let notes = jumps.map { "불연속 " + $0 } + seamRuns.map { "이음매 " + $0 }
+        if jumps.isEmpty, seamRuns.isEmpty, part1Runs.isEmpty, part1Header.isEmpty, report0.isEmpty, frames.allSatisfy({ $0.issues.isEmpty }) {
+            report.append("   ✓ 문제 없음")
+        }
+        // 시트 머리에 적을 프레임 사이 문제 (불연속 · 이음매 · 부분 1)
+        let notes = jumps.map { "불연속 " + $0 } + seamRuns.map { "이음매 " + $0 } + part1Runs + part1Header
         let crop = cropRect(frames: frames, bar: bar, extra: [fromLayout.panelRect, toLayout.panelRect])
         let cellSize = SnapshotAnimationSheetView.cellSize(crop: crop)
         report.append(String(

@@ -44,7 +44,7 @@ enum SnapshotSeamCheck {
 
     /// 프레임 하나: 래스터 틈 · 물림 + 이음매 치수
     static func check(layout: IslandLayout, ends: Ends? = nil) -> [String] {
-        let outline = SnapshotShapeCheck.outline(layout)
+        let outline = SnapshotShapeCheck.drawnOutline(layout)
         guard !outline.isEmpty else { return [] }
         return rasterIssues(layout, outline: outline) + jointIssues(layout, outline: outline, ends: ends).map(\.text)
     }
@@ -285,7 +285,7 @@ enum SnapshotSeamCheck {
         var v = 0.0
         while v <= maxValue + step / 2 {
             let layout = SnapshotInterpolation.mix(from, to, v)
-            let found = jointIssues(layout, outline: SnapshotShapeCheck.outline(layout), ends: ends)
+            let found = jointIssues(layout, outline: SnapshotShapeCheck.drawnOutline(layout), ends: ends)
             let sides = Set(found.map(\.side))
             for side in ["L", "R"] where !sides.contains(side) { close(side) }
             for issue in found {

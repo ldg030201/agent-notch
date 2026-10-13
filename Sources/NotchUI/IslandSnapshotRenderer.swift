@@ -115,18 +115,27 @@ enum SnapshotScenario: String, CaseIterable {
     case menubarWorkingTight = "menubar-working-tight"
     case menubarDot = "menubar-dot"
     case menubarPermission = "menubar-permission"
+    /// 외부 모니터 "메뉴바 아래" 방식: 메뉴바 아래 알약 · 그 아래로 펼친 카드
+    case menubarBelowWorking = "menubar-below-working"
+    case menubarBelowPermission = "menubar-below-permission"
     case settings
     case settingsVersion = "settings-version"
 
     /// 메뉴바 안 알약 장면은 style 과 관계없이 노치 없는 화면으로 그린다
     var forcesMenuBar: Bool {
         switch self {
-        case .menubarWorking, .menubarWorkingLongTool, .menubarWorkingTight, .menubarDot, .menubarPermission: return true
+        case .menubarWorking, .menubarWorkingLongTool, .menubarWorkingTight, .menubarDot, .menubarPermission,
+             .menubarBelowWorking, .menubarBelowPermission: return true
         default: return false
         }
     }
 
     var isSettings: Bool { self == .settings || self == .settingsVersion }
+
+    /// 노치 없는 화면 표시 방식 (메뉴바 아래 장면만 명시하고 나머지는 기본값: 메뉴바 안)
+    var externalStyle: ExternalDisplayStyle {
+        self == .menubarBelowWorking || self == .menubarBelowPermission ? .belowMenuBar : .inMenuBar
+    }
 
     /// 노치 화면 표시 방식. 노치 아래 장면만 명시하고 나머지는 기본값(넓은 노치)
     var notchStyle: NotchStyle {
@@ -433,6 +442,7 @@ enum SnapshotStage {
         world.startSessions()
         let preferences = try makePreferences(notchStyle: env.notchStyle)
         if env == .workingMinimal { preferences.compactOverlapStyle = .minimal }
+        preferences.externalDisplayStyle = env.externalStyle
         let presentation = PresentationController(store: world.store, preferences: preferences, actions: SnapshotActions())
 
         let style: IslandSnapshotRenderer.Style = env.forcesMenuBar || scene.forcesMenuBar ? .menuBar : style
@@ -472,7 +482,7 @@ enum SnapshotStage {
                 presentation.toggleExpanded(on: screenID)
             }
         case .working, .workingWings, .workingWingsIcons, .workingWingsIconsStrip, .workingWingsIconsNear, .workingRightWing, .workingBelowNotch,
-             .workingBelowNotchLeft, .workingBelowNotchStrip, .menubarWorking, .menubarDot:
+             .workingBelowNotchLeft, .workingBelowNotchStrip, .menubarWorking, .menubarDot, .menubarBelowWorking:
             world.apiServerEdits()
             world.apiServerRunsTests()
         case .menubarWorkingLongTool, .menubarWorkingTight:
@@ -492,7 +502,7 @@ enum SnapshotStage {
             if let diff {
                 presentation.setTransientForSnapshot(.peek(sessionID: api, diff: diff))
             }
-        case .permission, .menubarPermission:
+        case .permission, .menubarPermission, .menubarBelowPermission:
             world.apiServerEdits()
             world.apiServerRunsTests()
             showCompact()

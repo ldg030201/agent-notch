@@ -410,9 +410,8 @@ struct IslandIconButtonStyle: ButtonStyle {
 
 // MARK: - 상단 행 (날개)
 
-/// 상단 행. `notchGap` 이 있으면 가운데(노치)를 비워 카메라를 가리지 않고 양옆 날개에 나눠 둔다.
+/// 카드 상단 행 (부분 2 맨 위): 왼쪽 · 오른쪽
 struct WingRow<Leading: View, Trailing: View>: View {
-    let notchGap: CGFloat
     let height: CGFloat
     @ViewBuilder var leading: Leading
     @ViewBuilder var trailing: Trailing
@@ -421,11 +420,7 @@ struct WingRow<Leading: View, Trailing: View>: View {
         HStack(spacing: 0) {
             leading
                 .frame(maxWidth: .infinity, alignment: .leading)
-            if notchGap > 0 {
-                Color.clear.frame(width: notchGap)
-            } else {
-                Spacer(minLength: 8)
-            }
+            Spacer(minLength: 8)
             trailing
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
@@ -437,7 +432,7 @@ struct WingRow<Leading: View, Trailing: View>: View {
     }
 }
 
-/// 펼친 카드 공통 틀: 레이아웃이 정한 자리(목 안 날개 또는 목 아래 한 줄)에 상단 행, 그 아래 본문.
+/// 펼친 카드 공통 틀: 부분 2(몸통) 맨 위 상단 행, 그 아래 본문. 부분 1(접힌 모양) 자리에는 아무것도 두지 않는다.
 struct CardScaffold<Leading: View, Trailing: View, Content: View>: View {
     let layout: IslandLayout
     @ViewBuilder var leading: Leading
@@ -447,7 +442,7 @@ struct CardScaffold<Leading: View, Trailing: View, Content: View>: View {
     var body: some View {
         let header = layout.header
         VStack(spacing: 0) {
-            WingRow(notchGap: header.notchGap, height: header.height) {
+            WingRow(height: header.height) {
                 leading
             } trailing: {
                 trailing

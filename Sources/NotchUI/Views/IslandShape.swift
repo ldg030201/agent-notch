@@ -1,12 +1,14 @@
 import SwiftUI
 
-/// 아일랜드 외곽선 치수. 목 · 몸통 · 반경은 프레임 기준(pt), 원점 · 노치는 패널 기준이고 모두 함께 애니메이션된다.
+/// 아일랜드 외곽선 치수. 목 · 몸통 · 반경은 프레임 기준(pt), 원점 · 노치 · 부분 1 자리는 패널 기준이고 모두 함께 애니메이션된다.
 ///
-/// 모양은 위쪽 "목"(메뉴바 높이 구간)과 아래쪽 "몸통"으로 나뉜다.
-/// - 목: 메뉴바 아이템을 가리지 않도록 좁게 (노치 + 허용된 날개, 또는 메뉴바 안 알약).
-/// - 몸통: 메뉴바 아래에서만 넓어진다 (`menuBarBottom`, 전환 중간 프레임 포함). 목과 만나는 곳은 오목하게 이어진다.
-///   넓은 노치에서 내용만 노치 아래 띠로 내릴 때는 몸통이 목보다 좁다 (목 아래 모서리가 볼록, 만나는 곳이 오목).
-/// - 접힌 상태도 목 + (목과 같은 폭의) 몸통으로 둔다. 몸통이 생기고 없어지는 순간이 없어야 전환 중 모양이 튀지 않는다.
+/// 아일랜드는 "부분 1"(접힌 모양)과 "부분 2"(펼친 카드 몸통)로 그린다.
+/// - 부분 1 (`part1`): 접힌 상태 모양 그대로. 카드를 펼치고 접는 동안 자리 · 크기 · 반경이 바뀌지 않는다 (양 끝 값이 같아 보간해도 그대로).
+/// - 주 외곽선 = 목 + 몸통. 목은 부분 1 의 위쪽 조각(띠 · 알약 · 점)과 같은 자리, 몸통이 부분 2 다.
+///   - 몸통은 메뉴바 아래에서만 목보다 넓어진다 (`menuBarBottom`, 전환 중간 프레임 포함). 만나는 곳은 오목하게 이어진다.
+///   - 몸통이 낮을 때(펼치기 시작 · 접히기 끝)는 부분 1 아래 모서리 안쪽에서 나오고 그리로 들어간다 (`capRadius`):
+///     몸통이 목과 옆면을 맞댄 채 늘어나 부분 1 이 커져 보이지 않게.
+///   - 접힌 상태는 몸통 높이 0 (부분 1 만 그린다).
 /// - 노치 화면은 목 위쪽 모서리에 바깥으로 휘는 "귀"를 둬서 하드웨어 노치와 자연스럽게 잇는다.
 /// - 노치 화면은 어떤 중간 프레임에서도 하드웨어 노치를 다 덮는다 (`notchMinX` · `notchWidth` · `notchHeight`).
 struct IslandShapeSpec: Equatable {
@@ -38,13 +40,97 @@ struct IslandShapeSpec: Equatable {
     /// 메뉴바 아래끝 (패널 기준, 노치 화면). 0 이면 제한 없음.
     /// 몸통이 목보다 넓은 쪽은 이 아래에서만 넓어진다 — 펼치고 접히는 중간에 몸통이 메뉴바 아이콘 · 메뉴를 덮지 않게
     var menuBarBottom: CGFloat = 0
+    /// 몸통이 목보다 좁거나 없을 때 목 아래 볼록 모서리 = 부분 1 의 아래 모서리. 0 이면 부분 2 를 쓰지 않는 모양
+    var capRadius: CGFloat = 0
+    /// 부분 1 (접힌 모양). 폭 0 이면 없음
+    var part1 = IslandPart1Spec()
+}
+
+extension IslandShapeSpec {
+    /// 주 외곽선이 부분 1 과 같은 모양인지 (접힌 상태, 접힌 상태끼리 바뀌는 중)
+    func isSameShape(as p: IslandPart1Spec, frame rect: CGRect) -> Bool {
+        let pairs: [(CGFloat, CGFloat)] = [
+            (p.minX, originX), (p.minY, originY), (p.width, rect.width), (p.height, rect.height),
+            (p.neckLeft, neckLeft), (p.neckRight, neckRight), (p.neckHeight, neckHeight),
+            (p.bodyLeft, bodyLeft), (p.bodyRight, bodyRight), (p.leftEar, leftEar), (p.rightEar, rightEar),
+            (p.topRadius, topRadius), (p.bodyTopRadius, bodyTopRadius), (p.shoulderRadius, shoulderRadius),
+            (p.bottomRadius, bottomRadius),
+        ]
+        return pairs.allSatisfy { abs($0 - $1) < 0.01 }
+    }
+}
+
+/// 부분 1: 접힌 상태 모양 그대로 (자리는 패널 기준, 모양 치수는 그 사각형 기준 — `IslandShapeSpec` 의 같은 이름 값과 같은 뜻).
+/// 넓은 노치에서 내용을 노치 아래 띠로 내린 모양은 띠(목) + 노치 폭 띠(몸통) 두 조각이다
+struct IslandPart1Spec: Equatable {
+    var minX: CGFloat = 0
+    var minY: CGFloat = 0
+    var width: CGFloat = 0
+    var height: CGFloat = 0
+    var neckLeft: CGFloat = 0
+    var neckRight: CGFloat = 0
+    var neckHeight: CGFloat = 0
+    var bodyLeft: CGFloat = 0
+    var bodyRight: CGFloat = 0
+    var leftEar: CGFloat = 0
+    var rightEar: CGFloat = 0
+    var topRadius: CGFloat = 0
+    var bodyTopRadius: CGFloat = 0
+    var shoulderRadius: CGFloat = 0
+    var bottomRadius: CGFloat = 0
+
+    /// 패널 기준 사각형
+    var rect: CGRect { CGRect(x: minX, y: minY, width: width, height: height) }
+
+    /// 아래 조각(노치 아래 띠)이 위 조각보다 좁은 두 조각 모양인지
+    var isTwoPiece: Bool { bodyLeft - neckLeft > 0.5 || bodyRight - neckRight > 0.5 }
+
+    /// 접힌 모양 치수 (사각형 기준)로 만든다
+    init() {}
+
+    init(rect: CGRect, shape: IslandShapeSpec) {
+        minX = rect.minX
+        minY = rect.minY
+        width = rect.width
+        height = rect.height
+        neckLeft = shape.neckLeft
+        neckRight = shape.neckRight
+        neckHeight = shape.neckHeight
+        bodyLeft = shape.bodyLeft
+        bodyRight = shape.bodyRight
+        leftEar = shape.leftEar
+        rightEar = shape.rightEar
+        topRadius = shape.topRadius
+        bodyTopRadius = shape.bodyTopRadius
+        shoulderRadius = shape.shoulderRadius
+        bottomRadius = shape.bottomRadius
+    }
+
+    /// 외곽선 계산용 치수 (노치 보호 · 메뉴바 아래끝은 전체 모양 값을 따른다)
+    func shapeSpec(in parent: IslandShapeSpec) -> IslandShapeSpec {
+        var spec = IslandShapeSpec(
+            neckLeft: neckLeft, neckRight: neckRight, neckHeight: neckHeight,
+            bodyLeft: bodyLeft, bodyRight: bodyRight, leftEar: leftEar, rightEar: rightEar,
+            topRadius: topRadius, bodyTopRadius: bodyTopRadius, shoulderRadius: shoulderRadius, bottomRadius: bottomRadius
+        )
+        spec.originX = minX
+        spec.originY = minY
+        spec.notchMinX = parent.notchMinX
+        spec.notchWidth = parent.notchWidth
+        spec.notchHeight = parent.notchHeight
+        spec.menuBarBottom = parent.menuBarBottom
+        return spec
+    }
 }
 
 extension IslandShapeSpec: VectorArithmetic {
     private static let fields: [WritableKeyPath<IslandShapeSpec, CGFloat>] = [
         \.neckLeft, \.neckRight, \.neckHeight, \.bodyLeft, \.bodyRight,
         \.leftEar, \.rightEar, \.topRadius, \.bodyTopRadius, \.shoulderRadius, \.bottomRadius,
-        \.originX, \.originY, \.notchMinX, \.notchWidth, \.notchHeight, \.menuBarBottom,
+        \.originX, \.originY, \.notchMinX, \.notchWidth, \.notchHeight, \.menuBarBottom, \.capRadius,
+        \.part1.minX, \.part1.minY, \.part1.width, \.part1.height, \.part1.neckLeft, \.part1.neckRight, \.part1.neckHeight,
+        \.part1.bodyLeft, \.part1.bodyRight, \.part1.leftEar, \.part1.rightEar, \.part1.topRadius,
+        \.part1.bodyTopRadius, \.part1.shoulderRadius, \.part1.bottomRadius,
     ]
 
     static var zero: IslandShapeSpec { IslandShapeSpec() }
@@ -119,10 +205,8 @@ struct IslandShape: Shape {
     static let minRadius: CGFloat = 0.5
 
     func path(in rect: CGRect) -> Path {
-        let outline = Self.outline(spec, in: rect)
-        guard !outline.isEmpty else { return Path() }
-        let path = Self.path(outline)
-        guard !holes.isEmpty else { return path }
+        let path = Self.filledPath(spec, in: rect)
+        guard !holes.isEmpty, !path.isEmpty else { return path }
         // 구멍은 패널 기준 → 지금(애니메이션 중간값) 프레임 위치만큼 옮겨 뺀다
         var cutouts = Path()
         for hole in holes {
@@ -136,8 +220,51 @@ struct IslandShape: Shape {
         return path.subtracting(cutouts)
     }
 
-    /// 스펙 → 실제 그릴 치수
-    static func outline(_ spec: IslandShapeSpec, in rect: CGRect) -> IslandOutline {
+    /// 무엇을 그리는지: 부분 1 만 (접힌 상태) · 주 외곽선만 (부분 1 없음) · 둘을 합친 것 (펼친 카드 · 펼치고 접는 중)
+    enum Drawn {
+        case part1(IslandOutline)
+        case main(IslandOutline)
+        case union(main: IslandOutline, part1: IslandOutline)
+
+        var outlines: [IslandOutline] {
+            switch self {
+            case let .part1(o), let .main(o): return [o]
+            case let .union(main, part1): return [main, part1]
+            }
+        }
+    }
+
+    static func drawn(_ spec: IslandShapeSpec, in rect: CGRect) -> Drawn {
+        let main = outline(spec, in: rect)
+        guard let part1 = part1Outline(spec, in: rect), !part1.isEmpty else { return .main(main) }
+        // 접힌 상태 (주 외곽선 = 부분 1, 접힌 상태끼리 바뀌는 중 포함): 부분 1 만
+        if main.isEmpty || spec.isSameShape(as: spec.part1, frame: rect) { return .part1(part1) }
+        // 부분 1 은 그대로 그리고, 주 외곽선(목 + 부분 2)을 합친다
+        return .union(main: main, part1: part1)
+    }
+
+    /// 칠할 모양 (구멍 없이)
+    static func filledPath(_ spec: IslandShapeSpec, in rect: CGRect) -> Path {
+        switch drawn(spec, in: rect) {
+        case let .part1(o), let .main(o):
+            return o.isEmpty ? Path() : path(o)
+        case let .union(main, part1):
+            if main.isEmpty { return path(part1) }
+            return path(main).union(path(part1))
+        }
+    }
+
+    /// 부분 1 외곽선 (지금 프레임 기준). 부분 1 이 없으면 nil
+    static func part1Outline(_ spec: IslandShapeSpec, in rect: CGRect) -> IslandOutline? {
+        let p = spec.part1
+        guard p.width > 1, p.height > 1 else { return nil }
+        let local = CGRect(x: rect.minX + p.minX - spec.originX, y: rect.minY + p.minY - spec.originY, width: p.width, height: p.height)
+        return outline(p.shapeSpec(in: spec), in: local, isPart1: true)
+    }
+
+    /// 스펙 → 실제 그릴 치수.
+    /// - isPart1: 부분 1 (접힌 모양) 외곽선. 몸통이 좁을 때 목 아래 볼록 모서리는 어깨 반경, 몸통 높이에 따른 폭 제한 없음
+    static func outline(_ spec: IslandShapeSpec, in rect: CGRect, isPart1: Bool = false) -> IslandOutline {
         var o = IslandOutline()
         guard rect.width > 1, rect.height > 1 else {
             o.isEmpty = true
@@ -166,7 +293,9 @@ struct IslandShape: Shape {
             o.isEmpty = true
             return o
         }
-        if o.bx1 - o.bx0 < 2 {
+        // 부분 2 를 쓰는 주 외곽선인지 (부분 1 아래 모서리가 있음)
+        let capSpec = isPart1 ? 0 : max(0, spec.capRadius)
+        if o.bx1 - o.bx0 < 2, capSpec <= eps {
             o.bx0 = o.nx0
             o.bx1 = o.nx1
         }
@@ -175,22 +304,45 @@ struct IslandShape: Shape {
         o.neckBottom = o.top + neckHeight
         let bodyHeight = height - neckHeight
 
-        // 몸통이 목보다 넓은 쪽은 메뉴바 아래에서만 넓어진다.
-        // - 메뉴바 아래 몸통 높이(아래 반경 제외)가 모자라면 넓어지는 폭을 줄인다 (`widenAllowance`):
-        //   펼치기 시작 · 접히기 끝에 몸통이 먼저 아래로 내려온 뒤 옆으로 넓어지고, 이음매는 늘 S 곡선으로 끝까지 그려진다
-        //   (몸통 위 볼록 모서리가 아래 모서리와 겹치거나 사이에 턱이 남지 않게)
+        // 몸통 폭 제한:
+        // - 몸통이 목보다 넓은 쪽은 메뉴바 아래에서만 넓어진다. 메뉴바 아래 몸통 높이(아래 반경 제외)가 모자라면 넓어지는 폭을 줄인다
+        //   (`widenAllowance`): 펼치기 시작 · 접히기 끝에 몸통이 먼저 아래로 내려온 뒤 옆으로 넓어지고, 이음매는 늘 S 곡선으로 끝까지 그려진다
+        // - 부분 2 (`capRadius`): 몸통이 낮으면 부분 1 아래 모서리 안쪽으로 좁아진다 (`emergeLimit`).
+        //   몸통 높이 0 에서는 부분 1 아래 모서리를 다 드러내고, 낮은 동안 목과 옆면을 맞댄 채 늘어나지 않는다
         // - 계단 y 는 넓어진 폭이 0 → 6pt 일 동안 목 아래끝 → 메뉴바 아래끝으로 이어서 옮긴다 (폭 0 이면 어느 y 든 같은 모양)
         let bottomRadius = clamp(spec.bottomRadius, 0, bodyHeight)
         let shoulderSpec = max(0, spec.shoulderRadius)
         let bodyTopSpec = max(0, spec.bodyTopRadius)
         var barBottom = o.neckBottom
+        var limit = CGFloat.infinity
         if spec.menuBarBottom > 0 {
             barBottom = max(o.neckBottom, rect.minY + spec.menuBarBottom - spec.originY)
-            let allowed = widenAllowance(
+            limit = widenAllowance(
                 room: max(0, o.bottom - bottomRadius - barBottom), shoulder: shoulderSpec, bodyTop: bodyTopSpec
             )
-            if o.widenL > 0 { o.bx0 = o.nx0 - min(o.widenL, allowed) }
-            if o.widenR > 0 { o.bx1 = o.nx1 + min(o.widenR, allowed) }
+        }
+        if capSpec > eps {
+            // 부분 2 는 부분 1 아래끝에서 나온다 (두 조각이면 노치 아래 띠 아래끝. 그 위에서는 부분 1 이 덮는다)
+            let part1 = spec.part1
+            var emergeTop = o.neckBottom
+            if part1.width > 1 {
+                emergeTop = max(o.neckBottom, rect.minY + part1.minY + part1.height - spec.originY)
+            }
+            let narrow = min(capSpec + bodyTopSpec, neckWidth / 2)
+            let start = max(0, barBottom - emergeTop) + capSpec + 1
+            limit = min(limit, emergeLimit(bodyHeight: o.bottom - emergeTop, narrow: narrow, start: start))
+            // 넓어지는 쪽은 처음부터 `bodySnap` 만큼(프레임 안에서) 넓게 둔다: 펼친 카드 쪽 값이 작을 때 접히기 끝에
+            // 몸통이 목과 옆면을 맞댄 채 늘어나 부분 1 이 커져 보이지 않게. 메뉴바 아래 자리 · 높이 제한(`limit`)은 그대로 따른다
+            let snap = IslandLayoutEngine.bodySnap
+            if o.widenL > 0 { o.bx0 = o.nx0 - max(o.widenL, min(o.widenL * 4, snap, o.nx0 - rect.minX)) }
+            if o.widenR > 0 { o.bx1 = o.nx1 + max(o.widenR, min(o.widenR * 4, snap, rect.maxX - o.nx1)) }
+        }
+        if o.widenL > limit { o.bx0 = o.nx0 - limit }
+        if o.widenR > limit { o.bx1 = o.nx1 + limit }
+        if o.bx1 < o.bx0 {
+            let mid = (o.bx0 + o.bx1) / 2
+            o.bx0 = mid
+            o.bx1 = mid
         }
         // 1pt 미만 차이는 곧은 옆면 (모서리 없음). 1 → 2pt 사이에서 이어서 벌어진다
         o.bx0 = o.nx0 - settledWiden(o.widenL)
@@ -214,20 +366,24 @@ struct IslandShape: Shape {
 
         // 목 → 몸통 계단: 목 쪽 모서리(몸통이 넓으면 오목, 좁으면 볼록) + 몸통 쪽 모서리(그 반대)가 차이를 함께 채운다.
         // 두 반경의 합은 차이를 넘지 않고(비율대로 나눔), 차이가 반경 합보다 작으면 합 = 차이라 하나의 S 곡선이 된다.
-        // 목 아래 볼록 모서리와 몸통 위 볼록 모서리는 한쪽에 함께 생기지 않는다 (맞물려 물린 모양 없음)
+        // 목 아래 볼록 모서리와 몸통 위 볼록 모서리는 한쪽에 함께 생기지 않는다 (맞물려 물린 모양 없음).
+        // 몸통이 좁을 때 목 쪽 볼록 모서리는 부분 1 아래 모서리(`capRadius`)를 넘지 않는다 (부분 1 이 둥글게 드러난 채)
         func joint(_ widen: CGFloat, step: CGFloat, ear: CGFloat, topR: CGFloat) -> (shoulder: CGFloat, bodyTop: CGFloat) {
             let gap = abs(widen)
-            let total = shoulderSpec + bodyTopSpec
+            let neckSpec = widen > 0 || capSpec <= eps ? shoulderSpec : capSpec
+            let total = neckSpec + bodyTopSpec
             guard gap > eps, total > eps else { return (0, 0) }
             let scale = min(1, gap / total)
             let above = max(0, step - o.top - max(ear, topR))
             let below = max(0, o.bottom - step - o.bottomR)
-            var shoulder = min(shoulderSpec * scale, above)
+            var shoulder = min(neckSpec * scale, above)
             var bodyTop = min(bodyTopSpec * scale, below)
-            // 한쪽이 높이가 모자라 줄었으면 다른 쪽이 메워 턱이 남지 않게 (각자 원래 반경까지)
+            // 한쪽이 높이가 모자라 줄었으면 다른 쪽이 메워 턱이 남지 않게 (각자 원래 반경까지).
+            // 부분 1 아래 볼록 모서리는 제 반경까지만 (그 너머는 부분 1 아래 변이 그대로 드러난다)
             let missing = min(gap, total) - shoulder - bodyTop
             if missing > 0.01 {
-                let extraShoulder = min(missing, max(0, min(above, max(shoulderSpec, bodyTopSpec)) - shoulder))
+                let shoulderCap = widen < 0 && capSpec > eps ? capSpec : max(shoulderSpec, bodyTopSpec)
+                let extraShoulder = min(missing, max(0, min(above, shoulderCap) - shoulder))
                 shoulder += extraShoulder
                 bodyTop += min(missing - extraShoulder, max(0, min(below, max(shoulderSpec, bodyTopSpec)) - bodyTop))
             }
@@ -290,12 +446,23 @@ struct IslandShape: Shape {
 
     /// 메뉴바 아래 몸통 높이(아래 반경 제외) `room` 으로 넓어질 수 있는 폭.
     /// 높이가 몸통 위 반경 + 2pt 가 될 때까지는 이음매 S 곡선(오목 + 볼록)이 옆면 안에 다 들어갈 만큼만,
-    /// 그 뒤로는 높이의 6배씩 넓어진다 (몸통이 혀처럼 옆으로 튀어나오지 않게)
+    /// 그 뒤로는 높이의 8배씩 넓어진다 (몸통이 혀처럼 옆으로 튀어나오지 않게. 짧은 카드도 정한 폭까지는 넓어지게)
     static func widenAllowance(room: CGFloat, shoulder: CGFloat, bodyTop: CGFloat) -> CGFloat {
         let knee = bodyTop + 2
         let atKnee = max(shoulder + bodyTop, knee)
         if room <= knee { return room / knee * atKnee }
-        return atKnee + (room - knee) * 6
+        return atKnee + (room - knee) * 8
+    }
+
+    /// 부분 2 가 부분 1 아래로 나온 높이로 목보다 넓어질 수 있는 폭 (음수면 그만큼 목보다 좁게).
+    /// 낮을 때는 `narrow` 만큼 좁아 부분 1 아래 모서리 안쪽에 숨고, `start` 높이 가까이에서 높이의 3배씩 넓어져 목 폭을 지나고,
+    /// 그 뒤로는 높이의 6배씩. 목 폭을 지날 때는 메뉴바 아래 넓어질 자리(`widenAllowance`)가 막 생기는 높이라
+    /// 맞닿은 채 늘어나는 구간이 없다
+    static func emergeLimit(bodyHeight: CGFloat, narrow: CGFloat, start: CGFloat) -> CGFloat {
+        guard start > 0 else { return .infinity }
+        let height = max(0, bodyHeight)
+        if height < start { return max(-narrow, (height - start) * 3) }
+        return (height - start) * 6
     }
 
     /// 목 ↔ 몸통 차이: 1pt 미만은 0 (곧은 옆면), 1 → 2pt 에서 0 → 2pt 로 이어진다
