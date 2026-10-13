@@ -383,6 +383,10 @@ enum SnapshotStage {
             return try renderSettings(scene, world: world, preferences: preferences, presentation: presentation)
         }
         let setup = try prepare(scene, style: style)
+        // 정지 장면도 이음매 검사 (목 ↔ 몸통 끊김 · 물림 · 거의 겹친 이음매)
+        let seam = SnapshotSeamCheck.check(layout: setup.layout)
+        print("== \(scene.rawValue) (\(style.rawValue)): 이음매 검사: 위반 \(seam.count)"
+            + seam.map { "\n   ✗ \($0)" }.joined())
         let canvas = SnapshotIslandCanvas(bar: setup.bar, presentation: setup.presentation)
             .environment(\.islandRenderContext, IslandRenderContext(isSnapshot: true, fixedNow: setup.world.clock.now))
             .environment(\.colorScheme, .light)
@@ -422,6 +426,10 @@ enum SnapshotStage {
         presentation.setSpaces([screenID: bar.space])
 
         let api = SnapshotWorld.apiServer.id
+        /// 카드를 열기 전 접힌 상태를 한 번 그린다 (실제 앱처럼 카드 띠 · 알약이 직전 접힌 모양을 이어받게)
+        func showCompact() {
+            _ = presentation.layout(for: screenID, mode: presentation.mode(for: screenID))
+        }
         switch scene {
         case .idle, .idleWings:
             break
@@ -443,6 +451,7 @@ enum SnapshotStage {
                 presentation.collapse(on: screenID)
             }
             if scene == .expandedSummary {
+                showCompact()
                 presentation.toggleExpanded(on: screenID)
             }
         case .working, .workingWings, .workingWingsIcons, .workingWingsIconsStrip, .workingWingsIconsNear, .workingRightWing, .workingBelowNotch,
@@ -459,20 +468,25 @@ enum SnapshotStage {
             world.apiServerEdits()
             world.apiServerRunsTests()
         case .peek:
-            if let diff = world.apiServerEdits() {
+            let diff = world.apiServerEdits()
+            showCompact()
+            if let diff {
                 presentation.setTransientForSnapshot(.peek(sessionID: api, diff: diff))
             }
         case .permission, .menubarPermission:
             world.apiServerEdits()
             world.apiServerRunsTests()
+            showCompact()
             world.webAppAsksPermission()
         case .permissionClipped:
             world.apiServerEdits()
             world.apiServerRunsTests()
+            showCompact()
             world.webAppAsksClippedPermission()
         case .permissionScope:
             world.apiServerEdits()
             world.apiServerRunsTests()
+            showCompact()
             world.webAppAsksScopedPermission()
         case .permissionCollapsed:
             world.apiServerEdits()
@@ -484,10 +498,12 @@ enum SnapshotStage {
         case .needsInput:
             world.apiServerEdits()
             world.apiServerRunsTests()
+            showCompact()
             world.blogAsksQuestion()
             presentation.handleLatestSignal()
         case .done:
             world.apiServerEdits()
+            showCompact()
             world.apiServerCompletes()
             presentation.setTransientForSnapshot(.done(sessionID: api))
         case .failed:
@@ -500,6 +516,7 @@ enum SnapshotStage {
             if scene == .expandedUpdate {
                 presentation.updateProvider = SnapshotUpdateProvider(now: world.clock.now)
             }
+            showCompact()
             presentation.toggleExpanded(on: screenID)
         case .settings, .settingsVersion:
             break

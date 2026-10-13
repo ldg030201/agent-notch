@@ -197,7 +197,7 @@ enum CompactText {
 
 // MARK: - 레이아웃 계산
 
-/// 펼친 카드 목이 노치 양옆으로 넓어질 수 있는 폭 (여백 · 아이콘 앞 여유를 뺀 값)
+/// 펼친 카드 상단 행을 띠 안 노치 양옆에 둘 수 있는 폭 (여백 · 아이콘 앞 여유를 뺀 값)
 struct CardNeckRoom: Equatable {
     var left: CGFloat
     var right: CGFloat
@@ -230,8 +230,12 @@ struct IslandLayoutEngine {
     var retracted: WingSides = []
     /// 직전에 그린 접힌 날개. 아이콘이 몇 pt 밀렸다고 날개 끝이 아이콘 하나만큼 뒤집히지 않게 끝을 붙잡는 데 쓴다
     var previousWings: WingsSpec?
-    /// 지금 열려 있는 카드가 쓴 목 자리. 카드가 열려 있는 동안 아이콘이 몇 pt 밀려도 목 · 귀를 그대로 둔다
+    /// 지금 열려 있는 카드가 쓴 상단 행 자리. 카드가 열려 있는 동안 아이콘이 몇 pt 밀려도 상단 행이 띠 안 ↔ 아래로 오가지 않는다
     var previousCardRoom: CardNeckRoom?
+    /// 직전에 그린 메뉴바 알약 (노치 없는 화면). 펼친 카드는 이 알약을 목으로 삼아, 펼치고 접는 동안 알약이 그대로 있다
+    var previousPill: CompactPlacement?
+    /// 카드를 접는 동안 붙잡는 카드 띠 · 목 알약 (`cardBand(for:)`). 있으면 접힌 자리를 이것으로 그린다
+    var collapseHold: CompactPlacement?
 
     private typealias M = IslandMetrics
     private typealias C = WingCutouts
@@ -308,7 +312,35 @@ struct IslandLayoutEngine {
     // MARK: 접힌 상태 자리 고르기
 
     func compactPlacement(for content: CompactContent) -> CompactPlacement {
-        geometry.hasNotch ? notchPlacement(content) : externalPlacement(content)
+        let fresh = geometry.hasNotch ? notchPlacement(content) : externalPlacement(content)
+        return heldCollapsePlacement(fresh: fresh) ?? fresh
+    }
+
+    /// 카드를 접는 동안 붙잡은 카드 띠 · 목 알약 (`collapseHold`). 아직 메뉴바에 맞으면 그 자리, 아니면 nil (지금 자리).
+    /// 카드가 열려 있는 동안 접힌 내용이 바뀌었어도 접히는 동안엔 띠가 그대로이고, 몸통만 띠 안으로 줄어든다.
+    /// 띠가 바뀌는 것은 놓은 뒤 접힌 상태 안의 변화(몸통 = 띠라 이음매 없음)로 일어난다
+    private func heldCollapsePlacement(fresh: CompactPlacement) -> CompactPlacement? {
+        guard let held = collapseHold, held != fresh else { return nil }
+        switch (held, fresh) {
+        case let (.wings(spec), .wings(freshSpec)):
+            // 마우스를 올려 비켜주는 쪽은 바로 따른다
+            var kept = spec
+            kept.hidden = freshSpec.hidden
+            // 띠 양끝이 같으면 지금 자리 (요소만 바뀐 것은 붙잡지 않는다)
+            let sameBand = abs(kept.visibleLeft - freshSpec.visibleLeft) < 0.25 && abs(kept.visibleRight - freshSpec.visibleRight) < 0.25
+            guard !sameBand, bandStillFits(spec) else { return nil }
+            return .wings(kept)
+        case let (.wings(spec), .strip), let (.wings(spec), .line):
+            return bandStillFits(spec) ? held : nil
+        case (.strip, .wings), (.line, .wings):
+            // 카드 띠가 노치 폭이었다: 노치 아래 띠 · 선으로 접는다
+            return held
+        case let (.menuBarPill(centerX, width, _), .menuBarPill):
+            guard let slot = menuBarPillSlot, abs(centerX - slot.center) < 0.5, width <= slot.room + 0.5 else { return nil }
+            return held
+        default:
+            return nil
+        }
     }
 
     private func notchPlacement(_ content: CompactContent) -> CompactPlacement {
@@ -559,7 +591,9 @@ struct IslandLayoutEngine {
             guard width > 0 else { return 0 }
             let items = side == .left ? leftItems : rightItems
             let sideCap = side == .left ? cap.left : cap.right
-            let fresh = C.fitEdge(width, items: items, cap: sideCap)
+            var fresh = C.fitEdge(width, items: items, cap: sideCap)
+            // 구멍은 `iconWingMax` 안에만 뚫으므로 날개도 그 안에서 끝낸다 (넘으면 구멍 없는 아이콘을 덮는다)
+            if fresh > sideCap + 0.5 { fresh = C.fitEdge(sideCap, items: items, cap: sideCap) }
             // 직전 끝이 아직 아이콘을 자르지 않고 가까우면 그 끝(이 가리키던 아이콘)을 따라간다
             guard let previous = previousWings.map({ side == .left ? $0.left : $0.right }), previous > 0 else { return fresh }
             return C.stickyEdge(fresh: fresh, previous: previous, base: width, items: items, cap: sideCap)
@@ -772,18 +806,7 @@ struct IslandLayoutEngine {
                 return .belowMenuBarPill(width: M.pillWorkingWidth, items: items)
             }
         case .inMenuBar:
-            guard menuBarVisible, let gap = menuBarGap else { return .none }
-            let margins = M.menuBarMargin * 2
-            var center = ((gap.start + gap.end) / 2).rounded()
-            var room = gap.end - gap.start - margins
-            // 화면 가운데가 빈 구간 안이고 가운데에 둘 자리가 있으면 가운데
-            if midX > gap.start, midX < gap.end {
-                let centeredRoom = 2 * min(midX - gap.start, gap.end - midX) - margins
-                if centeredRoom >= M.minMenuBarPill {
-                    center = midX
-                    room = centeredRoom
-                }
-            }
+            guard let (center, room) = menuBarPillSlot else { return .none }
             if room < M.minMenuBarPill {
                 return room >= M.menuBarDotSize ? .menuBarDot(centerX: center) : .none
             }
@@ -799,6 +822,23 @@ struct IslandLayoutEngine {
                 return .menuBarPill(centerX: center, width: width, items: items)
             }
         }
+    }
+
+    /// 메뉴바 안 알약 자리: 가운데 x 와 쓸 수 있는 폭 (메뉴바가 숨었거나 빈 구간이 없으면 nil).
+    /// 화면 가운데가 빈 구간 안이고 가운데에 둘 자리가 있으면 가운데, 아니면 빈 구간 가운데
+    private var menuBarPillSlot: (center: CGFloat, room: CGFloat)? {
+        guard menuBarVisible, let gap = menuBarGap else { return nil }
+        let margins = M.menuBarMargin * 2
+        var center = ((gap.start + gap.end) / 2).rounded()
+        var room = gap.end - gap.start - margins
+        if midX > gap.start, midX < gap.end {
+            let centeredRoom = 2 * min(midX - gap.start, gap.end - midX) - margins
+            if centeredRoom >= M.minMenuBarPill {
+                center = midX
+                room = centeredRoom
+            }
+        }
+        return (center, room)
     }
 
     /// 알약에 넣을 요소 후보. 요약이 있으면 툴 이름 → 프로젝트명 순으로 빼고 요약은 끝까지 남긴다
@@ -830,6 +870,9 @@ struct IslandLayoutEngine {
     /// 노치 화면 접힌 모양의 몸통 모서리 (몸통이 목과 같은 폭이면 보이지 않고, 카드로 넓어질 때 그대로 이어진다)
     private static let compactBodyTopRadius: CGFloat = 14
     private static let compactShoulderRadius: CGFloat = 10
+    /// 메뉴바 알약 · 점의 몸통 모서리 (알약 카드 · 점 카드와 같은 값: 펼치고 접는 동안 이음매 반경이 0 에서 자라며 턱이 남지 않게)
+    private static let pillBodyTopRadius: CGFloat = 14
+    private static let pillShoulderRadius: CGFloat = 8
 
     /// 모든 레이아웃 공통 마무리: 하드웨어 노치 보호 · 메뉴바 아래 몸통 · 아이콘 구멍 · 구멍 위 클릭 통과
     private func finish(_ layout: IslandLayout) -> IslandLayout {
@@ -858,7 +901,10 @@ struct IslandLayoutEngine {
             return finish(IslandLayout(
                 size: size,
                 origin: CGPoint(x: notchMinX, y: 0),
-                shape: IslandShapeSpec(neckHeight: size.height - 10, bottomRadius: 10),
+                shape: IslandShapeSpec(
+                    neckHeight: size.height - 10,
+                    bodyTopRadius: Self.compactBodyTopRadius, shoulderRadius: Self.compactShoulderRadius, bottomRadius: 10
+                ),
                 compact: nil
             ))
         }
@@ -867,7 +913,10 @@ struct IslandLayoutEngine {
         return finish(IslandLayout(
             size: size,
             origin: CGPoint(x: midX - size.width / 2, y: top),
-            shape: IslandShapeSpec(neckHeight: size.height / 2, topRadius: 11, bottomRadius: 11),
+            shape: IslandShapeSpec(
+                neckHeight: size.height / 2, topRadius: 11,
+                bodyTopRadius: Self.pillBodyTopRadius, shoulderRadius: Self.pillShoulderRadius, bottomRadius: 11
+            ),
             compact: nil
         ))
     }
@@ -886,8 +935,8 @@ struct IslandLayoutEngine {
             // 비켜준 쪽은 폭 0 (내용은 뷰에서 숨김)
             let left = spec.visibleLeft
             let right = spec.visibleRight
-            let earL: CGFloat = left > 0 ? 6 : 0
-            let earR: CGFloat = right > 0 ? 6 : 0
+            let earL: CGFloat = left > 0 ? Self.wingEar : 0
+            let earR: CGFloat = right > 0 ? Self.wingEar : 0
             let width = earL + left + notchWidth + right + earR
             let originX = notchMinX - left - earL
             let band: CGFloat
@@ -971,7 +1020,10 @@ struct IslandLayoutEngine {
             var layout = IslandLayout(
                 size: CGSize(width: width, height: height),
                 origin: CGPoint(x: (centerX - width / 2).rounded(), y: ((menuBarHeight - height) / 2).rounded(.down)),
-                shape: IslandShapeSpec(neckHeight: height / 2, topRadius: height / 2, bottomRadius: height / 2),
+                shape: IslandShapeSpec(
+                    neckHeight: height / 2, topRadius: height / 2,
+                    bodyTopRadius: Self.pillBodyTopRadius, shoulderRadius: Self.pillShoulderRadius, bottomRadius: height / 2
+                ),
                 compact: .pill(items: items)
             )
             layout.hitRects = [CGRect(origin: .zero, size: layout.size)]
@@ -982,7 +1034,10 @@ struct IslandLayoutEngine {
             var layout = IslandLayout(
                 size: CGSize(width: size, height: size),
                 origin: CGPoint(x: (centerX - size / 2).rounded(), y: ((menuBarHeight - size) / 2).rounded(.down)),
-                shape: IslandShapeSpec(neckHeight: size / 2, topRadius: size / 2, bottomRadius: size / 2),
+                shape: IslandShapeSpec(
+                    neckHeight: size / 2, topRadius: size / 2,
+                    bodyTopRadius: Self.pillBodyTopRadius, shoulderRadius: size / 2, bottomRadius: size / 2
+                ),
                 compact: .dot
             )
             // 점은 작아서 클릭 영역을 조금 넓힌다
@@ -1022,13 +1077,13 @@ struct IslandLayoutEngine {
         bodyHeight: (CGFloat) -> CGFloat
     ) -> IslandLayout {
         if geometry.hasNotch {
-            return notchCard(preferredWidth: preferredWidth, radius: radius, bodyHeight: bodyHeight)
+            return notchCard(preferredWidth: preferredWidth, radius: radius, compact: compact, bodyHeight: bodyHeight)
         }
         let maxWidth = preferredWidth > M.externalCardMaxWidth
             ? min(preferredWidth, screenWidth - 16)
             : min(preferredWidth, M.externalCardMaxWidth)
         let cardWidth = max(200, maxWidth)
-        if case let .menuBarPill(centerX, pillWidth, _) = compact {
+        if case let .menuBarPill(centerX, pillWidth, _) = cardPill(for: compact) {
             return pillCard(cardWidth: cardWidth, pillCenter: centerX, pillWidth: pillWidth, radius: radius, bodyHeight: bodyHeight)
         }
         let anchor: CGFloat
@@ -1043,9 +1098,8 @@ struct IslandLayoutEngine {
         return floatingCard(cardWidth: cardWidth, anchorX: anchor, top: top, radius: radius, stemX: stem, bodyHeight: bodyHeight)
     }
 
-    /// 펼친 카드 목 자리 (지금 메뉴바 기준).
-    /// 넓은 노치면 접힌 날개처럼 목(메뉴바 높이)도 메뉴바 아이템 위로 넓힌다.
-    /// 아이콘 위치를 알면 목은 아이콘 앞에서 멈춘다 (카드 상단 행이 아이콘을 덮지 않게)
+    /// 펼친 카드 상단 행을 띠 안에 둘 수 있는 폭 (지금 메뉴바 기준, 노치 가장자리부터 바깥쪽).
+    /// 아이콘 위치를 알면 첫 아이콘 앞에서 멈춘다 (상단 행이 아이콘을 덮지 않게)
     private var freshCardRoom: CardNeckRoom {
         if cutsIconHoles {
             let limit = wingLimit
@@ -1058,8 +1112,8 @@ struct IslandLayoutEngine {
         return CardNeckRoom(left: free.left, right: free.right)
     }
 
-    /// 펼친 카드 목 자리: 카드가 열려 있는 동안엔 직전 값을 붙잡는다.
-    /// CPU% 처럼 폭이 바뀌는 아이템이 아이콘을 몇 pt 밀 때마다 목 폭(밀린 거리의 2배) · 귀가 출렁이지 않게
+    /// 펼친 카드 상단 행 자리: 카드가 열려 있는 동안엔 직전 값을 붙잡는다.
+    /// CPU% 처럼 폭이 바뀌는 아이템이 아이콘을 몇 pt 밀 때마다 상단 행이 띠 안 ↔ 아래로 오가지 않게
     var cardNeckRoom: CardNeckRoom {
         let fresh = freshCardRoom
         guard let previous = previousCardRoom else { return fresh }
@@ -1069,41 +1123,154 @@ struct IslandLayoutEngine {
         )
     }
 
-    private func notchCard(preferredWidth: CGFloat, radius: CGFloat, bodyHeight: (CGFloat) -> CGFloat) -> IslandLayout {
-        let free = cardNeckRoom
-        let cardWidth = max(preferredWidth, notchWidth + 80)
-        let neck = neckHeight
-        let allowed = min(free.left, free.right)
-        let headerInNeck = allowed >= M.headerWingMin
-        let wing = headerInNeck ? min(allowed, (cardWidth - notchWidth) / 2) : 0
-        let neckWidth = notchWidth + wing * 2
-        let earL: CGFloat = headerInNeck || free.left >= 8 ? 8 : 0
-        let earR: CGFloat = headerInNeck || free.right >= 8 ? 8 : 0
-        let frameWidth = max(cardWidth, neckWidth + max(earL, earR) * 2)
-        let neckInset = (frameWidth - neckWidth) / 2
-        let bodyInset = (frameWidth - cardWidth) / 2
-        let headerHeight = headerInNeck ? 0 : M.headerRowHeight
-        let body = bodyHeight(cardWidth)
-        let height = neck + headerHeight + body
+    // MARK: 펼친 카드 띠 (노치 화면)
 
+    /// 펼친 카드의 목(메뉴바 띠): 접힌 상태 띠와 똑같다 (양끝 · 귀 · 구멍).
+    /// 펼치고 접는 동안 띠는 그대로 있고 몸통만 띠 아래로 자라고 줄어든다
+    struct TopBand: Equatable {
+        /// 노치 가장자리부터 바깥쪽 날개 폭 (귀 제외). 0 이면 그쪽은 노치 끝
+        var left: CGFloat
+        var right: CGFloat
+        var earL: CGFloat
+        var earR: CGFloat
+
+        static let notchOnly = TopBand(left: 0, right: 0, earL: 0, earR: 0)
+    }
+
+    /// 접힌 날개 귀 반경 (`compactShape` 와 카드 띠가 같은 값을 쓴다)
+    static let wingEar: CGFloat = 6
+    /// 몸통 옆면이 띠 끝과 이보다 적게 차이 나면 띠 끝에 맞춘다 (거의 겹친 이음매 · 좁은 턱 없이 곧게 내려간다)
+    static let bodySnap: CGFloat = 12
+
+    /// 펼친 카드 띠: 직전에 그린 접힌 날개(배치 이력)가 아직 맞으면 그대로, 아니면 지금 계산한 접힌 자리.
+    /// 접힌 날개 이력은 접힌 상태에서만 갱신되므로 카드가 열려 있는 동안 띠가 숨쉬지 않는다
+    private func cardTopBand(for compact: CompactPlacement) -> TopBand {
+        guard let spec = cardBandWings(for: compact) else { return .notchOnly }
+        let left = spec.visibleLeft
+        let right = spec.visibleRight
+        return TopBand(left: left, right: right, earL: left > 0 ? Self.wingEar : 0, earR: right > 0 ? Self.wingEar : 0)
+    }
+
+    /// 펼친 카드 띠가 쓰는 날개 (nil = 노치 폭).
+    /// 직전에 그린 접힌 모양이 노치 폭(노치 아래 띠 · 선)이었으면 지금 날개가 맞아도 노치 폭 (펼치는 동안 띠가 넓어지지 않게).
+    /// 표시 상태가 이 값을 접힌 날개 이력으로 기억해, 접을 때도 같은 띠에서 시작한다
+    func cardBandWings(for compact: CompactPlacement) -> WingsSpec? {
+        guard case let .wings(fresh) = compact, previousWings != .withoutWings else { return nil }
+        if let previous = previousWings, bandStillFits(previous) { return previous }
+        return fresh
+    }
+
+    /// 펼친 카드의 띠 · 목이 쓰는 접힌 자리: 노치 화면은 카드 띠 날개(노치 폭이면 노치 아래 띠 · 선),
+    /// 노치 없는 화면은 목 알약. 표시 상태가 카드를 접는 동안 이 자리를 붙잡는다 (`collapseHold`)
+    func cardBand(for compact: CompactPlacement) -> CompactPlacement {
+        guard geometry.hasNotch else { return cardPill(for: compact) }
+        if let spec = cardBandWings(for: compact) { return .wings(spec) }
+        guard case .wings = compact else { return compact }
+        return overlapStyle == .minimal ? .line : .strip(width: notchWidth)
+    }
+
+    /// 펼친 카드 목이 될 메뉴바 알약 (노치 없는 화면): 직전에 그린 알약이 아직 빈 구간 안이면 그것
+    /// 빈 구간이 줄어 그대로 안 들어가면 지금 자리에서 들어가는 만큼만 줄인다 (지금 내용 폭보다 좁게는 두지 않음)
+    func cardPill(for compact: CompactPlacement) -> CompactPlacement {
+        guard case let .menuBarPill(_, freshWidth, items) = compact, case let .menuBarPill(centerX, width, _)? = previousPill,
+              let slot = menuBarPillSlot
+        else { return compact }
+        if abs(centerX - slot.center) < 0.5, width <= slot.room + 0.5 { return .menuBarPill(centerX: centerX, width: width, items: items) }
+        return .menuBarPill(centerX: slot.center, width: max(freshWidth, min(width, slot.room).rounded(.down)), items: items)
+    }
+
+    /// 직전 날개가 지금 메뉴바에도 맞는지: 쓸 수 있는 폭 안이고, 아이콘 구멍을 쓰면 끝이 아이콘을 자르지 않는다.
+    /// 아이콘이 몇 pt 밀려 들어온 정도(`cardRoomShrinkTolerance`, 아이템 여백 안)는 그대로 둔다 (그 아이콘도 구멍으로 보인다)
+    private func bandStillFits(_ spec: WingsSpec) -> Bool {
+        let limit = usesWings ? wingLimit : notchFree
+        let cap = cutsIconHoles ? (left: min(M.iconWingMax, limit.left), right: min(M.iconWingMax, limit.right)) : limit
+        func fits(_ edge: CGFloat, cap: CGFloat, items: [WingCutouts.Item]) -> Bool {
+            guard edge > 0 else { return true }
+            guard edge <= cap + 0.5 else { return false }
+            guard cutsIconHoles else { return true }
+            let slack = C.tolerance + Self.cardRoomShrinkTolerance
+            return !items.contains { $0.start + slack < edge && edge < $0.end - C.tolerance }
+        }
+        return fits(spec.visibleLeft, cap: cap.left, items: leftItems) && fits(spec.visibleRight, cap: cap.right, items: rightItems)
+    }
+
+    /// 카드 몸통 가로 구간 (패널 기준): 폭 = max(원하는 폭, 띠 폭), 띠를 늘 품고 되도록 노치 가운데.
+    /// 띠 끝과 `bodySnap` 보다 적게 차이 나는 쪽은 반대쪽으로 밀거나(반대쪽이 충분히 넓을 때) 띠 끝에 맞춘다
+    private static func cardBodySpan(preferred: CGFloat, bandMinX: CGFloat, bandMaxX: CGFloat, centerX: CGFloat) -> (minX: CGFloat, maxX: CGFloat) {
+        let width = max(preferred, bandMaxX - bandMinX)
+        var lo = min(max(centerX - width / 2, bandMaxX - width), bandMinX)
+        var hi = lo + width
+        let left = bandMinX - lo
+        if left > 0.01, left < bodySnap {
+            if hi - bandMaxX >= bodySnap {
+                lo += left
+                hi += left
+            } else {
+                lo = bandMinX
+            }
+        }
+        let right = hi - bandMaxX
+        if right > 0.01, right < bodySnap {
+            if bandMinX - lo >= bodySnap {
+                lo -= right
+                hi -= right
+            } else {
+                hi = bandMaxX
+            }
+        }
+        return (lo, hi)
+    }
+
+    private func notchCard(
+        preferredWidth: CGFloat,
+        radius: CGFloat,
+        compact: CompactPlacement,
+        bodyHeight: (CGFloat) -> CGFloat
+    ) -> IslandLayout {
+        let band = cardTopBand(for: compact)
+        let neck = neckHeight
+        let bandMinX = notchMinX - band.left
+        let bandMaxX = notchMaxX + band.right
+        let body = Self.cardBodySpan(
+            preferred: max(preferredWidth, notchWidth + 80), bandMinX: bandMinX, bandMaxX: bandMaxX, centerX: midX
+        )
+        let cardWidth = body.maxX - body.minX
+        let frameMinX = min(bandMinX - band.earL, body.minX)
+        let frameMaxX = max(bandMaxX + band.earR, body.maxX)
+        let frameWidth = frameMaxX - frameMinX
+        // 상단 행: 띠 안 노치 양옆에 구멍 없이 `headerWingMin` 이상 비면 띠 안에 (노치 가운데 대칭), 아니면 띠 아래 한 줄
+        let room = cardNeckRoom
+        let wing = min(band.left, room.left, band.right, room.right)
+        let headerInNeck = wing >= M.headerWingMin
+        let headerHeight = headerInNeck ? 0 : M.headerRowHeight
+        let height = neck + headerHeight + bodyHeight(cardWidth)
+
+        let neckLeft = bandMinX - frameMinX
+        let neckRight = frameMaxX - bandMaxX
+        let bodyLeft = body.minX - frameMinX
+        let bodyRight = frameMaxX - body.maxX
         var layout = IslandLayout(
             size: CGSize(width: frameWidth, height: height),
-            origin: CGPoint(x: midX - frameWidth / 2, y: 0),
+            origin: CGPoint(x: frameMinX, y: 0),
             shape: IslandShapeSpec(
-                neckLeft: neckInset, neckRight: neckInset, neckHeight: neck,
-                bodyLeft: bodyInset, bodyRight: bodyInset,
-                leftEar: earL, rightEar: earR,
+                neckLeft: neckLeft, neckRight: neckRight, neckHeight: neck,
+                bodyLeft: bodyLeft, bodyRight: bodyRight,
+                leftEar: band.earL, rightEar: band.earR,
                 bodyTopRadius: 14, shoulderRadius: 10, bottomRadius: radius
             ),
             compact: nil,
             cardWidth: cardWidth
         )
         layout.header = headerInNeck
-            ? HeaderSlot(top: 0, height: neck, leftInset: neckInset, rightInset: neckInset, notchGap: notchWidth + 8)
-            : HeaderSlot(top: neck, height: M.headerRowHeight, leftInset: bodyInset, rightInset: bodyInset)
+            ? HeaderSlot(
+                top: 0, height: neck,
+                leftInset: notchMinX - wing - frameMinX, rightInset: frameMaxX - (notchMaxX + wing),
+                notchGap: notchWidth + 8
+            )
+            : HeaderSlot(top: neck, height: M.headerRowHeight, leftInset: bodyLeft, rightInset: bodyRight)
         layout.hitRects = [
-            CGRect(x: neckInset, y: 0, width: neckWidth, height: neck),
-            CGRect(x: bodyInset, y: neck, width: cardWidth, height: height - neck),
+            CGRect(x: neckLeft, y: 0, width: bandMaxX - bandMinX, height: neck),
+            CGRect(x: bodyLeft, y: neck, width: cardWidth, height: height - neck),
         ]
         return layout
     }
@@ -1125,7 +1292,10 @@ struct IslandLayoutEngine {
         let frameX = min(cardX, pillX)
         let frameWidth = max(cardX + cardWidth, pillX + pillWidth) - frameX
         let neck = menuBarHeight - top
-        let headerInNeck = pillWidth >= M.pillHeaderMin
+        // 상단 행을 알약 안에 둔다. 기억한 알약이 상단 행을 품던 폭이면 빈 구간이 조금 줄어도(8pt) 그대로 둔다 (카드 높이가 출렁이지 않게)
+        var headerMin = M.pillHeaderMin
+        if case let .menuBarPill(_, previousWidth, _)? = previousPill, previousWidth >= M.pillHeaderMin { headerMin -= 8 }
+        let headerInNeck = pillWidth >= headerMin
         let body = bodyHeight(frameWidth)
         let height = neck + (headerInNeck ? 0 : M.headerRowHeight) + body
         let neckLeft = pillX - frameX
@@ -1136,7 +1306,8 @@ struct IslandLayoutEngine {
             origin: CGPoint(x: frameX, y: top),
             shape: IslandShapeSpec(
                 neckLeft: neckLeft, neckRight: neckRight, neckHeight: neck,
-                topRadius: pillHeight / 2, bodyTopRadius: 14, shoulderRadius: 8, bottomRadius: radius
+                topRadius: pillHeight / 2, bodyTopRadius: Self.pillBodyTopRadius, shoulderRadius: Self.pillShoulderRadius,
+                bottomRadius: radius
             ),
             compact: nil,
             cardWidth: frameWidth

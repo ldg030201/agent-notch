@@ -176,28 +176,30 @@ struct IslandShape: Shape {
         let bodyHeight = height - neckHeight
 
         // 몸통이 목보다 넓은 쪽은 메뉴바 아래에서만 넓어진다.
+        // - 메뉴바 아래 몸통 높이(아래 반경 제외)가 모자라면 넓어지는 폭을 줄인다 (`widenAllowance`):
+        //   펼치기 시작 · 접히기 끝에 몸통이 먼저 아래로 내려온 뒤 옆으로 넓어지고, 이음매는 늘 S 곡선으로 끝까지 그려진다
+        //   (몸통 위 볼록 모서리가 아래 모서리와 겹치거나 사이에 턱이 남지 않게)
         // - 계단 y 는 넓어진 폭이 0 → 6pt 일 동안 목 아래끝 → 메뉴바 아래끝으로 이어서 옮긴다 (폭 0 이면 어느 y 든 같은 모양)
-        // - 메뉴바 아래 몸통 높이(아래 반경 제외)가 모자라면 넓어지는 폭을 그 높이의 4배까지로 줄인다
-        //   (펼치기 시작 · 접히기 끝: 몸통이 먼저 아래로 내려온 뒤 옆으로 넓어진다)
-        o.stepL = o.neckBottom
-        o.stepR = o.neckBottom
+        let bottomRadius = clamp(spec.bottomRadius, 0, bodyHeight)
+        let shoulderSpec = max(0, spec.shoulderRadius)
+        let bodyTopSpec = max(0, spec.bodyTopRadius)
+        var barBottom = o.neckBottom
         if spec.menuBarBottom > 0 {
-            let barBottom = max(o.neckBottom, rect.minY + spec.menuBarBottom - spec.originY)
-            let radius = clamp(spec.bottomRadius, 0, bodyHeight)
-            let allowed = max(0, o.bottom - radius - barBottom) * 4
-            func step(_ widen: CGFloat) -> CGFloat {
-                o.neckBottom + clamp(widen / 6, 0, 1) * (barBottom - o.neckBottom)
-            }
-            // 줄인 폭으로 계단 y 를 정한다 (폭이 0 이면 계단도 목 아래끝 → 아래 모서리와 겹치지 않음)
-            if o.widenL > 0 {
-                o.bx0 = o.nx0 - min(o.widenL, allowed)
-                o.stepL = step(o.widenL)
-            }
-            if o.widenR > 0 {
-                o.bx1 = o.nx1 + min(o.widenR, allowed)
-                o.stepR = step(o.widenR)
-            }
+            barBottom = max(o.neckBottom, rect.minY + spec.menuBarBottom - spec.originY)
+            let allowed = widenAllowance(
+                room: max(0, o.bottom - bottomRadius - barBottom), shoulder: shoulderSpec, bodyTop: bodyTopSpec
+            )
+            if o.widenL > 0 { o.bx0 = o.nx0 - min(o.widenL, allowed) }
+            if o.widenR > 0 { o.bx1 = o.nx1 + min(o.widenR, allowed) }
         }
+        // 1pt 미만 차이는 곧은 옆면 (모서리 없음). 1 → 2pt 사이에서 이어서 벌어진다
+        o.bx0 = o.nx0 - settledWiden(o.widenL)
+        o.bx1 = o.nx1 + settledWiden(o.widenR)
+        func step(_ widen: CGFloat) -> CGFloat {
+            widen > 0 ? o.neckBottom + clamp(widen / 6, 0, 1) * (barBottom - o.neckBottom) : o.neckBottom
+        }
+        o.stepL = step(o.widenL)
+        o.stepR = step(o.widenR)
 
         // 귀와 위쪽 모서리 (목 안)
         let earLimit = min(neckHeight / 2, neckWidth / 4)
@@ -210,13 +212,29 @@ struct IslandShape: Shape {
         // 아래 모서리 (몸통 안)
         o.bottomR = clamp(spec.bottomRadius, 0, min((o.bx1 - o.bx0) / 2, bodyHeight))
 
-        // 목 → 몸통 계단. 폭이 0 에 가까우면 반경도 0 으로 줄어 이어진다
-        let stepWidthL = abs(o.widenL)
-        let stepWidthR = abs(o.widenR)
-        o.shoulderL = clamp(spec.shoulderRadius, 0, min(stepWidthL / 2, max(0, o.stepL - o.top - max(o.earL, o.topRL))))
-        o.shoulderR = clamp(spec.shoulderRadius, 0, min(stepWidthR / 2, max(0, o.stepR - o.top - max(o.earR, o.topRR))))
-        o.bodyTopL = clamp(spec.bodyTopRadius, 0, min(stepWidthL - o.shoulderL, max(0, o.bottom - o.stepL - o.bottomR)))
-        o.bodyTopR = clamp(spec.bodyTopRadius, 0, min(stepWidthR - o.shoulderR, max(0, o.bottom - o.stepR - o.bottomR)))
+        // 목 → 몸통 계단: 목 쪽 모서리(몸통이 넓으면 오목, 좁으면 볼록) + 몸통 쪽 모서리(그 반대)가 차이를 함께 채운다.
+        // 두 반경의 합은 차이를 넘지 않고(비율대로 나눔), 차이가 반경 합보다 작으면 합 = 차이라 하나의 S 곡선이 된다.
+        // 목 아래 볼록 모서리와 몸통 위 볼록 모서리는 한쪽에 함께 생기지 않는다 (맞물려 물린 모양 없음)
+        func joint(_ widen: CGFloat, step: CGFloat, ear: CGFloat, topR: CGFloat) -> (shoulder: CGFloat, bodyTop: CGFloat) {
+            let gap = abs(widen)
+            let total = shoulderSpec + bodyTopSpec
+            guard gap > eps, total > eps else { return (0, 0) }
+            let scale = min(1, gap / total)
+            let above = max(0, step - o.top - max(ear, topR))
+            let below = max(0, o.bottom - step - o.bottomR)
+            var shoulder = min(shoulderSpec * scale, above)
+            var bodyTop = min(bodyTopSpec * scale, below)
+            // 한쪽이 높이가 모자라 줄었으면 다른 쪽이 메워 턱이 남지 않게 (각자 원래 반경까지)
+            let missing = min(gap, total) - shoulder - bodyTop
+            if missing > 0.01 {
+                let extraShoulder = min(missing, max(0, min(above, max(shoulderSpec, bodyTopSpec)) - shoulder))
+                shoulder += extraShoulder
+                bodyTop += min(missing - extraShoulder, max(0, min(below, max(shoulderSpec, bodyTopSpec)) - bodyTop))
+            }
+            return (shoulder, bodyTop)
+        }
+        (o.shoulderL, o.bodyTopL) = joint(o.widenL, step: o.stepL, ear: o.earL, topR: o.topRL)
+        (o.shoulderR, o.bodyTopR) = joint(o.widenR, step: o.stepR, ear: o.earR, topR: o.topRR)
         return o
     }
 
@@ -268,6 +286,23 @@ struct IslandShape: Shape {
         } else {
             path.addLine(to: vertex)
         }
+    }
+
+    /// 메뉴바 아래 몸통 높이(아래 반경 제외) `room` 으로 넓어질 수 있는 폭.
+    /// 높이가 몸통 위 반경 + 2pt 가 될 때까지는 이음매 S 곡선(오목 + 볼록)이 옆면 안에 다 들어갈 만큼만,
+    /// 그 뒤로는 높이의 6배씩 넓어진다 (몸통이 혀처럼 옆으로 튀어나오지 않게)
+    static func widenAllowance(room: CGFloat, shoulder: CGFloat, bodyTop: CGFloat) -> CGFloat {
+        let knee = bodyTop + 2
+        let atKnee = max(shoulder + bodyTop, knee)
+        if room <= knee { return room / knee * atKnee }
+        return atKnee + (room - knee) * 6
+    }
+
+    /// 목 ↔ 몸통 차이: 1pt 미만은 0 (곧은 옆면), 1 → 2pt 에서 0 → 2pt 로 이어진다
+    private static func settledWiden(_ widen: CGFloat) -> CGFloat {
+        let gap = abs(widen)
+        let value = gap < 1 ? 0 : (gap < 2 ? (gap - 1) * 2 : gap)
+        return widen < 0 ? -value : value
     }
 
     private static func clamp(_ value: CGFloat, _ lower: CGFloat, _ upper: CGFloat) -> CGFloat {

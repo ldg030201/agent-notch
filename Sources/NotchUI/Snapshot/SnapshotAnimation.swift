@@ -25,6 +25,8 @@ struct SnapshotTransition {
     var shiftsIcons = false
     /// 아이콘을 옮길 거리를 정해 둔다 (nil 이면 위처럼 찾는다)
     var fixedIconShift: CGFloat?
+    /// `from` 카드를 접은 직후(카드 띠를 붙잡은 `to` 접힌 상태) → 띠를 놓은 `to` 접힌 상태 (접힌 뒤 띠가 바뀌는 단계)
+    var afterCollapse = false
 
     static func named(_ name: String) -> SnapshotTransition? {
         all.first { $0.name == name }
@@ -57,6 +59,11 @@ struct SnapshotTransition {
             t(.expanded, .working, env: .working),
             t(.working, .done),
             t(.done, .idle, env: .working),
+            // 카드가 열려 있는 동안 접힌 내용이 바뀐 채 접힘 (다른 세션 요약이 생김 · 작업이 끝나 쉬는 중):
+            // 접히는 동안 카드 띠를 붙잡고, 모양이 자리 잡은 뒤 띠를 놓는다 (`-release`)
+            t(.permission, .workingSummary, env: .working),
+            t(.permission, .idle, env: .working),
+            t(.expanded, .idle, env: .working),
             // 넓은 노치 날개 비켜주기 (아이콘 위치 모름)
             t(.workingWings, .workingWingsRetracted, env: .workingWings),
             t(.workingWingsRetracted, .workingWings, env: .workingWings),
@@ -89,6 +96,11 @@ struct SnapshotTransition {
             t(.workingWingsIcons, .workingWingsIconsStrip, toEnv: .workingWingsIconsStrip, name: "anim-working-wings-icons-to-strip"),
             t(.workingWingsIconsStrip, .workingWingsIcons, toEnv: .workingWingsIcons, name: "anim-working-wings-icons-from-strip"),
         ]
+        for (from, to) in [(SnapshotScenario.permission, SnapshotScenario.workingSummary), (.permission, .idle), (.expanded, .idle)] {
+            var release = t(from, to, env: .working, name: "anim-\(from.rawValue)-\(to.rawValue)-release")
+            release.afterCollapse = true
+            list.append(release)
+        }
         var shift = t(.workingWingsIcons, .workingWingsIcons, env: .workingWingsIcons, name: "anim-working-wings-icons-shift")
         shift.shiftsIcons = true
         list.append(shift)
@@ -800,22 +812,37 @@ enum SnapshotAnimationSheet {
     }
 
     static func render(_ transition: SnapshotTransition, style: IslandSnapshotRenderer.Style) throws -> CGImage {
-        let from = try SnapshotStage.prepare(transition.from, style: style, environment: transition.environment)
-        let fromMode = from.mode
-        // 전 상태를 그리면서 배치 이력(직전 접힌 날개 · 열린 카드 목 자리)이 기록된다
-        let fromLayout = from.layout
+        let from: SnapshotSetup
+        let fromLayout: IslandLayout
+        let to: SnapshotSetup
         var shiftNote = ""
-        var shift: CGFloat = 0
-        if transition.shiftsIcons {
-            let sweep = try iconShiftSweep(transition, style: style, from: from, previous: fromLayout)
-            shift = sweep.chosen
-            shiftNote = sweep.note
+        if transition.afterCollapse {
+            // 카드를 그려 카드 띠를 기록 → 접힌 상태가 그 띠를 붙잡음(전) → 띠를 놓음(후). 같은 표시 상태에서 이어서 계산한다
+            let card = try SnapshotStage.prepare(transition.from, style: style, environment: transition.environment)
+            _ = card.layout
+            from = try SnapshotStage.prepare(transition.to, style: style, environment: transition.toEnvironment ?? transition.environment)
+            from.presentation.adoptLayoutHistory(from: card.presentation)
+            fromLayout = from.layout
+            from.presentation.releaseCollapseHold(on: from.screenID)
+            to = from
+            shiftNote = "\(transition.from.rawValue) 카드를 접은 뒤 붙잡은 띠를 놓음"
+        } else {
+            from = try SnapshotStage.prepare(transition.from, style: style, environment: transition.environment)
+            // 전 상태를 그리면서 배치 이력(직전 접힌 날개 · 열린 카드 띠)이 기록된다
+            fromLayout = from.layout
+            var shift: CGFloat = 0
+            if transition.shiftsIcons {
+                let sweep = try iconShiftSweep(transition, style: style, from: from, previous: fromLayout)
+                shift = sweep.chosen
+                shiftNote = sweep.note
+            }
+            to = try SnapshotStage.prepare(
+                transition.to, style: style, environment: transition.toEnvironment ?? transition.environment, iconShift: shift
+            )
+            // 실제 앱처럼 전 상태의 배치 이력을 기억한 채 후 상태를 계산한다 (날개 끝 · 카드 띠 이력 유지, 카드를 접으면 띠를 붙잡음)
+            to.presentation.adoptLayoutHistory(from: from.presentation)
         }
-        let to = try SnapshotStage.prepare(
-            transition.to, style: style, environment: transition.toEnvironment ?? transition.environment, iconShift: shift
-        )
-        // 실제 앱처럼 전 상태의 배치 이력을 기억한 채 후 상태를 계산한다 (날개 끝 · 카드 목 이력 유지)
-        to.presentation.adoptLayoutHistory(from: from.presentation)
+        let fromMode = from.mode
         let toMode = to.mode
         let toLayout = to.layout
         let sameKind = fromMode.kind == toMode.kind
@@ -844,6 +871,7 @@ enum SnapshotAnimationSheet {
         var began = false
         var finished = false
         var frames: [Frame] = []
+        let seamEnds = SnapshotSeamCheck.Ends(from: fromLayout, to: toLayout)
         for ms in SnapshotTimeline.frameTimes {
             let v = timeline.value(ms: ms)
             let layout = SnapshotInterpolation.mix(fromLayout, toLayout, v)
@@ -877,7 +905,8 @@ enum SnapshotAnimationSheet {
                 let opacity = timeline.fadeIn(ms: ms)
                 content = Content(mode: toMode, layout: toLayout, presentation: to.presentation, opacity: opacity, offset: .zero, label: String(format: "새 내용 %.2f", opacity))
             }
-            let issues = SnapshotShapeCheck.check(layout: layout, context: context)
+            // 모양 검사 + 이음매 검사 (목 ↔ 몸통 끊김 · 물림 · 거의 겹친 이음매)
+            let issues = SnapshotShapeCheck.check(layout: layout, context: context) + SnapshotSeamCheck.check(layout: layout, ends: seamEnds)
             frames.append(Frame(ms: ms, value: v, layout: layout, content: content, issues: issues))
         }
         if !sameKey, swapState.outgoing != nil || swapState.lastShown?.key != IslandContentKey(mode: toMode, layout: toLayout) {
@@ -887,6 +916,8 @@ enum SnapshotAnimationSheet {
         // 연속성 검사 (스프링 값 0 → 최대값)
         let peak = timeline.spring.peak
         let jumps = SnapshotShapeCheck.discontinuities(from: fromLayout, to: toLayout, maxValue: max(1, peak.value), timeline: timeline)
+        // 시트 프레임 사이의 이음매 (거의 겹친 목 끝 · 몸통 끝)
+        let seamRuns = SnapshotSeamCheck.denseJointIssues(from: fromLayout, to: toLayout, maxValue: max(1, peak.value), timeline: timeline)
 
         // stdout 보고
         let styleName = style.rawValue
@@ -916,7 +947,10 @@ enum SnapshotAnimationSheet {
             report0.append(contentsOf: hoverCheck.problems.map { "   ✗ 호버 확대 순서: \($0)" })
             report.append(contentsOf: hoverCheck.problems.map { "   ✗ 호버 확대 순서: \($0)" })
         }
-        for (label, check) in [("겹침 감지", SnapshotOverlapCheck.run()), ("세션 요약 자리", SnapshotSummaryCheck.run())] {
+        let seamSelfTest = (cases: 3, problems: SnapshotSeamCheck.selfTest())
+        for (label, check) in [
+            ("겹침 감지", SnapshotOverlapCheck.run()), ("세션 요약 자리", SnapshotSummaryCheck.run()), ("이음매 래스터 자체", seamSelfTest),
+        ] {
             if check.problems.isEmpty {
                 report.append("   \(label) 검사 \(check.cases)개 통과")
             } else {
@@ -926,16 +960,21 @@ enum SnapshotAnimationSheet {
         }
         if sameKind, !sameKey { report.append("   같은 종류 · 표시 방식 교체 (이전 내용 제자리 흐림 → 모양이 자리 잡은 뒤 새 내용)") }
         for jump in jumps { report.append("   ✗ 불연속 \(jump)") }
+        for run in seamRuns { report.append("   ✗ 촘촘히 \(run)") }
+        let seamFrames = frames.reduce(0) { $0 + $1.issues.filter { $0.hasPrefix("이음매") }.count }
+        report.append("   이음매 검사: 위반 \(seamFrames + seamRuns.count) (프레임 \(seamFrames) · 촘촘히 \(seamRuns.count))")
         for frame in frames where !frame.issues.isEmpty {
             report.append(String(format: "   ✗ t=%3.0fms v=%.3f: ", frame.ms, frame.value) + frame.issues.joined(separator: " · "))
         }
-        if jumps.isEmpty, report0.isEmpty, frames.allSatisfy({ $0.issues.isEmpty }) { report.append("   ✓ 문제 없음") }
+        if jumps.isEmpty, seamRuns.isEmpty, report0.isEmpty, frames.allSatisfy({ $0.issues.isEmpty }) { report.append("   ✓ 문제 없음") }
+        // 시트 머리에 적을 프레임 사이 문제 (불연속 · 이음매)
+        let notes = jumps.map { "불연속 " + $0 } + seamRuns.map { "이음매 " + $0 }
         let crop = cropRect(frames: frames, bar: bar, extra: [fromLayout.panelRect, toLayout.panelRect])
         let cellSize = SnapshotAnimationSheetView.cellSize(crop: crop)
         report.append(String(
             format: "   시트: 칸 %.0f×%.0fpt (간격 %.0f, 여백 12) · 머리 %.0fpt · 칸 안 그림 = 화면 x %.0f…%.0f, y 0…%.0f",
             cellSize.width, cellSize.height, SnapshotAnimationSheetView.spacing,
-            SnapshotAnimationSheetView.headerHeight(notes: jumps.count), crop.minX, crop.maxX, crop.height
+            SnapshotAnimationSheetView.headerHeight(notes: notes.count), crop.minX, crop.maxX, crop.height
         ))
         print(report.joined(separator: "\n"))
 
@@ -943,7 +982,7 @@ enum SnapshotAnimationSheet {
             title: "\(transition.name) · \(styleName)",
             subtitle: "\(describe(fromMode)) → \(describe(toMode)) · \(timeline.spring.name) spring(response \(timeline.spring.response), damping \(timeline.spring.dampingFraction)) · \(swapLabel)"
                 + (shiftNote.isEmpty ? "" : " · " + shiftNote),
-            notes: jumps.map { "불연속 " + $0 },
+            notes: notes,
             bar: bar,
             crop: crop,
             frames: frames,
@@ -956,7 +995,7 @@ enum SnapshotAnimationSheet {
         let cell = SnapshotAnimationSheetView.cellSize(crop: crop)
         let size = CGSize(
             width: CGFloat(columns) * cell.width + CGFloat(columns - 1) * SnapshotAnimationSheetView.spacing + 24,
-            height: SnapshotAnimationSheetView.headerHeight(notes: jumps.count) + CGFloat(rows) * cell.height
+            height: SnapshotAnimationSheetView.headerHeight(notes: notes.count) + CGFloat(rows) * cell.height
                 + CGFloat(rows - 1) * SnapshotAnimationSheetView.spacing + 24
         )
         return try SnapshotStage.image(of: sheet, size: size)
