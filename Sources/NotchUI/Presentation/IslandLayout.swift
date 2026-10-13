@@ -80,6 +80,8 @@ struct IslandLayout: Equatable {
         var spec = shape
         spec.originX = origin.x
         spec.originY = origin.y
+        spec.frameWidth = size.width
+        spec.frameHeight = size.height
         return spec
     }
 

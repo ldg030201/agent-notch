@@ -21,6 +21,9 @@ struct IslandRootView: View {
 
 /// 아일랜드 본체: 검정 모양 + 모드별 내용.
 /// - 크기 · 위치 · 모양은 한 스프링으로 함께 움직인다 (종류가 바뀌면 `IslandMotion.resize`, 같은 종류 안의 크기 변화는 `adjust`).
+/// - 검정 모양 · 잘라내기 · 클릭 모양은 패널 전체 기준(`IslandPanelShape`)으로 스펙 하나에서 그린다.
+///   프레임 크기 · 오프셋을 따로 애니메이션하면 SwiftUI 가 둘을 모양 보간과 어긋나게 움직일 때(재조준 · 프레임 밀림)
+///   부분 1 이 옆으로 튀거나 넓어져 보인다.
 /// - 내용 구조(`IslandContentKey`: 모드 종류 · 접힌 표시 방식)가 바뀌면 이전 내용은 이전 레이아웃 그대로,
 ///   화면 위 그 자리에 머문 채 흐려지고, 모양이 거의 자리 잡은 뒤 새 내용이 나타난다.
 /// - 호버 확대는 모양이 다 자리 잡은 뒤에만 시작하고, 내용이 바뀔 때 마우스가 위에 있었으면 한 번 나갔다 들어와야 한다.
@@ -41,8 +44,6 @@ struct IslandContainer: View {
         let contentKey = IslandContentKey(mode: mode, layout: layout)
         let outgoing = viewState.outgoingContent(current: mode, layout: layout, reduceMotion: reduceMotion)
         let shown = outgoing ?? IslandShownContent(mode: mode, layout: layout)
-        // 사라지는 내용은 화면 위 원래 자리에 둔다: 프레임 원점과 같은 곡선으로 반대 방향으로 움직여 상쇄된다
-        let pin = CGSize(width: shown.layout.origin.x - layout.origin.x, height: shown.layout.origin.y - layout.origin.y)
         let swapping = outgoing != nil || !viewState.contentVisible
         let pointerOver = presentation.hoveredScreenID == screenID
         // 전환 중 · 아이콘 구멍과 겹칠 때는 호버 표시를 하지 않는다
@@ -50,7 +51,7 @@ struct IslandContainer: View {
         // 모양이 다 자리 잡은 뒤에만 호버 표시를 시작한다 (전환 끝에 깜빡이지 않게)
         let scaled = viewState.hoverScale(wants: wantsHover)
         let spec = layout.shapeSpec
-        let shape = IslandShape(spec: spec)
+        let shape = IslandPanelShape(spec: spec)
         let invisible = mode == .hidden || concealed
         // 모드 종류가 바뀔 때만 resize, 같은 종류 안의 변화(표시 방식만 바뀌는 교체 포함)는 adjust
         let motion = outgoing.map { $0.mode.kind != mode.kind } == true
@@ -65,23 +66,26 @@ struct IslandContainer: View {
                 reduceMotion: reduceMotion
             )
             .frame(width: shown.layout.size.width, height: shown.layout.size.height, alignment: .topLeading)
-            .offset(pin)
             .opacity(viewState.contentVisible ? 1 : 0)
             // 마우스를 올리면 내용만 살짝 밝게 (모양 크기는 바꾸지 않아 노치 밖으로 삐져나오지 않음)
             .brightness(scaled ? 0.12 : 0)
-            // 내용이 바뀌는 순간엔 새 뷰로 (이전 내용의 고정 위치가 새 내용으로 이어지지 않게)
+            // 그 내용을 배치한 레이아웃 자리에 둔다: 사라지는 이전 내용은 화면 위 원래 자리에 그대로 머문다
+            .offset(x: shown.layout.origin.x, y: shown.layout.origin.y)
+            // 내용이 바뀌는 순간엔 새 뷰로 (이전 내용의 자리가 새 내용으로 이어지지 않게)
             .id(shown.key)
         }
-        .frame(width: layout.size.width, height: layout.size.height, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background {
-            IslandBackground(shape: IslandShape(spec: spec, holes: layout.iconHoles))
+            IslandBackground(shape: IslandPanelShape(spec: spec, holes: layout.iconHoles))
         }
         .clipShape(shape)
-        // 아이콘 구멍 위는 클릭을 받지 않는다 (마우스 상태 갱신 전에 눌려도 펼쳐지지 않게)
-        .contentShape(IslandHitShape(shape: shape, cutouts: layout.passThroughRects))
+        // 아이콘 구멍 위는 클릭을 받지 않는다 (마우스 상태 갱신 전에 눌려도 펼쳐지지 않게). 통과 영역은 프레임 기준 → 패널 기준
+        .contentShape(IslandHitShape(
+            shape: shape,
+            cutouts: layout.passThroughRects.map { $0.offsetBy(dx: layout.origin.x, dy: layout.origin.y) }
+        ))
         .opacity(invisible ? 0 : 1)
         .allowsHitTesting(!invisible)
-        .offset(x: layout.origin.x, y: layout.origin.y)
         .animation(motion, value: layout.animationKey)
         .animation(IslandMotion.hover, value: scaled)
         .animation(.easeOut(duration: 0.2), value: invisible)
@@ -140,8 +144,8 @@ struct IslandContainer: View {
 }
 
 /// 아일랜드 검은 배경 (아이콘 구멍은 `IslandShape.holes` 로 뚫는다)
-struct IslandBackground: View {
-    let shape: IslandShape
+struct IslandBackground<S: Shape>: View {
+    let shape: S
 
     var body: some View {
         shape
@@ -152,8 +156,14 @@ struct IslandBackground: View {
 
 /// 클릭을 받는 모양: 아일랜드 모양에서 클릭 통과 영역(아이콘 구멍)을 뺀 것
 struct IslandHitShape: Shape {
-    let shape: IslandShape
+    var shape: IslandPanelShape
+    /// 패널 기준
     let cutouts: [CGRect]
+
+    var animatableData: IslandShapeSpec {
+        get { shape.spec }
+        set { shape.spec = newValue }
+    }
 
     func path(in rect: CGRect) -> Path {
         let base = shape.path(in: rect)

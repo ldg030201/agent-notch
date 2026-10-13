@@ -44,6 +44,9 @@ struct IslandShapeSpec: Equatable {
     var capRadius: CGFloat = 0
     /// 부분 1 (접힌 모양). 폭 0 이면 없음
     var part1 = IslandPart1Spec()
+    /// 프레임 크기 (`IslandLayout.size`). 패널 기준으로 그리는 `IslandPanelShape` 만 쓴다
+    var frameWidth: CGFloat = 0
+    var frameHeight: CGFloat = 0
 }
 
 extension IslandShapeSpec {
@@ -131,6 +134,7 @@ extension IslandShapeSpec: VectorArithmetic {
         \.part1.minX, \.part1.minY, \.part1.width, \.part1.height, \.part1.neckLeft, \.part1.neckRight, \.part1.neckHeight,
         \.part1.bodyLeft, \.part1.bodyRight, \.part1.leftEar, \.part1.rightEar, \.part1.topRadius,
         \.part1.bodyTopRadius, \.part1.shoulderRadius, \.part1.bottomRadius,
+        \.frameWidth, \.frameHeight,
     ]
 
     static var zero: IslandShapeSpec { IslandShapeSpec() }
@@ -153,6 +157,24 @@ extension IslandShapeSpec: VectorArithmetic {
 
     var magnitudeSquared: Double {
         Self.fields.reduce(0) { $0 + Double(self[keyPath: $1] * self[keyPath: $1]) }
+    }
+}
+
+/// 패널 전체를 받아 스펙의 원점 · 크기 자리에 아일랜드를 그리는 모양.
+/// 자리 · 크기 · 모양이 모두 스펙(`animatableData`) 한 곳에서 보간된다. 프레임 크기 · 오프셋 애니메이션과 따로 움직이지 않아서
+/// 빠르게 다시 누르거나(스프링 재조준) 프레임이 밀려도 부분 1 이 옆으로 밀리거나 넓어져 보이지 않는다
+struct IslandPanelShape: Shape {
+    var spec: IslandShapeSpec
+    /// 메뉴바 아이콘 구멍 (패널 기준)
+    var holes: [CGRect] = []
+
+    var animatableData: IslandShapeSpec {
+        get { spec }
+        set { spec = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        IslandShape(spec: spec, holes: holes).path(in: IslandShape.frame(spec, in: rect))
     }
 }
 
@@ -241,6 +263,11 @@ struct IslandShape: Shape {
         if main.isEmpty || spec.isSameShape(as: spec.part1, frame: rect) { return .part1(part1) }
         // 부분 1 은 그대로 그리고, 주 외곽선(목 + 부분 2)을 합친다
         return .union(main: main, part1: part1)
+    }
+
+    /// 프레임 사각형 (패널 기준 원점 · 크기를 스펙에서). `IslandPanelShape` 가 이 사각형에 그린다
+    static func frame(_ spec: IslandShapeSpec, in panel: CGRect) -> CGRect {
+        CGRect(x: panel.minX + spec.originX, y: panel.minY + spec.originY, width: spec.frameWidth, height: spec.frameHeight)
     }
 
     /// 칠할 모양 (구멍 없이)
