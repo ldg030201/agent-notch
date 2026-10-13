@@ -42,6 +42,35 @@ public struct QuestionOption: Hashable, Sendable {
         self.label = label
         self.description = description
     }
+
+    /// Claude 가 권장하는 선택지인지 (이름 끝의 "(Recommended)" · "(권장)" · "(추천)").
+    /// Claude 앱 질문 창처럼 노치 카드에도 표시한다
+    public var isRecommended: Bool { Self.recommendedSuffixRange(in: label) != nil }
+
+    /// 카드에 보여줄 이름: 권장 표시를 뗀 이름 (권장 여부는 배지로 따로 보여준다). 답은 늘 원래 `label` 그대로 보낸다
+    public var displayLabel: String {
+        guard let range = Self.recommendedSuffixRange(in: label) else { return label }
+        let trimmed = label[..<range.lowerBound].trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? label : trimmed
+    }
+
+    /// 이름 끝의 권장 표시 범위 (대소문자 무시, 앞 공백 허용)
+    static func recommendedSuffixRange(in label: String) -> Range<String.Index>? {
+        // 끝 공백만 떼고 찾는다 (Substring 이라 찾은 범위가 원래 문자열 인덱스 그대로다)
+        var end = label.endIndex
+        while end > label.startIndex, label[label.index(before: end)].isWhitespace {
+            end = label.index(before: end)
+        }
+        let text = label[..<end]
+        for marker in recommendedMarkers {
+            if let range = text.range(of: marker, options: [.caseInsensitive, .backwards, .anchored]) {
+                return range.lowerBound..<label.endIndex
+            }
+        }
+        return nil
+    }
+
+    static let recommendedMarkers = ["(Recommended)", "(권장)", "(추천)"]
 }
 
 /// ExitPlanMode 계획 (Claude Code 가 계획 파일 내용과 경로를 훅 입력에 넣어 준다)

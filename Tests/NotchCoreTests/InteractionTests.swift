@@ -47,6 +47,20 @@ import NotchShared
 
     // MARK: - 대기열
 
+    @Test func recommendedOptionIsMarkedButAnswerKeepsLabel() {
+        let recommended = QuestionOption(label: "공개 (Recommended)", description: "brew 설치에 필요")
+        #expect(recommended.isRecommended)
+        #expect(recommended.displayLabel == "공개")
+        #expect(QuestionOption(label: "MIT (recommended) ").displayLabel == "MIT")
+        #expect(QuestionOption(label: "둘째 줄로 (권장)").displayLabel == "둘째 줄로")
+        #expect(QuestionOption(label: "고치기(추천)").isRecommended)
+        // 이름 가운데 있거나 표시만 있는 경우는 그대로
+        #expect(!QuestionOption(label: "Recommended 설정 보기").isRecommended)
+        #expect(QuestionOption(label: "(Recommended)").displayLabel == "(Recommended)")
+        // 답은 원래 이름 그대로
+        #expect(QuestionAnswer(labels: [recommended.label]).labels == ["공개 (Recommended)"])
+    }
+
     @Test func questionIsQueued() throws {
         let store = makeStore(clock)
         let id = try #require(ask(store, frameworkInput))

@@ -353,7 +353,7 @@ struct SnapshotWorld {
         "header": "이미지",
         "multiSelect": false,
         "options": [
-            ["label": "같이 하기", "description": "WebP 로 바꾸고 용량을 줄임 (약 2분)"],
+            ["label": "같이 하기 (Recommended)", "description": "WebP 로 바꾸고 용량을 줄임 (약 2분)"],
             ["label": "건너뛰기", "description": "지금 이미지 그대로 배포"],
             ["label": "새 이미지만", "description": "이번 글에 추가된 이미지 3개만 최적화"],
         ],

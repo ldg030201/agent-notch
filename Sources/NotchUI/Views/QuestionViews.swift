@@ -186,9 +186,15 @@ private struct QuestionOptionRow: View {
             HStack(spacing: 8) {
                 QuestionMark(number: number, multiSelect: multiSelect, selected: selected)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(QuestionCardModel.displayText(option.label))
-                        .font(IslandFont.bodyMedium)
-                        .foregroundStyle(Palette.text)
+                    HStack(spacing: 6) {
+                        Text(QuestionCardModel.displayText(option.displayLabel))
+                            .font(IslandFont.bodyMedium)
+                            .foregroundStyle(Palette.text)
+                        // Claude 앱 질문 창의 "(Recommended)" 를 같은 뜻의 배지로 (이름이 길면 이름부터 줄인다)
+                        if option.isRecommended {
+                            RecommendedBadge()
+                        }
+                    }
                     if let description = option.description {
                         Text(QuestionCardModel.displayText(description))
                             .font(IslandFont.caption)
@@ -205,9 +211,32 @@ private struct QuestionOptionRow: View {
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(option.description.map { "\(option.label), \($0)" } ?? option.label)
+        .accessibilityLabel(spokenLabel)
         .accessibilityAddTraits(selected ? .isSelected : [])
         .help(number <= 4 ? "\(number) 키로도 고를 수 있음" : "")
+    }
+}
+
+extension QuestionOptionRow {
+    private var spokenLabel: String {
+        var parts = [option.displayLabel]
+        if option.isRecommended { parts.append("권장") }
+        if let description = option.description { parts.append(description) }
+        return parts.joined(separator: ", ")
+    }
+}
+
+/// 권장 선택지 배지
+private struct RecommendedBadge: View {
+    var body: some View {
+        Text("권장")
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(Palette.green)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(Palette.green.opacity(0.16), in: Capsule())
+            .fixedSize()
+            .accessibilityHidden(true)
     }
 }
 
