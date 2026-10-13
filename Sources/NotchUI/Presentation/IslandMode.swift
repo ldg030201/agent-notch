@@ -6,7 +6,7 @@ import NotchCore
 enum IslandMode: Equatable {
     /// 표시하지 않음 (세션 없음, 정책상 숨김, 풀스크린 숨김)
     case hidden
-    /// 작업 중인 세션 없음 → 오른쪽 날개에 세션 점
+    /// 작업 중인 세션 없음 → 날개에 세션 상태 요약 (끝남 개수 등)
     case idle
     /// 접힌 상태로 포커스 세션 표시 (작업 중 / 주의 필요 / 미확인 완료)
     case working
@@ -78,9 +78,16 @@ enum IslandMetrics {
 
     /// 접힌 working 상태에서 노치 양옆 날개 폭
     static let workingWing: CGFloat = 108
-    static let idleDotSize: CGFloat = 5
-    static let idleDotSpacing: CGFloat = 3
-    static let maxIdleDots = 5
+
+    /// 세션 상태 요약 "● 2": 점 지름 · 점과 숫자 사이 · 묶음 사이 · 앞 내용과 사이
+    static let summaryDotSize: CGFloat = 6
+    static let summaryDotGap: CGFloat = 4
+    static let summaryGroupSpacing: CGFloat = 6
+    static let summaryLead: CGFloat = 8
+    /// 요약을 넣느라 날개가 더 넓어질 수 있는 폭 (한쪽)
+    static let summaryWingGrowth: CGFloat = 40
+    /// 노치 아래 띠에 요약이 한 줄로 안 들어가면 띠를 이만큼 높여 두 줄로 (폭은 노치 폭 그대로)
+    static let stripSummaryLineHeight: CGFloat = 14
 
     static let lineHeight: CGFloat = 18
     static let diffRowHeight: CGFloat = 17
@@ -146,11 +153,6 @@ enum IslandMetrics {
     /// SwiftUI Text 의 줄 높이와 맞춘 값 (올림한 ascender + 올림한 descender + leading)
     static func fontLineHeight(_ font: NSFont) -> CGFloat {
         ceil(font.ascender) + ceil(-font.descender) + ceil(font.leading)
-    }
-
-    static func idleDotsWidth(count: Int) -> CGFloat {
-        let n = CGFloat(min(max(count, 1), maxIdleDots))
-        return n * idleDotSize + (n - 1) * idleDotSpacing
     }
 
     static func diffRowsHeight(count: Int) -> CGFloat {

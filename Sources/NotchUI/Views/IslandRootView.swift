@@ -344,9 +344,14 @@ struct IslandContentView: View {
         case .hidden:
             Color.clear
         case .idle:
-            IdleCompactView(layout: layout, store: presentation.store, reduceMotion: reduceMotion)
+            IdleCompactView(layout: layout, summary: presentation.compactSummary, reduceMotion: reduceMotion)
         case .working:
-            CompactSessionView(session: presentation.compactSession, layout: layout, reduceMotion: reduceMotion)
+            CompactSessionView(
+                session: presentation.compactSession,
+                summary: presentation.compactSummary,
+                layout: layout,
+                reduceMotion: reduceMotion
+            )
         case let .peek(sessionID, diff):
             PeekView(
                 session: presentation.store.sessions[sessionID],

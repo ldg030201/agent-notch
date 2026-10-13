@@ -248,6 +248,44 @@ struct SessionDot: View {
     }
 }
 
+// MARK: - 세션 상태 요약
+
+/// 세션 상태 요약 "● 2 ● 1 ● 3": 기다리는 중(주황) → 진행 중(초록) → 끝남(회색), 0 인 묶음은 뺀다.
+/// 점만 색을 쓰고 숫자는 보조 글자색이라 `+N −M` 과 헷갈리지 않는다. 늘 통째로 그린다 (줄어들지 않음 — 자리는 레이아웃이 잡는다).
+struct SessionSummaryChips: View {
+    let summary: SessionStatusSummary
+    /// 읽어 줄 때 앞에 붙일 말 (예: "다른 세션 ")
+    var spokenPrefix = ""
+
+    var body: some View {
+        HStack(spacing: IslandMetrics.summaryGroupSpacing) {
+            ForEach(summary.groups.map { $0.group }, id: \.self) { group in
+                HStack(spacing: IslandMetrics.summaryDotGap) {
+                    Circle()
+                        .fill(Self.color(group))
+                        .frame(width: IslandMetrics.summaryDotSize, height: IslandMetrics.summaryDotSize)
+                    Text(verbatim: "\(summary.count(group))")
+                        .font(IslandFont.summaryCount)
+                        .foregroundStyle(Palette.secondary)
+                }
+            }
+        }
+        .lineLimit(1)
+        .fixedSize()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(spokenPrefix + summary.spokenText)
+        .accessibilityHidden(summary.isEmpty)
+    }
+
+    static func color(_ group: SessionStatusSummary.Group) -> Color {
+        switch group {
+        case .waiting: return Palette.amber
+        case .working: return Palette.green
+        case .done: return Palette.muted
+        }
+    }
+}
+
 // MARK: - diff
 
 /// `+N −M` (초록/빨강 고정폭)

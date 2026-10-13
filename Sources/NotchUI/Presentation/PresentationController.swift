@@ -38,8 +38,10 @@ final class PresentationController {
     private(set) var reduceMotion = false
     /// 화면별 메뉴바 빈 공간 측정값
     private(set) var spaces: [ScreenID: MenuBarSpace] = [:]
-    /// 열린 메뉴 · 팝오버가 아일랜드 자리와 겹친 화면
+    /// 열린 메뉴 · 팝오버가 아일랜드 + 카드 자리와 겹친 화면 (알림 펼침을 미루고 일시 펼침은 보이지 않는다)
     private(set) var occludedScreenIDs: Set<ScreenID> = []
+    /// 그중 메뉴가 접힌 아일랜드에 닿아 접힌 상태를 투명하게 숨긴 화면
+    private(set) var concealedScreenIDs: Set<ScreenID> = []
     /// 노치를 쓰는 다른 앱 (화면 → 앱 이름)
     private(set) var notchConflicts: [ScreenID: String] = [:]
     /// 넓은 노치에서 마우스를 올려 비켜준 날개 (아이콘 위치를 모를 때)
@@ -172,8 +174,10 @@ final class PresentationController {
         retractedWings[id] = sides.isEmpty ? nil : sides
     }
 
-    /// 열린 메뉴와 겹친 화면. 겹치기 시작하면 일시 펼침(피크/완료)은 바로 접는다.
-    func setOccluded(_ ids: Set<ScreenID>) {
+    /// 열린 메뉴와 겹친 화면 · 접힌 상태를 숨길 화면 (`OverlapMonitor`). 겹치기 시작하면 일시 펼침(피크/완료)은 바로 접는다.
+    func setOccluded(_ ids: Set<ScreenID>, concealed: Set<ScreenID> = []) {
+        let concealed = concealed.intersection(ids)
+        if concealedScreenIDs != concealed { concealedScreenIDs = concealed }
         guard occludedScreenIDs != ids else { return }
         occludedScreenIDs = ids
         if let target = transientTargetScreenID, ids.contains(target), transient != nil {
@@ -241,9 +245,9 @@ final class PresentationController {
         return compactMode(for: id)
     }
 
-    /// 열린 메뉴와 겹쳐 접힌 아일랜드를 투명하게 숨기는 중인지 (알림이 대기 중이면 숨기지 않음)
+    /// 열린 메뉴가 접힌 아일랜드에 닿아 투명하게 숨기는 중인지 (알림이 대기 중이면 숨기지 않음)
     func isConcealed(_ id: ScreenID) -> Bool {
-        guard occludedScreenIDs.contains(id) else { return false }
+        guard concealedScreenIDs.contains(id) else { return false }
         switch mode(for: id) {
         case .idle, .working:
             return !(id == transientTargetScreenID && alertMode() != nil)
@@ -260,6 +264,16 @@ final class PresentationController {
 
     private static func isActive(_ session: AgentSession) -> Bool {
         session.phase.isWorking || session.phase.needsAttention || session.hasUnseenCompletion
+    }
+
+    /// 접힌 상태의 세션 상태 요약: 접힌 상태가 보여주는 세션을 뺀 나머지 (보여주는 세션이 없으면 전부)
+    var compactSummary: SessionStatusSummary {
+        SessionStatusSummary(sessions: store.rankedSessions, excluding: compactSession?.id)
+    }
+
+    /// 펼친 목록 머리의 요약: 모든 세션 (목록에 다 있으므로)
+    var allSessionsSummary: SessionStatusSummary {
+        SessionStatusSummary(sessions: store.rankedSessions)
     }
 
     /// 접힌 상태. 둘 자리가 없으면(메뉴바가 숨었거나 빈 구간이 없음, "표시 안 함") 숨긴다.
@@ -347,16 +361,18 @@ final class PresentationController {
         return engine.retractBands(for: compactContent(for: mode))
     }
 
-    /// 접힌 상태 내용 (레이아웃 선택용 폭 측정)
+    /// 접힌 상태 내용 (레이아웃 선택용 폭 측정).
+    /// 다른 세션 요약 폭도 툴 이름 · `+N −M` 처럼 붙잡아 둬서 개수가 바뀌어도 날개가 출렁이지 않는다
     func compactContent(for mode: IslandMode) -> CompactContent {
         if mode == .working, let session = compactSession {
             _ = compactHoldRevision
             let now = ProcessInfo.processInfo.systemUptime
-            let stable = compactHold.stabilize(CompactMetrics(session: session), key: session.id, now: now)
+            let summary = SessionStatusSummary(sessions: store.rankedSessions, excluding: session.id)
+            let stable = compactHold.stabilize(CompactMetrics(session: session, summary: summary), key: session.id, now: now)
             scheduleCompactHoldRelease(at: compactHold.releaseAt, now: now)
             return .session(stable)
         }
-        return .idle(count: store.rankedSessions.count)
+        return .idle(content: CompactText.summaryWidth(allSessionsSummary))
     }
 
     /// 붙잡아 둔 폭을 줄일 수 있는 시각에 레이아웃을 다시 계산하게 한다
@@ -447,11 +463,16 @@ final class PresentationController {
         }
     }
 
-    /// 열린 메뉴와 겹치는지 볼 영역 (패널 기준): 지금 아일랜드 + 카드가 펼쳐질 자리
-    func overlapZone(for id: ScreenID) -> CGRect? {
+    /// 열린 메뉴와 겹치는지 볼 영역 (패널 기준)
+    /// - zone: 지금 아일랜드 + 카드가 펼쳐질 자리 (겹치면 알림 펼침을 미루고 일시 펼침을 접는다)
+    /// - island: 지금 아일랜드 + 그 아래 메뉴바 끝까지 6pt 더 (메뉴바 아이템에서 내려온 메뉴 · 팝오버).
+    ///   여기와 겹칠 때만 접힌 상태를 숨긴다 (카드 자리 아래쪽에 뜬 다른 앱 팝업 · 툴팁엔 숨지 않는다)
+    func overlapZones(for id: ScreenID) -> (zone: CGRect, island: CGRect)? {
         guard let engine = layoutEngine(for: id) else { return nil }
         let current = layout(for: mode(for: id), engine: engine).panelRect
-        return current.union(engine.cardZone())
+        let bottom = max(current.maxY, engine.menuBarHeight) + 6
+        let island = CGRect(x: current.minX - 4, y: current.minY, width: current.width + 8, height: bottom - current.minY)
+        return (current.union(engine.cardZone()), island)
     }
 
     /// 설정이 켜져 있을 때만 보여줄 최근 응답 한 줄

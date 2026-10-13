@@ -13,8 +13,22 @@ struct ExpandedView: View {
         let detail = store.focusedSession ?? sessions.first
 
         CardScaffold(layout: layout) {
-            Text("세션 \(sessions.count)")
-                .foregroundStyle(Palette.secondary)
+            // 세션 수 + 모든 세션 상태 요약. 자리가 모자라면 요약을 남기고 "세션 N" 을 뺀다 (칩은 자르지 않음)
+            let title = Text("세션 \(sessions.count)").foregroundStyle(Palette.secondary)
+            let summary = presentation.allSessionsSummary
+            if summary.isEmpty {
+                title
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) {
+                        title
+                        SessionSummaryChips(summary: summary)
+                    }
+                    .fixedSize()
+                    SessionSummaryChips(summary: summary, spokenPrefix: "세션 \(sessions.count)개, ")
+                    title
+                }
+            }
         } trailing: {
             HStack(spacing: 6) {
                 if let provider = presentation.updateProvider, provider.hasUpdate {

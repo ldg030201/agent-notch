@@ -83,10 +83,13 @@ enum IslandFont {
     static let caption = Font.system(size: 11)
     /// 코드/diff 11pt 고정폭
     static let mono = Font.system(size: 11, design: .monospaced)
+    /// 세션 상태 요약 숫자 11pt (숫자만 고정폭 — 개수가 바뀌어도 폭이 같게)
+    static let summaryCount = Font.system(size: 11).monospacedDigit()
 
     // 레이아웃 계산(텍스트 줄 수 측정)용 AppKit 글꼴
     static let bodyNS = NSFont.systemFont(ofSize: 12)
     static let monoNS = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    static let summaryCountNS = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
     /// 고정폭 11pt 한 글자 폭
     static let monoCharWidth: CGFloat = ceil(("M" as NSString).size(withAttributes: [.font: monoNS]).width)
 }

@@ -72,6 +72,8 @@ public enum IslandSnapshotRenderer {
 enum SnapshotScenario: String, CaseIterable {
     case idle
     case idleWings = "idle-wings"
+    /// 쉬는 세션 5개: 모든 세션 요약 ("● 5")
+    case idleSummary = "idle-summary"
     case working
     case workingWings = "working-wings"
     case workingWingsIcons = "working-wings-icons"
@@ -86,6 +88,10 @@ enum SnapshotScenario: String, CaseIterable {
     /// `working-below-notch-left` 에서 앞 앱 메뉴만 노치까지 길어진 화면 (왼쪽 날개도 못 써서 노치 아래 띠)
     case workingBelowNotchStrip = "working-below-notch-strip"
     case workingMinimal = "working-minimal"
+    /// 세션 5개: 접힌 상태가 보여주는 세션(권한 대기, 카드 접음) 말고 기다리는 중 1 · 진행 중 1 · 끝남 2 요약
+    case workingSummary = "working-summary"
+    /// `working-summary` 를 노치 아래 띠로 (양옆이 막힌 메뉴바)
+    case workingSummaryStrip = "working-summary-strip"
     case peek
     case permission
     case permissionClipped = "permission-clipped"
@@ -96,6 +102,8 @@ enum SnapshotScenario: String, CaseIterable {
     case failed
     case expanded
     case expandedUpdate = "expanded-update"
+    /// `working-summary` 를 펼친 모습: 머리에 "세션 5" + 모든 세션 요약
+    case expandedSummary = "expanded-summary"
     case menubarWorking = "menubar-working"
     case menubarDot = "menubar-dot"
     case menubarPermission = "menubar-permission"
@@ -115,7 +123,7 @@ enum SnapshotScenario: String, CaseIterable {
     /// 노치 화면 표시 방식. 노치 아래 장면만 명시하고 나머지는 기본값(넓은 노치)
     var notchStyle: NotchStyle {
         switch self {
-        case .workingBelowNotch, .workingBelowNotchLeft, .workingBelowNotchStrip, .workingMinimal: return .belowNotch
+        case .workingBelowNotch, .workingBelowNotchLeft, .workingBelowNotchStrip, .workingMinimal, .workingSummaryStrip: return .belowNotch
         default: return .wings
         }
     }
@@ -124,7 +132,7 @@ enum SnapshotScenario: String, CaseIterable {
     var crowding: SnapshotMenuBar.Crowding {
         switch self {
         case .workingRightWing: return .leftBlocked
-        case .workingBelowNotch, .workingMinimal: return .bothBlocked
+        case .workingBelowNotch, .workingMinimal, .workingSummaryStrip: return .bothBlocked
         case .idleWings, .workingWings, .workingWingsIcons, .workingWingsRetracted, .workingBelowNotchLeft: return .iconsToNotch
         case .workingWingsIconsStrip, .workingBelowNotchStrip: return .menusAndIconsToNotch
         case .workingWingsIconsNear: return .iconsNearNotch
@@ -417,6 +425,26 @@ enum SnapshotStage {
         switch scene {
         case .idle, .idleWings:
             break
+        case .idleSummary:
+            world.startMoreSessions()
+        case .workingSummary, .workingSummaryStrip, .expandedSummary:
+            // api-server 작업 중 · web-app 권한 대기 · blog 입력 대기 · docs-site / mobile-app 쉬는 중.
+            // 기다리는 세션이 있으면 늘 그 세션이 포커스라 접힌 상태는 web-app 을 보여주고(두 알림은 접어 둠), 나머지를 요약한다
+            world.startMoreSessions()
+            world.apiServerEdits()
+            world.apiServerRunsTests()
+            world.webAppAsksPermission()
+            world.blogAsksQuestion()
+            presentation.handleLatestSignal()
+            if let request = world.store.pendingPermissions.first {
+                presentation.minimize(request)
+            }
+            if case .needsInput = presentation.mode(for: screenID) {
+                presentation.collapse(on: screenID)
+            }
+            if scene == .expandedSummary {
+                presentation.toggleExpanded(on: screenID)
+            }
         case .working, .workingWings, .workingWingsIcons, .workingWingsIconsStrip, .workingWingsIconsNear, .workingRightWing, .workingBelowNotch,
              .workingBelowNotchLeft, .workingBelowNotchStrip, .menubarWorking, .menubarDot:
             world.apiServerEdits()

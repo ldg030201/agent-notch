@@ -916,6 +916,14 @@ enum SnapshotAnimationSheet {
             report0.append(contentsOf: hoverCheck.problems.map { "   ✗ 호버 확대 순서: \($0)" })
             report.append(contentsOf: hoverCheck.problems.map { "   ✗ 호버 확대 순서: \($0)" })
         }
+        for (label, check) in [("겹침 감지", SnapshotOverlapCheck.run()), ("세션 요약 자리", SnapshotSummaryCheck.run())] {
+            if check.problems.isEmpty {
+                report.append("   \(label) 검사 \(check.cases)개 통과")
+            } else {
+                report0.append(contentsOf: check.problems.map { "   ✗ \(label): \($0)" })
+                report.append(contentsOf: check.problems.map { "   ✗ \(label): \($0)" })
+            }
+        }
         if sameKind, !sameKey { report.append("   같은 종류 · 표시 방식 교체 (이전 내용 제자리 흐림 → 모양이 자리 잡은 뒤 새 내용)") }
         for jump in jumps { report.append("   ✗ 불연속 \(jump)") }
         for frame in frames where !frame.issues.isEmpty {

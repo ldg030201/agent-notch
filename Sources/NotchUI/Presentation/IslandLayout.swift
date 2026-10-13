@@ -23,6 +23,10 @@ struct CompactItems: OptionSet, Hashable {
     let rawValue: Int
     static let project = CompactItems(rawValue: 1 << 0)
     static let tool = CompactItems(rawValue: 1 << 1)
+    /// 다른 세션 상태 요약 ("● 2")
+    static let summary = CompactItems(rawValue: 1 << 2)
+    /// 양쪽 날개에서 요약을 오른쪽 날개(`+N −M` 앞)에 둔다. 없으면 왼쪽 날개(프로젝트명 뒤)
+    static let summaryTrailing = CompactItems(rawValue: 1 << 3)
     static let all: CompactItems = [.project, .tool]
 }
 
@@ -93,13 +97,19 @@ struct IslandLayout: Equatable {
 
     /// 패널(화면 맨 위) 기준 사각형 (원점 왼쪽 위)
     var panelRect: CGRect { CGRect(origin: origin, size: size) }
+
+    /// 노치 아래 띠를 두 줄 높이로 잡았는지 (요약이 한 줄에 안 들어감, `IslandLayoutEngine.stripHeight`)
+    var hasTwoLineStrip: Bool {
+        size.height - shape.neckHeight > IslandMetrics.stripHeight + 1
+    }
 }
 
 // MARK: - 접힌 상태 내용 크기
 
 /// 접힌 상태에 보여줄 내용과 텍스트 폭 (레이아웃 선택용)
 enum CompactContent: Equatable {
-    case idle(count: Int)
+    /// 작업 중인 세션 없음: 모든 세션 상태 요약 (`content` = 요약 폭)
+    case idle(content: CGFloat)
     case session(CompactMetrics)
 }
 
@@ -109,20 +119,25 @@ struct CompactMetrics: Equatable {
     var fullTool: CGFloat
     /// `+N −M` 또는 상태 문구 (없으면 0)
     var trailing: CGFloat
+    /// 다른 세션 상태 요약 폭 (다른 세션이 없으면 0). 숫자는 고정폭이라 한 자리 안에서 바뀌면 폭이 같다
+    var summary: CGFloat
     /// 상태 문구(승인 필요 등)를 보여주는 단계라 툴 이름이 없는지
     var isAttention: Bool
 
-    init(project: CGFloat, shortTool: CGFloat, fullTool: CGFloat, trailing: CGFloat, isAttention: Bool) {
+    init(project: CGFloat, shortTool: CGFloat, fullTool: CGFloat, trailing: CGFloat, summary: CGFloat = 0, isAttention: Bool) {
         self.project = project
         self.shortTool = shortTool
         self.fullTool = fullTool
         self.trailing = trailing
+        self.summary = summary
         self.isAttention = isAttention
     }
 
+    /// - summary: 지금 보여주는 세션을 뺀 다른 세션 요약
     @MainActor
-    init(session: AgentSession) {
+    init(session: AgentSession, summary: SessionStatusSummary = .empty) {
         let attention = CompactText.attentionText(session)
+        self.summary = CompactText.summaryWidth(summary)
         project = CompactText.width(session.projectName, font: IslandFont.bodyNS)
         if let attention {
             shortTool = 0
@@ -162,6 +177,21 @@ enum CompactText {
     static func statWidth(added: Int, removed: Int) -> CGFloat {
         guard added > 0 || removed > 0 else { return 0 }
         return width("+\(added)", font: IslandFont.monoNS) + 4 + width("\u{2212}\(removed)", font: IslandFont.monoNS)
+    }
+
+    /// 요약 숫자 한 자리 폭 (고정폭 숫자 11pt)
+    static let summaryDigitWidth: CGFloat = ceil(("0" as NSString).size(withAttributes: [.font: IslandFont.summaryCountNS]).width * 2) / 2
+
+    /// 세션 상태 요약 폭: 묶음마다 점 + 숫자 (자릿수로만 정해지므로 1 → 2 처럼 한 자리 안의 변화는 폭이 같다). 비었으면 0
+    static func summaryWidth(_ summary: SessionStatusSummary) -> CGFloat {
+        let groups = summary.groups
+        guard !groups.isEmpty else { return 0 }
+        typealias M = IslandMetrics
+        var width = CGFloat(groups.count - 1) * M.summaryGroupSpacing
+        for item in groups {
+            width += M.summaryDotSize + M.summaryDotGap + CGFloat(String(item.count).count) * summaryDigitWidth
+        }
+        return ceil(width)
     }
 }
 
@@ -289,8 +319,7 @@ struct IslandLayoutEngine {
         let sides: [WingCutouts.Side] = previousWings?.arrangement == .left ? [.left, .right] : [.right, .left]
 
         switch content {
-        case let .idle(count):
-            let dots = M.idleDotsWidth(count: count)
+        case let .idle(dots):
             let both = max(28, dots + M.wingPadding + 8)
             let splitMargin = entryMargin(.split)
             if free.left >= both + splitMargin, free.right >= both + splitMargin {
@@ -306,8 +335,25 @@ struct IslandLayoutEngine {
         case let .session(metrics):
             let both = min(M.workingWing, free.left, free.right)
             if both >= M.minBothWing + entryMargin(.split) {
-                let width = stickyBothWidth(both)
-                return .wings(.plain(left: width, right: width, items: .all))
+                var fresh = both
+                var items = CompactItems.all
+                var need: CGFloat = 0
+                // 다른 세션 요약: 양쪽 날개를 같은 폭으로 조금 넓혀서라도 넣는다 (툴 이름 → 프로젝트명 순으로 줄임)
+                if metrics.summary > 0 {
+                    let cap = min(M.workingWing + M.summaryWingGrowth, free.left, free.right)
+                    let plans = Self.splitPlans(
+                        metrics, project: min(metrics.project, M.wideWingProjectCap),
+                        tool: metrics.isAttention ? 0 : min(metrics.shortTool, M.wideWingToolCap),
+                        leftPad: M.wingPadding, rightPad: M.wingPadding
+                    )
+                    if let plan = firstFittingPlan(plans, caps: (cap, cap)) {
+                        items = plan.items
+                        need = max(plan.left, plan.right)
+                        fresh = max(both, min(cap, (need / 4).rounded(.up) * 4))
+                    }
+                }
+                let width = stickyBothWidth(fresh, atLeast: need)
+                return .wings(.plain(left: width, right: width, items: items))
             }
             for side in sides where side == .right || appMenuMeasured {
                 let arrangement: WingArrangement = side == .left ? .left : .right
@@ -361,12 +407,84 @@ struct IslandLayoutEngine {
         return fresh - previous < cardRoomGrowthHysteresis ? previous : fresh
     }
 
-    /// 노치 양옆 같은 폭 날개: 여유가 조금 늘었다고 넓히지 않는다
-    private func stickyBothWidth(_ fresh: CGFloat) -> CGFloat {
+    /// 노치 양옆 같은 폭 날개: 여유가 조금 늘었다고 넓히지 않는다 (단 내용에 필요한 폭 `atLeast` 보다 좁게 두지는 않는다)
+    private func stickyBothWidth(_ fresh: CGFloat, atLeast need: CGFloat = 0) -> CGFloat {
         guard let previous = previousWings, previous.arrangement == .split, abs(previous.left - previous.right) < 0.5,
-              previous.left <= fresh + 0.5, fresh - previous.left < Self.wingGrowthHysteresis
+              previous.left <= fresh + 0.5, fresh - previous.left < Self.wingGrowthHysteresis, previous.left >= need - 0.5
         else { return fresh }
         return previous.left
+    }
+
+    // MARK: 다른 세션 요약 자리 (양쪽 날개)
+
+    /// 양쪽 날개에 둘 요소와 쪽마다 필요한 폭
+    struct SplitPlan: Equatable {
+        var items: CompactItems
+        var left: CGFloat
+        var right: CGFloat
+    }
+
+    /// 양쪽 날개에 필요한 폭: 왼쪽 = 상태 + 프로젝트 (+ 요약), 오른쪽 = (요약 + 8pt 이상 +) (툴 +) `+N −M`
+    /// (오른쪽 요약은 노치 쪽에 고정, 나머지는 바깥 끝).
+    /// 바깥 여백 · 안쪽 4pt · SwiftUI 배치 오차 8pt 포함 (CompactWings · CompactSessionView 배치와 같은 순서)
+    static func splitNeed(
+        _ metrics: CompactMetrics,
+        items: CompactItems,
+        project: CGFloat,
+        tool: CGFloat,
+        leftPad: CGFloat,
+        rightPad: CGFloat
+    ) -> SplitPlan {
+        let summary = items.contains(.summary) ? metrics.summary : 0
+        let summaryLeft = summary > 0 && !items.contains(.summaryTrailing)
+        let shownProject = items.contains(.project) ? project : 0
+        var left = leftPad + 14 + (shownProject > 0 ? 6 + shownProject : 0) + 4 + 8
+        if summaryLeft { left += M.summaryLead + summary }
+        var rightText = metrics.trailing
+        let shownTool = items.contains(.tool) ? tool : 0
+        if shownTool > 0 { rightText += shownTool + (metrics.trailing > 0 ? 6 : 0) }
+        if summary > 0, !summaryLeft { rightText += summary + (rightText > 0 ? M.summaryLead : 0) }
+        return SplitPlan(items: items, left: left, right: 4 + rightText + rightPad + 8)
+    }
+
+    /// 다른 세션 요약을 넣는 양쪽 날개 후보 (앞에서부터 고른다, 요약이 없으면 빈 목록).
+    /// 왼쪽 프로젝트명 뒤 → 오른쪽 `+N −M` 앞 → 오른쪽 + 툴 이름 뺌 → 왼쪽 + 프로젝트명 줄임 → 왼쪽 + 프로젝트명 뺌.
+    /// 툴 이름 → 프로젝트명 순으로 줄이고 요약은 끝까지 남긴다 (칩을 반만 자르지 않게 통째로 넣을 자리만 고른다).
+    static func splitPlans(
+        _ metrics: CompactMetrics,
+        project: CGFloat,
+        tool: CGFloat,
+        leftPad: CGFloat,
+        rightPad: CGFloat
+    ) -> [SplitPlan] {
+        guard metrics.summary > 0 else { return [] }
+        func need(_ items: CompactItems, project shown: CGFloat = project) -> SplitPlan {
+            splitNeed(metrics, items: items, project: shown, tool: tool, leftPad: leftPad, rightPad: rightPad)
+        }
+        var plans = [need([.project, .tool, .summary]), need([.project, .tool, .summary, .summaryTrailing])]
+        if tool > 0 { plans.append(need([.project, .summary, .summaryTrailing])) }
+        if project > Self.shortProjectWidth { plans.append(need([.project, .tool, .summary], project: Self.shortProjectWidth)) }
+        plans.append(need([.tool, .summary]))
+        return plans
+    }
+
+    /// 요약 자리가 모자랄 때 줄인 프로젝트명 폭
+    static let shortProjectWidth: CGFloat = 40
+
+    /// 양쪽 날개 후보 중 처음으로 들어가는 것.
+    /// 직전 양쪽 날개보다 요소를 더 넣거나 요약을 반대쪽으로 옮길 땐 여유가 더 있어야 한다 (아이콘이 조금씩 밀려도 오가지 않게)
+    private func firstFittingPlan(_ plans: [SplitPlan], caps: (left: CGFloat, right: CGFloat)) -> SplitPlan? {
+        let previous = previousWings?.arrangement == .split ? previousWings?.items : nil
+        return plans.first { plan in
+            var extra: CGFloat = 0
+            if let previous {
+                let added = plan.items.subtracting(previous).subtracting(.summaryTrailing)
+                let moved = plan.items.contains(.summary) && previous.contains(.summary)
+                    && plan.items.contains(.summaryTrailing) != previous.contains(.summaryTrailing)
+                if !added.isEmpty || moved { extra = Self.arrangementHysteresis }
+            }
+            return plan.left + extra <= caps.left + 0.5 && plan.right + extra <= caps.right + 0.5
+        }
     }
 
     /// 넓은 노치: 빈 공간 측정과 관계없이 양쪽 날개 (목업 기본형). 그것도 안 되면 nil (노치 아래 방식).
@@ -383,8 +501,7 @@ struct IslandLayoutEngine {
     private func baseWings(_ content: CompactContent) -> (left: CGFloat, right: CGFloat, items: CompactItems)? {
         let limit = wingLimit
         switch content {
-        case let .idle(count):
-            let dots = M.idleDotsWidth(count: count)
+        case let .idle(dots):
             let both = max(28, dots + M.wingPadding + 8)
             if limit.left >= both, limit.right >= both { return (both, both, .all) }
             let single = dots + M.wingPadding + 6
@@ -393,21 +510,27 @@ struct IslandLayoutEngine {
         case let .session(metrics):
             let pad = M.wingPadding
             let project = min(metrics.project, M.wideWingProjectCap)
+            let tool = metrics.isAttention ? 0 : min(metrics.shortTool, M.wideWingToolCap)
             // 왼쪽: 상태 + 프로젝트명, 오른쪽: 툴 + `+N −M` (또는 상태 문구). SwiftUI 배치 오차 8pt 여유.
-            let leftNeed = pad + 14 + (project > 0 ? 6 + project : 0) + 4 + 8
-            var rightText = metrics.trailing
-            if !metrics.isAttention, metrics.shortTool > 0 {
-                rightText += min(metrics.shortTool, M.wideWingToolCap) + (metrics.trailing > 0 ? 6 : 0)
+            let plain = Self.splitNeed(metrics, items: .all, project: project, tool: tool, leftPad: pad, rightPad: pad)
+            var wing = min(max(plain.left, plain.right, M.minWideWing), M.wideWingMax)
+            var items = CompactItems.all
+            // 다른 세션 요약: 날개를 `summaryWingGrowth` 까지 넓혀 넣는다 (툴 이름 → 프로젝트명 순으로 줄임)
+            if metrics.summary > 0 {
+                let cap = M.wideWingMax + M.summaryWingGrowth
+                let plans = Self.splitPlans(metrics, project: project, tool: tool, leftPad: pad, rightPad: pad)
+                if let plan = firstFittingPlan(plans, caps: (min(cap, limit.left), min(cap, limit.right))) {
+                    items = plan.items
+                    wing = max(wing, plan.left, plan.right)
+                }
             }
-            let rightNeed = 4 + rightText + pad + 8
-            let wing = min(max(leftNeed, rightNeed, M.minWideWing), M.wideWingMax)
             let both = (wing / 4).rounded(.up) * 4
             // 프로젝트명은 줄일 수 있으니 왼쪽은 앞 몇 글자만 들어가도 된다
-            let leftMin = pad + 14 + 6 + min(project, 40) + 4
+            let leftMin = pad + 14 + 6 + min(project, Self.shortProjectWidth) + 4
             // 아이콘 구멍을 쓰면 배치는 iconWings 가 정한다 (여기선 이력을 보지 않음)
             let margin = cutsIconHoles ? 0 : entryMargin(.split)
-            if limit.left >= leftMin + margin, limit.right >= min(both, rightNeed) {
-                return (min(both, limit.left), min(both, limit.right), .all)
+            if limit.left >= leftMin + margin, limit.right >= min(both, plain.right) {
+                return (min(both, limit.left), min(both, limit.right), items)
             }
             if let wing = singleWing(available: limit.right, metrics, arrangement: .right) {
                 return (0, wing.width, wing.items)
@@ -476,8 +599,7 @@ struct IslandLayoutEngine {
         func sideArrangement(_ side: WingCutouts.Side) -> WingArrangement { side == .left ? .left : .right }
 
         switch content {
-        case let .idle(count):
-            let dots = M.idleDotsWidth(count: count)
+        case let .idle(dots):
             let singleWidth = dots + M.wingPadding + 6
             // 양쪽: 왼쪽엔 작은 점, 오른쪽엔 세션 점
             if base.left > 0, base.right > 0,
@@ -504,6 +626,18 @@ struct IslandLayoutEngine {
                 var items = CompactItems.all
                 if room.left < leftMin + 6 + min(metrics.project, 24) + projectMargin { items.remove(.project) }
                 if metrics.trailing > 0, room.right < rightMin + 6 + min(metrics.shortTool, 28) + toolMargin { items.remove(.tool) }
+                // 다른 세션 요약: 노치 ~ 첫 구멍 사이에 통째로 들어가는 쪽에 둔다 (못 넣으면 생략)
+                if metrics.summary > 0 {
+                    let spanL = min(spec.left, room.left)
+                    let spanR = min(spec.right, room.right)
+                    let plans = Self.splitPlans(
+                        metrics, project: min(metrics.project, M.wideWingProjectCap),
+                        tool: metrics.isAttention ? 0 : min(metrics.shortTool, M.wideWingToolCap),
+                        leftPad: spanL < spec.left - 0.5 ? 4 : M.wingPadding,
+                        rightPad: spanR < spec.right - 0.5 ? 4 : M.wingPadding
+                    )
+                    if let plan = firstFittingPlan(plans, caps: (spanL, spanR)) { items = plan.items }
+                }
                 spec.items = items
             } else {
                 for side in order {
@@ -556,7 +690,7 @@ struct IslandLayoutEngine {
         return bands
     }
 
-    /// 날개 하나에 모을 때 폭과 요소 (프로젝트명 → 툴 이름 순으로 생략).
+    /// 날개 하나에 모을 때 폭과 요소.
     /// 같은 쪽에서 직전보다 요소를 더 넣으려면 여유가 더 있어야 한다 (`itemEntryMargin`)
     private func singleWing(
         available: CGFloat,
@@ -564,23 +698,64 @@ struct IslandLayoutEngine {
         arrangement: WingArrangement
     ) -> (width: CGFloat, items: CompactItems)? {
         let cap = min(available, M.maxSingleWing)
-        // 상태 문구(승인 필요 등)를 보여줄 땐 툴 이름이 없다
-        let variants: [CompactItems] = metrics.isAttention ? [[.project], []] : [.all, [.tool], []]
-        for items in variants {
+        for variant in Self.singleVariants(metrics) {
             // SwiftUI 실제 배치가 측정값보다 조금 넓게 잡히는 것을 감안해 8pt 여유
-            let need = M.wingPadding + 6 + 8 + Self.contentWidth(metrics, items: items, toolWidth: metrics.shortTool, toolCap: 90)
-            if need + itemEntryMargin(items, arrangement: arrangement) <= cap { return (min(cap, (need / 8).rounded(.up) * 8), items) }
+            let need = M.wingPadding + 6 + 8 + Self.contentWidth(
+                metrics, items: variant.items, toolWidth: metrics.shortTool, toolCap: 90, projectCap: variant.projectCap
+            )
+            if need + itemEntryMargin(variant.items, arrangement: arrangement) <= cap {
+                return (min(cap, (need / 8).rounded(.up) * 8), variant.items)
+            }
         }
         return nil
     }
 
-    /// 상태 아이콘 + 선택 요소 + `+N −M` 폭
-    static func contentWidth(_ metrics: CompactMetrics, items: CompactItems, toolWidth: CGFloat, toolCap: CGFloat) -> CGFloat {
+    /// 한 줄(날개 하나)에 넣을 요소 후보 (앞에서부터 고른다).
+    /// - 요약 없음: 프로젝트명 → 툴 이름 순으로 생략 (상태 문구를 보여줄 땐 툴 이름이 없다)
+    /// - 요약 있음: 툴 이름 → 프로젝트명(줄임 → 뺌) 순으로 생략하고 요약은 끝까지 남긴다
+    static func singleVariants(_ metrics: CompactMetrics) -> [(items: CompactItems, projectCap: CGFloat)] {
+        typealias Variant = (items: CompactItems, projectCap: CGFloat)
+        let full: CGFloat = 110
+        let none: CompactItems = []
+        guard metrics.summary > 0 else {
+            let plain: [Variant] = metrics.isAttention
+                ? [(CompactItems.project, full), (none, 0)]
+                : [(CompactItems.all, full), (CompactItems.tool, full), (none, 0)]
+            return plain
+        }
+        let withSummary: CompactItems = [.project, .summary]
+        var variants: [Variant] = []
+        if !metrics.isAttention { variants.append((withSummary.union(.tool), full)) }
+        variants.append((withSummary, full))
+        variants.append((withSummary, shortProjectWidth))
+        variants.append((CompactItems.summary, 0))
+        variants.append((none, 0))
+        return variants
+    }
+
+    /// 상태 아이콘 + 선택 요소 + `+N −M` 폭 (한 줄: 상태 · 프로젝트 · 요약 · 툴 · `+N −M`)
+    static func contentWidth(
+        _ metrics: CompactMetrics,
+        items: CompactItems,
+        toolWidth: CGFloat,
+        toolCap: CGFloat,
+        projectCap: CGFloat = 110
+    ) -> CGFloat {
         var width: CGFloat = 14
-        if items.contains(.project) { width += 6 + min(metrics.project, 110) }
+        if items.contains(.project) { width += 6 + min(metrics.project, projectCap) }
+        if items.contains(.summary), metrics.summary > 0 { width += M.summaryLead + metrics.summary }
         if items.contains(.tool), toolWidth > 0 { width += 6 + min(toolWidth, toolCap) }
         if metrics.trailing > 0 { width += 6 + metrics.trailing }
         return width
+    }
+
+    /// 노치 아래 띠 높이: 다른 세션 요약까지 한 줄에 안 들어가면 두 줄로 (폭은 늘 노치 폭)
+    func stripHeight(for content: CompactContent) -> CGFloat {
+        guard case let .session(metrics) = content, metrics.summary > 0 else { return M.stripHeight }
+        // 띠 안: 좌우 여백 10 · 상태 12 · 툴 이름(앞 24pt 만 보여도 됨) · `+N −M` · 요약 · 배치 오차 4
+        let tool = metrics.isAttention ? 0 : min(metrics.shortTool, 24)
+        let line = 10 + 12 + 5 + (tool > 0 ? tool + 6 : 0) + metrics.trailing + M.summaryLead + metrics.summary + 10 + 4
+        return line <= notchWidth ? M.stripHeight : M.stripHeight + M.stripSummaryLineHeight
     }
 
     private func externalPlacement(_ content: CompactContent) -> CompactPlacement {
@@ -589,8 +764,12 @@ struct IslandLayoutEngine {
             return .none
         case .belowMenuBar:
             switch content {
-            case let .idle(count): return .belowMenuBarPill(width: M.idleDotsWidth(count: count) + 28, items: .all)
-            case .session: return .belowMenuBarPill(width: M.pillWorkingWidth, items: .all)
+            case let .idle(dots): return .belowMenuBarPill(width: dots + 28, items: .all)
+            case let .session(metrics):
+                // 요약이 없으면 지금처럼 프로젝트 · 툴을 다 넣고 넘치는 제목은 줄인다
+                guard metrics.summary > 0 else { return .belowMenuBarPill(width: M.pillWorkingWidth, items: .all) }
+                let items = Self.pillVariants(metrics).first { pillNeed(metrics, items: $0) <= M.pillWorkingWidth } ?? []
+                return .belowMenuBarPill(width: M.pillWorkingWidth, items: items)
             }
         case .inMenuBar:
             guard menuBarVisible, let gap = menuBarGap else { return .none }
@@ -609,19 +788,26 @@ struct IslandLayoutEngine {
                 return room >= M.menuBarDotSize ? .menuBarDot(centerX: center) : .none
             }
             switch content {
-            case let .idle(count):
-                return .menuBarPill(centerX: center, width: min(M.idleDotsWidth(count: count) + 28, room), items: .all)
+            case let .idle(dots):
+                return .menuBarPill(centerX: center, width: min(dots + 28, room), items: .all)
             case let .session(metrics):
-                let full = pillNeed(metrics, items: .all)
+                let variants = Self.pillVariants(metrics)
+                let full = pillNeed(metrics, items: variants[0])
                 let desired = min(max((full / 20).rounded(.up) * 20, 120), M.pillWorkingWidth)
                 let width = min(desired, room).rounded(.down)
-                let items = [CompactItems.all, [.tool], []].first { pillNeed(metrics, items: $0) <= width } ?? []
+                let items = variants.first { pillNeed(metrics, items: $0) <= width } ?? []
                 return .menuBarPill(centerX: center, width: width, items: items)
             }
         }
     }
 
-    /// 알약 내용 폭 (좌우 여백 12 포함). 프로젝트 · 툴 제목을 한 덩어리로 보여준다.
+    /// 알약에 넣을 요소 후보. 요약이 있으면 툴 이름 → 프로젝트명 순으로 빼고 요약은 끝까지 남긴다
+    static func pillVariants(_ metrics: CompactMetrics) -> [CompactItems] {
+        guard metrics.summary > 0 else { return [.all, [.tool], []] }
+        return [[.project, .tool, .summary], [.project, .summary], [.summary], []]
+    }
+
+    /// 알약 내용 폭 (좌우 여백 12 포함). 프로젝트 · 툴 제목을 한 덩어리로 보여주고, 요약은 `+N −M` 뒤에 붙인다.
     private func pillNeed(_ metrics: CompactMetrics, items: CompactItems) -> CGFloat {
         var text: CGFloat = 0
         if items.contains(.project) { text += min(metrics.project, 110) }
@@ -631,6 +817,8 @@ struct IslandLayoutEngine {
         var width: CGFloat = 24 + 12
         if text > 0 { width += 6 + text }
         if metrics.trailing > 0 { width += 6 + metrics.trailing }
+        // 요약은 `Spacer` 뒤에 붙으므로 사이 간격 6 · 상태 아이콘(14) 실제 폭 차이까지 8pt 더 잡는다 (프로젝트명이 잘리지 않게)
+        if items.contains(.summary), metrics.summary > 0 { width += M.summaryLead + metrics.summary + 8 }
         return width
     }
 
@@ -707,7 +895,8 @@ struct IslandLayoutEngine {
             if spec.arrangement == .strip {
                 // 검은 날개(목)는 그대로 두고 노치 폭만큼 아래로 띠를 내린다 (몸통이 목보다 좁은 모양)
                 band = neckHeight
-                let height = band + M.stripHeight
+                let strip = stripHeight(for: content)
+                let height = band + strip
                 layout = IslandLayout(
                     size: CGSize(width: width, height: height),
                     origin: CGPoint(x: originX, y: 0),
@@ -721,7 +910,7 @@ struct IslandLayoutEngine {
                 )
                 layout.hitRects = [
                     CGRect(x: earL, y: 0, width: left + notchWidth + right, height: band),
-                    CGRect(x: earL + left, y: band, width: notchWidth, height: M.stripHeight),
+                    CGRect(x: earL + left, y: band, width: notchWidth, height: strip),
                 ]
             } else {
                 band = geometry.headerHeight
@@ -744,7 +933,8 @@ struct IslandLayoutEngine {
 
         case let .strip(width):
             let neck = neckHeight
-            let height = neck + M.stripHeight
+            let strip = stripHeight(for: content)
+            let height = neck + strip
             let inset = ((width - notchWidth) / 2).rounded(.down)
             var layout = IslandLayout(
                 size: CGSize(width: width, height: height),
@@ -757,7 +947,7 @@ struct IslandLayoutEngine {
             )
             layout.hitRects = [
                 CGRect(x: inset, y: 0, width: width - inset * 2, height: neck),
-                CGRect(x: 0, y: neck, width: width, height: M.stripHeight),
+                CGRect(x: 0, y: neck, width: width, height: strip),
             ]
             return layout
 
@@ -1003,7 +1193,7 @@ struct IslandLayoutEngine {
         let layout = cardLayout(
             preferredWidth: IslandMetrics.permissionWidth,
             radius: 22,
-            compact: compactPlacement(for: .idle(count: 1)),
+            compact: compactPlacement(for: .idle(content: CompactText.summaryWidth(SessionStatusSummary(done: 1)))),
             bodyHeight: { _ in 150 }
         )
         return layout.panelRect

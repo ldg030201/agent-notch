@@ -118,6 +118,8 @@ struct SnapshotWorld {
     static let apiServer = Project(id: "snapshot-api-server", name: "api-server")
     static let webApp = Project(id: "snapshot-web-app", name: "web-app")
     static let blog = Project(id: "snapshot-blog", name: "blog")
+    static let docsSite = Project(id: "snapshot-docs-site", name: "docs-site")
+    static let mobileApp = Project(id: "snapshot-mobile-app", name: "mobile-app")
 
     let clock: SnapshotClock
     let store: SessionStore
@@ -136,6 +138,12 @@ struct SnapshotWorld {
         send(Self.blog, "SessionStart", at: 0, ["source": "startup"])
         send(Self.webApp, "SessionStart", at: 180, ["source": "startup"])
         send(Self.apiServer, "SessionStart", at: 300, ["source": "startup"])
+    }
+
+    /// 세션 둘 더 (쉬는 중) — 다른 세션 상태 요약 장면용 (모두 5개)
+    mutating func startMoreSessions() {
+        send(Self.docsSite, "SessionStart", at: 400, ["source": "startup"])
+        send(Self.mobileApp, "SessionStart", at: 420, ["source": "startup"])
     }
 
     /// api-server: Read → Edit(+12 −3) → 응답 한 줄 (피크 직전 상태). 수정된 diff 를 돌려준다.

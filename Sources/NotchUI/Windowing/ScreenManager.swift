@@ -14,6 +14,9 @@ final class ScreenManager {
 
     private var panels: [ScreenID: NotchPanel] = [:]
     private var lastModes: [ScreenID: IslandMode] = [:]
+    /// 화면별 마지막으로 그린 모양(애니메이션 값)과 바뀐 시각 (부팅 후 초). 모양이 바뀌는 동안엔 접힌 상태를 새로 숨기지 않는다
+    private var lastShapes: [ScreenID: IslandLayout] = [:]
+    private var shapeChangedAt: [ScreenID: TimeInterval] = [:]
     /// 화면별 클릭 영역 (Cocoa 전역). 마우스 이동마다 레이아웃을 다시 계산하지 않도록 상태가 바뀔 때만 갱신한다.
     private var hitRectCache: [ScreenID: [CGRect]] = [:]
     /// 화면별 클릭 통과 영역 (아이콘 구멍, Cocoa 전역). 클릭 영역보다 우선한다.
@@ -83,6 +86,8 @@ final class ScreenManager {
         }
         panels.removeAll()
         lastModes.removeAll()
+        lastShapes.removeAll()
+        shapeChangedAt.removeAll()
         hitRectCache.removeAll()
         passThroughCache.removeAll()
     }
@@ -105,6 +110,8 @@ final class ScreenManager {
             panel.contentView = nil
             panels.removeValue(forKey: id)
             lastModes.removeValue(forKey: id)
+            lastShapes.removeValue(forKey: id)
+            shapeChangedAt.removeValue(forKey: id)
             hitRectCache.removeValue(forKey: id)
             passThroughCache.removeValue(forKey: id)
         }
@@ -185,8 +192,14 @@ final class ScreenManager {
     private func applyModes(_ states: [ScreenID: ScreenState]) {
         var becameCompact = false
         var bands: [ScreenID: WingRetractTracker.Bands] = [:]
+        let now = ProcessInfo.processInfo.systemUptime
         for (id, state) in states {
             let geometry = presentation.geometries[id]
+            let shape = state.layout.animationKey
+            if lastShapes[id] != shape {
+                if lastShapes[id] != nil { shapeChangedAt[id] = now }
+                lastShapes[id] = shape
+            }
             hitRectCache[id] = hitRects(state, geometry: geometry)
             passThroughCache[id] = passThroughRects(state, geometry: geometry)
             if let geometry, !state.bands.isEmpty {
@@ -409,7 +422,7 @@ final class ScreenManager {
         }
         overlapMonitor.onChange = { [weak self] state in
             guard let self else { return }
-            self.presentation.setOccluded(state.occluded)
+            self.presentation.setOccluded(state.occluded, concealed: state.concealed)
             self.presentation.setNotchConflicts(state.notchConflicts)
         }
         overlapMonitor.start { [weak self] location in
@@ -424,18 +437,34 @@ final class ScreenManager {
 
     /// 아일랜드가 보이는 화면의 감시 영역 (지금 아일랜드 + 카드가 펼쳐질 자리)
     private func overlapTargets() -> [OverlapScanner.Target] {
-        panels.keys.compactMap { id in
+        let now = ProcessInfo.processInfo.systemUptime
+        return panels.keys.compactMap { id in
             guard let geometry = presentation.geometries[id], presentation.mode(for: id) != .hidden,
-                  let zone = presentation.overlapZone(for: id)
+                  let zones = presentation.overlapZones(for: id)
             else { return nil }
             return OverlapScanner.Target(
                 id: id,
                 screenFrame: geometry.frame,
-                zone: geometry.screenRect(fromPanel: zone),
-                notchRect: geometry.notchRect?.insetBy(dx: 6, dy: 4)
+                zone: geometry.screenRect(fromPanel: zones.zone),
+                island: geometry.screenRect(fromPanel: zones.island),
+                notchRect: geometry.notchRect?.insetBy(dx: 6, dy: 4),
+                allowsNewConcealment: !isIslandBusy(id, now: now)
             )
         }
     }
+
+    /// 접힌 상태를 새로 숨기면 안 되는 때: 펼치고 접는 중(모양이 자리 잡기 전) · 마우스가 아일랜드 위
+    private func isIslandBusy(_ id: ScreenID, now: TimeInterval) -> Bool {
+        if presentation.hoveredScreenID == id { return true }
+        guard let changed = shapeChangedAt[id] else { return false }
+        return now - changed < Self.shapeSettleTime
+    }
+
+    /// 모양이 바뀐 뒤 자리 잡았다고 보는 시간 (`IslandMotion.settleDelay` 와 같게)
+    private static let shapeSettleTime: TimeInterval = {
+        let parts = IslandMotion.settleDelay.components
+        return Double(parts.seconds) + Double(parts.attoseconds) / 1e18
+    }()
 
     // MARK: - 풀스크린 감지 (best-effort)
 

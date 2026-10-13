@@ -2,7 +2,7 @@ import Foundation
 
 /// 접힌 상태 폭 안정화.
 ///
-/// 툴 이름 · `+N −M` 폭은 훅 이벤트마다(PreToolUse → PostToolUse 가 0.5초 간격) 바뀌어서
+/// 툴 이름 · `+N −M` · 다른 세션 요약 폭은 훅 이벤트마다(PreToolUse → PostToolUse 가 0.5초 간격) 바뀌어서
 /// 그대로 레이아웃에 넣으면 접힌 날개가 계속 늘었다 줄었다 한다.
 /// - 같은 세션 · 같은 문구 종류(작업 중 / 승인 필요 등) 안에서는 필드마다 지금까지의 최댓값을 쓴다 (늘어날 땐 바로).
 /// - 필드 값이 `holdDuration` 동안 한 번도 그만큼 필요하지 않았을 때만 지금 값으로 줄인다.
@@ -11,7 +11,7 @@ struct CompactMetricsHold {
     static let holdDuration: TimeInterval = 4
 
     private static let fields: [WritableKeyPath<CompactMetrics, CGFloat>] = [
-        \.project, \.shortTool, \.fullTool, \.trailing,
+        \.project, \.shortTool, \.fullTool, \.trailing, \.summary,
     ]
 
     private var key: String?
