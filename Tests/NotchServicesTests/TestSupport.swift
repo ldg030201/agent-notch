@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import NotchShared
+@testable import NotchServices
 
 /// /tmp 아래 테스트 전용 임시 폴더 (테스트가 끝나면 지운다)
 struct TempDirectory {
@@ -177,8 +178,15 @@ func removeSocketFiles(_ path: String) {
 }
 
 /// 다른 프로세스처럼 인스턴스 잠금을 직접 쥔다. 이미 잠겨 있으면 -1.
+/// 인스턴스 잠금을 쥔다 (실패하면 -1). 다른 테스트가 자식 프로세스를 띄우는 순간 자식이 잠금 fd 를 잠깐 함께 쥘 수 있어
+/// 서버와 같이 잠깐씩 몇 번 다시 시도한다 (`SocketServer.lockAttempts`)
 func holdInstanceLock(_ socketPath: String) -> Int32 {
-    open(socketPath + ".lock", O_RDWR | O_CREAT | O_CLOEXEC | O_EXLOCK | O_NONBLOCK, 0o600)
+    for attempt in 1...SocketServer.lockAttempts {
+        let fd = open(socketPath + ".lock", O_RDWR | O_CREAT | O_CLOEXEC | O_EXLOCK | O_NONBLOCK, 0o600)
+        if fd >= 0 || errno != EWOULDBLOCK { return fd }
+        if attempt < SocketServer.lockAttempts { usleep(SocketServer.lockRetryInterval) }
+    }
+    return -1
 }
 
 /// bind 만 하고 listen 없이 닫은 소켓 파일 (지난 실행의 찌꺼기, 또는 bind~listen 사이의 다른 인스턴스)

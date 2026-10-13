@@ -232,17 +232,29 @@ public final class SocketServer: @unchecked Sendable {
 
     /// `<소켓>.lock` 에 배타 잠금을 건다. 다른 인스턴스가 쥐고 있으면 `alreadyRunning`.
     /// 잠금은 커널이 fd 에 묶어 관리하므로 앱이 죽어도 저절로 풀린다 (stale 잠금 없음).
+    ///
+    /// 같은 프로세스가 자식 프로세스를 띄우는 순간(fork ~ exec 사이)에는 자식이 잠금 fd 를 잠깐 함께 쥐어
+    /// 방금 놓은 잠금도 막힐 수 있다. 그래서 막히면 잠깐씩(`lockRetryInterval`) 몇 번 다시 시도한다.
+    /// 진짜로 다른 인스턴스가 쥐고 있으면 그대로 `alreadyRunning` (최대 약 0.2초 늦어질 뿐).
     private func acquireInstanceLock() throws {
         guard lockFD < 0 else { return }
-        // O_NOFOLLOW: 잠금 파일 자리에 심어 둔 링크는 따라가지 않는다. O_CLOEXEC: 자식 프로세스로 잠금이 새지 않게.
-        let fd = Darwin.open(lockPath, O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW | O_EXLOCK | O_NONBLOCK, 0o600)
-        guard fd >= 0 else {
+        for attempt in 1...Self.lockAttempts {
+            // O_NOFOLLOW: 잠금 파일 자리에 심어 둔 링크는 따라가지 않는다. O_CLOEXEC: 자식 프로세스로 잠금이 새지 않게.
+            let fd = Darwin.open(lockPath, O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW | O_EXLOCK | O_NONBLOCK, 0o600)
+            if fd >= 0 {
+                lockFD = fd
+                return
+            }
             let code = errno
-            if code == EWOULDBLOCK { throw SocketServerError.alreadyRunning }
-            throw SocketServerError.systemCall(name: "open(lock)", code: code)
+            guard code == EWOULDBLOCK else { throw SocketServerError.systemCall(name: "open(lock)", code: code) }
+            if attempt < Self.lockAttempts { usleep(Self.lockRetryInterval) }
         }
-        lockFD = fd
+        throw SocketServerError.alreadyRunning
     }
+
+    /// 인스턴스 잠금 시도 횟수 · 사이 간격(마이크로초). 합쳐서 약 0.2초
+    static let lockAttempts = 10
+    static let lockRetryInterval: useconds_t = 20_000
 
     /// 잠금을 푼다 (fd 를 닫으면 풀림). 잠금 파일은 남겨 둔다.
     private func releaseInstanceLock() {
