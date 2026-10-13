@@ -372,23 +372,39 @@ enum SnapshotPillCheck {
 // MARK: - 노치 아래 띠 요소
 
 /// 노치 아래 띠가 메뉴바 알약과 같은 규칙으로 요소를 고르는지 (두 화면이 같은 세션 상태에 같은 내용을 보여주는지).
-/// 띠 폭은 노치 폭 그대로이고, 요약은 둘째 줄로 내릴 수 있다
+/// 띠 폭은 노치 폭 그대로이고, 백그라운드 배지 · 요약은 둘째 줄로 내릴 수 있다 (제목 줄 요소는 배지 · 요약 없이 고른다)
 @MainActor
 enum SnapshotStripCheck {
     static func run() -> (cases: Int, problems: [String]) {
         var problems: [String] = []
         var cases = 0
         let font = IslandFont.bodyNS
-        func metrics(project: String, tool: String, stat: (Int, Int), summary: SessionStatusSummary, attention: String? = nil) -> CompactMetrics {
+        func metrics(
+            project: String, tool: String, stat: (Int, Int), summary: SessionStatusSummary, attention: String? = nil, background: Int = 0
+        ) -> CompactMetrics {
             CompactMetrics(
                 project: CompactText.width(project, font: font),
                 tool: attention == nil ? CompactText.width(tool, font: font) : 0,
                 trailing: attention.map { CompactText.width($0, font: font) } ?? CompactText.statWidth(added: stat.0, removed: stat.1),
+                badge: CompactText.backgroundBadgeWidth(background),
                 summary: CompactText.summaryWidth(summary),
                 isAttention: attention != nil
             )
         }
+        /// 배지를 끝 요소에 이어 붙여 잰 같은 내용 (배지를 따로 두지 않던 셈법)
+        func inlineBadge(_ m: CompactMetrics) -> CompactMetrics {
+            var inline = m
+            inline.trailing = m.trailingWithBadge
+            inline.badge = 0
+            return inline
+        }
+        func withoutBadge(_ m: CompactMetrics) -> CompactMetrics {
+            var plain = m
+            plain.badge = 0
+            return plain
+        }
         typealias E = IslandLayoutEngine
+        let title: CompactItems = [.project, .tool]
 
         // 1) 사용자 화면: 노치 아래 띠(노치 185pt)와 메뉴바 알약이 같은 요소 ("agent-notch · 생각 중")
         let notchBar = SnapshotMenuBar(style: .notch, crowding: .bothBlocked)
@@ -415,15 +431,44 @@ enum SnapshotStripCheck {
         if userStrip != [.project, .tool] { problems.append("agent-notch · 생각 중: 노치 아래 띠 요소 \(String(describing: userStrip)) (프로젝트 · 툴 기대)") }
         if userStrip != userPill { problems.append("agent-notch · 생각 중: 띠 \(String(describing: userStrip)) ≠ 알약 \(String(describing: userPill))") }
 
+        // 1-1) 백그라운드 배지가 있어도 두 화면 제목이 같다 ("api-server · Bash +12 −3 ⧉ 3", `working-background` 장면).
+        //      띠는 배지(와 요약)를 둘째 줄로 내리고, 알약 · 날개는 끝에 그대로 둔다
+        for (summaryName, summary) in [("요약 없음", SessionStatusSummary.empty), ("요약 ● 2", SessionStatusSummary(done: 2))] {
+            cases += 1
+            let name = "api-server · Bash +12 −3 ⧉ 3 · \(summaryName)"
+            let background = metrics(project: "api-server", tool: "Bash", stat: (12, 3), summary: summary, background: 3)
+            let strip = stripEngine.compactLayout(for: .session(background))
+            guard let stripItems = items(strip), let pillItems = items(pillEngine.compactLayout(for: .session(background))) else {
+                problems.append("\(name): 띠 · 알약이 아님")
+                continue
+            }
+            if !stripItems.isSuperset(of: title) || stripItems.intersection(title) != pillItems.intersection(title) {
+                problems.append("\(name): 띠 제목 \(stripItems.rawValue) ≠ 알약 제목 \(pillItems.rawValue) (프로젝트 · 툴 기대)")
+            }
+            if !strip.hasTwoLineStrip { problems.append("\(name): 배지가 제목 줄에 함께 안 들어가는데 띠가 한 줄") }
+        }
+
         // 2) 같은 측정값이면 두 폭에 다 들어가는 한 같은 요소 (같은 후보 순서 · 같은 줄임 규칙)
         let projects = ["agent-notch", "api-server", "blog", "a-very-long-project-name"]
         let tools = ["생각 중", "Bash", "Read", "Claude_Browser", "plugin_design_figma"]
         let stats = [(0, 0), (12, 3), (1234, 567)]
         let summaries: [SessionStatusSummary] = [.empty, SessionStatusSummary(waiting: 1, done: 2)]
+        // 백그라운드 작업 없음 · 한 자리 · 두 자리
+        let backgrounds = [0, 3, 12]
         var samples: [CompactMetrics] = []
         for project in projects {
-            for tool in tools { for stat in stats { for summary in summaries { samples.append(metrics(project: project, tool: tool, stat: stat, summary: summary)) } } }
-            for summary in summaries { samples.append(metrics(project: project, tool: "", stat: (0, 0), summary: summary, attention: "승인 필요")) }
+            for background in backgrounds {
+                for tool in tools {
+                    for stat in stats {
+                        for summary in summaries {
+                            samples.append(metrics(project: project, tool: tool, stat: stat, summary: summary, background: background))
+                        }
+                    }
+                }
+                for summary in summaries {
+                    samples.append(metrics(project: project, tool: "", stat: (0, 0), summary: summary, attention: "승인 필요", background: background))
+                }
+            }
         }
         let wingsIconsBar = SnapshotMenuBar(style: .notch, crowding: .menusAndIconsToNotch, measuresItems: true)
         let wingsIconsEngine = IslandLayoutEngine(
@@ -439,10 +484,13 @@ enum SnapshotStripCheck {
                 problems.append(String(format: "프로젝트 %.0f · 툴 %.0f: 띠 · 알약이 아님", sample.project, sample.tool))
                 continue
             }
-            let name = String(format: "프로젝트 %.0f · 툴 %.0f · 뒤 %.0f · 요약 %.0f%@", sample.project, sample.tool, sample.trailing, sample.summary, sample.isAttention ? " · 상태 문구" : "")
+            let name = String(
+                format: "프로젝트 %.0f · 툴 %.0f · 뒤 %.0f · 배지 %.0f · 요약 %.0f%@",
+                sample.project, sample.tool, sample.trailing, sample.badge, sample.summary, sample.isAttention ? " · 상태 문구" : ""
+            )
             let first = E.pillVariants(sample)[0]
             let stripRoom = stripEngine.notchWidth
-            // 띠 · 알약 모두 첫 후보(가장 많은 요소)가 들어가면 둘 다 그것
+            // 띠(배지 · 요약 없이 제목 줄) · 알약(배지 · 요약까지 한 줄) 모두 첫 후보(가장 많은 요소)가 들어가면 둘 다 그것
             cases += 1
             if E.lineNeed(sample, items: first, squeezed: true, chrome: .strip) <= stripRoom,
                E.pillNeed(sample, items: first, squeezed: true) <= pill.size.width,
@@ -454,17 +502,43 @@ enum SnapshotStripCheck {
             if stripItems != E.lineItems(sample, width: stripRoom, chrome: .strip) {
                 problems.append("\(name): 띠 요소가 알약 규칙과 다름")
             }
+            // 띠 제목 줄은 배지를 빼고 고른다: 배지가 없는 같은 내용과 같은 요소
+            cases += 1
+            if sample.badge > 0, items(stripEngine.compactLayout(for: .session(withoutBadge(sample)))) != stripItems {
+                problems.append("\(name): 배지 때문에 띠 제목 줄 요소가 바뀜 (\(stripItems.rawValue))")
+            }
             // 줄인 프로젝트명이라도 들어가면 상태 아이콘만 남기지 않는다
             cases += 1
             let titled = stripItems.contains(.project) || stripItems.contains(.tool)
             if !titled, E.lineNeed(sample, items: [.project], squeezed: true, chrome: .strip) <= stripRoom {
                 problems.append("\(name): 줄인 프로젝트명이 들어가는데 상태 아이콘만")
             }
-            // 띠 높이: 요약이 제목 줄에 함께 안 들어갈 때만 두 줄 (폭은 늘 노치 폭)
+            // 띠 높이: 배지 · 요약이 줄이지 않은 제목 줄에 함께 안 들어갈 때만 두 줄 (폭은 늘 노치 폭).
+            // 한 줄 기대값은 배지를 끝 요소에 이어 붙여 따로 잰다
             cases += 1
             let twoLine = strip.hasTwoLineStrip
-            if twoLine != E.stripWrapsSummary(sample, items: stripItems, width: stripRoom) || abs(strip.size.width - stripRoom) > 0.5 {
-                problems.append("\(name): 띠 높이 · 폭이 규칙과 다름 (두 줄 \(twoLine), 폭 \(Int(strip.size.width)))")
+            let inline = inlineBadge(sample)
+            let wrapsExpected = (sample.badge > 0 || E.summaryNeed(sample, items: stripItems, chrome: .strip) > 0)
+                && E.lineNeed(inline, items: stripItems, squeezed: false, chrome: .strip) + E.summaryNeed(inline, items: stripItems, chrome: .strip) > stripRoom
+            if twoLine != wrapsExpected || twoLine != E.stripWraps(sample, items: stripItems, width: stripRoom) || abs(strip.size.width - stripRoom) > 0.5 {
+                problems.append("\(name): 띠 높이 · 폭이 규칙과 다름 (두 줄 \(twoLine), 기대 \(wrapsExpected), 폭 \(Int(strip.size.width)))")
+            }
+            // 둘째 줄(배지 · 요약)은 띠 안 (좌우 여백 10)
+            cases += 1
+            if twoLine {
+                let summary = stripItems.contains(.summary) ? sample.summary : 0
+                let second = sample.badge + summary + (sample.badge > 0 && summary > 0 ? IslandMetrics.summaryLead : 0)
+                if 20 + second > stripRoom { problems.append("\(name): 둘째 줄 \(Int(second))pt 가 띠 밖") }
+            }
+            // 알약 · 날개 · 한쪽 날개는 배지를 끝 요소에 그대로 센다 (배지를 따로 두기 전 셈법과 같은 폭)
+            cases += 1
+            let pillSame = E.pillNeed(sample, items: first) == E.pillNeed(inline, items: first)
+            let splitSame = E.splitNeed(sample, items: .all, project: sample.project, tool: sample.tool, leftPad: 14, rightPad: 14)
+                == E.splitNeed(inline, items: .all, project: sample.project, tool: sample.tool, leftPad: 14, rightPad: 14)
+            let singleSame = E.contentWidth(sample, items: first, toolWidth: sample.tool, toolCap: 90)
+                == E.contentWidth(inline, items: first, toolWidth: sample.tool, toolCap: 90)
+            if !pillSame || !splitSame || !singleSame {
+                problems.append("\(name): 알약 \(pillSame) · 양쪽 날개 \(splitSame) · 한쪽 날개 \(singleSame) 가 배지를 끝 요소와 다르게 셈")
             }
             // 넓은 노치 + 아이콘 구멍에서 내용을 노치 아래 띠로 내린 경우도 같은 요소
             cases += 1

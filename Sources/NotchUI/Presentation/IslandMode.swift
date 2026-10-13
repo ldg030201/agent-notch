@@ -90,8 +90,8 @@ enum IslandMetrics {
     static let backgroundLead: CGFloat = 6
     /// 요약을 넣느라 날개가 더 넓어질 수 있는 폭 (한쪽)
     static let summaryWingGrowth: CGFloat = 40
-    /// 노치 아래 띠에 요약이 한 줄로 안 들어가면 띠를 이만큼 높여 두 줄로 (폭은 노치 폭 그대로)
-    static let stripSummaryLineHeight: CGFloat = 14
+    /// 노치 아래 띠에 백그라운드 배지 · 요약이 제목 줄에 함께 안 들어가면 띠를 이만큼 높여 둘째 줄에 둔다 (폭은 노치 폭 그대로)
+    static let stripSecondLineHeight: CGFloat = 14
 
     static let lineHeight: CGFloat = 18
     static let diffRowHeight: CGFloat = 17

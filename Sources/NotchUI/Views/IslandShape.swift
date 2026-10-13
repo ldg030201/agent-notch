@@ -211,6 +211,11 @@ struct IslandOutline: Equatable {
     /// 경로 가로 범위 (귀는 목 밖으로 나간다)
     var minX: CGFloat { min(nx0 - earL, bx0) }
     var maxX: CGFloat { max(nx1 + earR, bx1) }
+
+    /// 몸통이 폭 0 으로 좁아져 넓이가 없는지 (부분 2 가 부분 1 아래 모서리 안쪽으로 다 숨음, `IslandShape.emergeLimit`)
+    var hidesBody: Bool { !isEmpty && bx1 - bx0 < Self.hiddenBodyWidth }
+    /// 이보다 좁은 몸통은 넓이 0 (부동소수 오차)
+    static let hiddenBodyWidth: CGFloat = 0.01
 }
 
 struct IslandShape: Shape {
@@ -261,6 +266,11 @@ struct IslandShape: Shape {
         guard let part1 = part1Outline(spec, in: rect), !part1.isEmpty else { return .main(main) }
         // 접힌 상태 (주 외곽선 = 부분 1, 접힌 상태끼리 바뀌는 중 포함): 부분 1 만
         if main.isEmpty || spec.isSameShape(as: spec.part1, frame: rect) { return .part1(part1) }
+        // 부분 2 가 폭 0 으로 숨은 순간도 부분 1 만: 점처럼 아래 변이 없는 부분 1 은 몸통이 아래 모서리 안쪽에 숨을 폭이 없어
+        // (`emergeLimit` 의 `narrow` = 목 폭 절반) 몸통이 넓이 0 인 바늘로 부분 1 아래에 매달린다 (펼치기 시작 · 접히기 끝,
+        // 스프링이 목표를 지나쳐 주 외곽선이 부분 1 보다 작아진 순간 포함). 남은 목 + 오목 모서리는 부분 1 안이라 그릴 것이 없고,
+        // 합치면 바늘 · 부분 1 과 맞닿은 둥근 위 변이 넓이 0 인 경로 조각으로 남는다
+        if main.hidesBody { return .part1(part1) }
         // 부분 1 은 그대로 그리고, 주 외곽선(목 + 부분 2)을 합친다
         return .union(main: main, part1: part1)
     }
@@ -277,8 +287,66 @@ struct IslandShape: Shape {
             return o.isEmpty ? Path() : path(o)
         case let .union(main, part1):
             if main.isEmpty { return path(part1) }
-            return path(main).union(path(part1))
+            return removingSlivers(path(main).union(path(part1)))
         }
+    }
+
+    /// 이보다 좁거나 낮은 하위 경로는 넓이 없는 조각으로 본다 (레티나 한 픽셀의 1/5)
+    static let sliverSize: CGFloat = 0.1
+
+    /// 합친 경로에서 넓이 없는 하위 경로를 뺀다.
+    /// 주 외곽선의 목은 부분 1 위 조각과 같은 자리라 둥근 위 변이 겹치고, 목 아래 볼록 모서리가 부분 1 의 둥근 옆면과 한 점에서
+    /// 맞닿는다. 이렇게 겹치거나 맞닿은 곡선에서 CG 불리언 연산이 크기 0 에 가까운 하위 경로를 덧붙일 때가 있다
+    /// (메뉴바 아래 작은 알약 ↔ 카드처럼 옆면 곧은 구간이 없는 부분 1). 보이지 않지만 모양이 여러 조각이 되므로 뺀다.
+    /// 뺄 조각이 없으면 받은 경로 그대로 (다시 만들면 안티에일리어싱이 미세하게 달라진다)
+    static func removingSlivers(_ path: Path) -> Path {
+        var result = Path()
+        var dropped = false
+        var elements: [Path.Element] = []
+        var lo = CGPoint(x: CGFloat.infinity, y: CGFloat.infinity)
+        var hi = CGPoint(x: -CGFloat.infinity, y: -CGFloat.infinity)
+        func include(_ points: CGPoint...) {
+            for point in points {
+                lo = CGPoint(x: min(lo.x, point.x), y: min(lo.y, point.y))
+                hi = CGPoint(x: max(hi.x, point.x), y: max(hi.y, point.y))
+            }
+        }
+        /// 모은 하위 경로를 (넓이가 있으면) 결과에 옮긴다
+        func flush() {
+            defer {
+                elements = []
+                lo = CGPoint(x: CGFloat.infinity, y: CGFloat.infinity)
+                hi = CGPoint(x: -CGFloat.infinity, y: -CGFloat.infinity)
+            }
+            guard !elements.isEmpty else { return }
+            guard hi.x - lo.x >= sliverSize, hi.y - lo.y >= sliverSize else {
+                dropped = true
+                return
+            }
+            for element in elements {
+                switch element {
+                case let .move(to: point): result.move(to: point)
+                case let .line(to: point): result.addLine(to: point)
+                case let .quadCurve(to: point, control: control): result.addQuadCurve(to: point, control: control)
+                case let .curve(to: point, control1: c1, control2: c2): result.addCurve(to: point, control1: c1, control2: c2)
+                case .closeSubpath: result.closeSubpath()
+                }
+            }
+        }
+        path.forEach { element in
+            switch element {
+            case let .move(to: point):
+                flush()
+                include(point)
+            case let .line(to: point): include(point)
+            case let .quadCurve(to: point, control: control): include(point, control)
+            case let .curve(to: point, control1: c1, control2: c2): include(point, c1, c2)
+            case .closeSubpath: break
+            }
+            elements.append(element)
+        }
+        flush()
+        return dropped ? result : path
     }
 
     /// 부분 1 외곽선 (지금 프레임 기준). 부분 1 이 없으면 nil

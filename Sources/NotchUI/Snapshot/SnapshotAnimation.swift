@@ -86,6 +86,9 @@ struct SnapshotTransition {
             t(.menubarPermission, .menubarWorking, env: .menubarWorking),
             t(.menubarWorking, .menubarQuestion, env: .menubarWorking),
             t(.menubarQuestion, .menubarWorking, env: .menubarWorking),
+            // 메뉴바 안 점 ↔ 카드 (빈 곳이 좁은 외부 모니터: 점이 부분 1)
+            t(.menubarDot, .menubarPermission, env: .menubarDot),
+            t(.menubarPermission, .menubarDot, env: .menubarDot),
             // 메뉴바 아래 알약 ↔ 카드 (외부 모니터 "메뉴바 아래" 방식)
             t(.menubarBelowWorking, .menubarBelowPermission, env: .menubarBelowWorking),
             t(.menubarBelowPermission, .menubarBelowWorking, env: .menubarBelowWorking),
@@ -171,10 +174,12 @@ struct SnapshotSequence {
     let close: Step
 
     /// 화면 (장면 · 이름 · 고정할 화면 종류). 넓은 노치 화면은 노치 없는 화면 스타일로도 그려 메뉴바 안 알약도 본다.
-    /// 노치 전용 배치(아이콘 구멍 · 노치 아래 띠 · 좁은 왼쪽)는 노치 화면만 (노치 없는 화면에선 빈 곳이 좁아 점이 된다)
+    /// 노치 전용 배치(아이콘 구멍 · 노치 아래 띠 · 좁은 왼쪽)는 노치 화면만 (노치 없는 화면에선 빈 곳이 좁아 점이 되므로
+    /// 점은 빈 곳이 좁은 메뉴바 `dot` 하나로 본다)
     static let environments: [(scene: SnapshotScenario, name: String, style: IslandSnapshotRenderer.Style?)] = [
         (.working, "wings", nil), (.workingWingsIcons, "icons", .notch), (.workingBelowNotch, "strip", .notch),
         (.workingBelowNotchNarrow, "narrow", .notch), (.menubarWorking, "pill", .menuBar), (.menubarBelowWorking, "below", .menuBar),
+        (.menubarDot, "dot", .menuBar),
     ]
 
     static var all: [SnapshotSequence] {
@@ -840,6 +845,34 @@ enum SnapshotShapeCheck {
         return issues
     }
 
+    /// 스프링 값 0 → 최대값을 촘촘히 훑어 칠할 모양(구멍 없이)이 여러 조각으로 갈라지는 구간 (이어진 구간 하나로 보고).
+    /// 주 외곽선과 부분 1 을 합칠 때 넓이 0 인 바늘 · 맞닿은 곡선이 남기는 조각은 시트 프레임 사이에서만 생기기도 한다
+    static func denseFragments(from: IslandLayout, to: IslandLayout, maxValue: Double, timeline: SnapshotTimeline) -> [String] {
+        let step = 0.0005
+        var reports: [String] = []
+        var run: (start: Double, last: Double, count: Int)?
+        func close() {
+            guard let open = run else { return }
+            let ms0 = timeline.time(forValue: min(open.start, 1))
+            let ms1 = timeline.time(forValue: min(open.last, 1))
+            reports.append(String(format: "v %.4f…%.4f (≈%.0f…%.0fms) 경로 조각 %d개", open.start, open.last, ms0, ms1, open.count))
+            run = nil
+        }
+        var v = 0.0
+        while v <= maxValue + step / 2 {
+            let layout = SnapshotInterpolation.mix(from, to, v)
+            let count = flatten(IslandShape(spec: layout.shapeSpec).path(in: CGRect(origin: .zero, size: layout.size))).count
+            if count > 1 {
+                if run == nil { run = (v, v, count) } else { run?.last = v }
+            } else {
+                close()
+            }
+            v += step
+        }
+        close()
+        return reports
+    }
+
     /// 경로를 꺾은선으로 (곡선은 잘게 나눈다). 하위 경로마다 하나
     static func flatten(_ path: Path) -> [[CGPoint]] {
         var polygons: [[CGPoint]] = []
@@ -1135,6 +1168,8 @@ enum SnapshotAnimationSheet {
 
         // 연속성 검사 (스프링 값 0 → 최대값)
         let jumps = SnapshotShapeCheck.discontinuities(from: fromLayout, to: toLayout, maxValue: max(1, peak.value), timeline: timeline)
+        // 시트 프레임 사이의 경로 조각 (모양이 여러 조각으로 갈라짐)
+        let fragmentRuns = SnapshotShapeCheck.denseFragments(from: fromLayout, to: toLayout, maxValue: max(1, peak.value), timeline: timeline)
         // 시트 프레임 사이의 이음매 (거의 겹친 목 끝 · 몸통 끝)
         let seamRuns = SnapshotSeamCheck.denseJointIssues(from: fromLayout, to: toLayout, maxValue: max(1, peak.value), timeline: timeline)
 
@@ -1181,6 +1216,7 @@ enum SnapshotAnimationSheet {
         }
         if sameKind, !sameKey { report.append("   같은 종류 · 표시 방식 교체 (이전 내용 제자리 흐림 → 모양이 자리 잡은 뒤 새 내용)") }
         for jump in jumps { report.append("   ✗ 불연속 \(jump)") }
+        for run in fragmentRuns { report.append("   ✗ 촘촘히 \(run)") }
         for run in seamRuns { report.append("   ✗ 촘촘히 \(run)") }
         let seamFrames = frames.reduce(0) { $0 + $1.issues.filter { $0.hasPrefix("이음매") }.count }
         report.append("   이음매 검사: 위반 \(seamFrames + seamRuns.count) (프레임 \(seamFrames) · 촘촘히 \(seamRuns.count))")
@@ -1194,11 +1230,11 @@ enum SnapshotAnimationSheet {
         for frame in frames where !frame.issues.isEmpty {
             report.append(String(format: "   ✗ t=%3.0fms v=%.3f: ", frame.ms, frame.value) + frame.issues.joined(separator: " · "))
         }
-        if jumps.isEmpty, seamRuns.isEmpty, part1Runs.isEmpty, part1Header.isEmpty, report0.isEmpty, frames.allSatisfy({ $0.issues.isEmpty }) {
+        if jumps.isEmpty, fragmentRuns.isEmpty, seamRuns.isEmpty, part1Runs.isEmpty, part1Header.isEmpty, report0.isEmpty, frames.allSatisfy({ $0.issues.isEmpty }) {
             report.append("   ✓ 문제 없음")
         }
-        // 시트 머리에 적을 프레임 사이 문제 (불연속 · 이음매 · 부분 1)
-        let notes = jumps.map { "불연속 " + $0 } + seamRuns.map { "이음매 " + $0 } + part1Runs + part1Header
+        // 시트 머리에 적을 프레임 사이 문제 (불연속 · 경로 조각 · 이음매 · 부분 1)
+        let notes = jumps.map { "불연속 " + $0 } + fragmentRuns + seamRuns.map { "이음매 " + $0 } + part1Runs + part1Header
         let crop = cropRect(frames: frames, bar: bar, extra: [fromLayout.panelRect, toLayout.panelRect])
         let cellSize = SnapshotAnimationSheetView.cellSize(crop: crop)
         report.append(String(

@@ -64,8 +64,8 @@ struct IdleCompactView: View {
 /// 접힌 상태로 포커스 세션 표시. 다른 세션이 있으면 상태 요약("● 2")을 레이아웃이 정한 자리에 함께 둔다.
 /// - 양쪽 날개: 왼쪽 = 상태 + 프로젝트명 (+ 요약), 오른쪽 = (노치 쪽에 고정한 요약 …) 현재 툴 + `+N −M`
 /// - 한쪽 날개: 상태 + (프로젝트) + (요약) + (툴) + `+N −M` 을 노치 옆에 모은다
-/// - 노치 아래 띠: 알약과 같은 요소 (상태 + 프로젝트 · 툴 이름 + `+N −M` + 요약, 한 줄에 안 들어가면 요약은 둘째 줄)
-/// - 알약: 상태 + 프로젝트 · 툴 이름 + `+N −M` + 요약
+/// - 노치 아래 띠: 알약과 같은 요소 (상태 + 프로젝트 · 툴 이름 + `+N −M` + 배지 + 요약, 한 줄에 안 들어가면 배지 · 요약은 둘째 줄)
+/// - 알약: 상태 + 프로젝트 · 툴 이름 + `+N −M` + 배지 + 요약
 /// 툴은 어디서나 짧은 이름만 (`IslandFormat.shortToolTitle`, 예: "Bash")
 struct CompactSessionView: View {
     let session: AgentSession?
@@ -158,32 +158,40 @@ struct CompactSessionView: View {
         }
     }
 
-    /// 노치 아래 띠: 알약과 같은 요소(`IslandLayoutEngine.stripItems`) — 상태 + 프로젝트 · 툴 이름 + `+N −M` + 요약.
-    /// 띠가 두 줄 높이면 요약은 둘째 줄 (폭은 노치 폭 그대로)
+    /// 노치 아래 띠: 알약과 같은 요소(`IslandLayoutEngine.stripItems`) — 상태 + 프로젝트 · 툴 이름 + `+N −M` + 배지 + 요약.
+    /// 띠가 두 줄 높이면 백그라운드 배지 · 요약은 둘째 줄 (폭은 노치 폭 그대로). 제목 줄 요소는 배지 · 요약 없이 골라서
+    /// 메뉴바 알약과 같은 제목이다 (예: 둘 다 "api-server · Bash +12 −3")
     @ViewBuilder
     private func stripContent(_ session: AgentSession, items: CompactItems) -> some View {
+        let showsSummary = !summary.isEmpty && items.contains(.summary)
+        let badgeCount = session.backgroundTaskCount
+        let wraps = layout.hasTwoLineStrip && (showsSummary || badgeCount > 0)
         let line = HStack(spacing: 5) {
             StatusIndicator(session: session, reduceMotion: reduceMotion, size: 12)
             pillTitle(session, items: items)
-            if Self.hasTrailing(session, toolTitle: "") {
-                trailing(session, toolTitle: "")
+            if Self.hasTrailing(session, toolTitle: "", badge: !wraps) {
+                trailing(session, toolTitle: "", badge: !wraps)
                     .layoutPriority(1)
             }
         }
         CompactStrip(layout: layout) {
-            if summary.isEmpty || !items.contains(.summary) {
-                line
-            } else if layout.hasTwoLineStrip {
+            if wraps {
                 VStack(spacing: 1) {
                     line
-                    SessionSummaryChips(summary: summary, spokenPrefix: Self.summaryPrefix)
+                    // 둘째 줄: 배지 · 요약 (알약에서 `+N −M` 뒤에 잇는 순서 그대로)
+                    HStack(spacing: IslandMetrics.summaryLead) {
+                        if badgeCount > 0 { BackgroundTaskBadge(count: badgeCount) }
+                        if showsSummary { SessionSummaryChips(summary: summary, spokenPrefix: Self.summaryPrefix) }
+                    }
                 }
-            } else {
+            } else if showsSummary {
                 HStack(spacing: 5) {
                     line
                     SessionSummaryChips(summary: summary, spokenPrefix: Self.summaryPrefix)
                         .padding(.leading, 3)
                 }
+            } else {
+                line
             }
         }
     }
@@ -216,8 +224,9 @@ struct CompactSessionView: View {
     }
 
     /// 툴 이름 + `+N −M`, 또는 상태 문구 (승인 필요 등). 백그라운드 작업이 돌고 있으면 끝에 배지 "⧉ N"
+    /// (`badge` 가 false 면 빼고 — 노치 아래 띠가 배지를 둘째 줄로 내린 경우)
     @ViewBuilder
-    private func trailing(_ session: AgentSession, toolTitle: String) -> some View {
+    private func trailing(_ session: AgentSession, toolTitle: String, badge: Bool = true) -> some View {
         HStack(spacing: IslandMetrics.backgroundLead) {
             if let attention = CompactText.attentionText(session) {
                 Text(attention.text)
@@ -232,7 +241,7 @@ struct CompactSessionView: View {
                         .layoutPriority(1)
                 }
             }
-            if session.backgroundTaskCount > 0 {
+            if badge, session.backgroundTaskCount > 0 {
                 BackgroundTaskBadge(count: session.backgroundTaskCount)
                     .layoutPriority(1)
             }
@@ -240,10 +249,10 @@ struct CompactSessionView: View {
     }
 
     /// `trailing` 이 그릴 것이 있는지 (상태 문구 · 툴 이름 · `+N −M` · 백그라운드 배지)
-    private static func hasTrailing(_ session: AgentSession, toolTitle: String) -> Bool {
+    private static func hasTrailing(_ session: AgentSession, toolTitle: String, badge: Bool = true) -> Bool {
         CompactText.attentionText(session) != nil || !toolTitle.isEmpty
             || session.turn.added > 0 || session.turn.removed > 0
-            || session.backgroundTaskCount > 0
+            || (badge && session.backgroundTaskCount > 0)
     }
 
     /// 알약 · 노치 아래 띠 제목: 프로젝트명(끝 줄임) · 짧은 툴 이름(가운데 줄임). 자리가 모자라면 `PillTitleLayout` 이 줄인다.

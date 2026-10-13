@@ -108,7 +108,8 @@ struct IslandLayout: Equatable {
     /// 패널(화면 맨 위) 기준 사각형 (원점 왼쪽 위)
     var panelRect: CGRect { CGRect(origin: origin, size: size) }
 
-    /// 노치 아래 띠를 두 줄 높이로 잡았는지 (요약이 한 줄에 안 들어감, `IslandLayoutEngine.stripHeight`)
+    /// 노치 아래 띠를 두 줄 높이로 잡았는지 (백그라운드 배지 · 요약이 제목 줄에 함께 안 들어감, `IslandLayoutEngine.stripHeight`).
+    /// 두 줄이면 배지 · 요약은 둘째 줄이다
     var hasTwoLineStrip: Bool {
         size.height - shape.neckHeight > IslandMetrics.stripHeight + 1
     }
@@ -127,17 +128,21 @@ struct CompactMetrics: Equatable {
     var project: CGFloat
     /// 짧은 툴 이름 폭 (`IslandFormat.shortToolTitle`, 예: "Bash"). 접힌 상태는 어디서나 이 이름만 쓴다
     var tool: CGFloat
-    /// `+N −M` 또는 상태 문구 + 백그라운드 작업 배지 (없으면 0)
+    /// `+N −M` 또는 상태 문구 (없으면 0, 백그라운드 배지는 `badge`)
     var trailing: CGFloat
+    /// 백그라운드 작업 배지 "⧉ N" 폭 (없으면 0). 날개 · 한쪽 날개 · 알약은 `trailing` 끝에 붙이고(`trailingWithBadge`),
+    /// 노치 아래 띠는 제목 줄에 함께 안 들어가면 둘째 줄로 내린다 (제목 줄 요소는 배지 없이 고른다)
+    var badge: CGFloat
     /// 다른 세션 상태 요약 폭 (다른 세션이 없으면 0). 숫자는 고정폭이라 한 자리 안에서 바뀌면 폭이 같다
     var summary: CGFloat
     /// 상태 문구(승인 필요 등)를 보여주는 단계라 툴 이름이 없는지
     var isAttention: Bool
 
-    init(project: CGFloat, tool: CGFloat, trailing: CGFloat, summary: CGFloat = 0, isAttention: Bool) {
+    init(project: CGFloat, tool: CGFloat, trailing: CGFloat, badge: CGFloat = 0, summary: CGFloat = 0, isAttention: Bool) {
         self.project = project
         self.tool = tool
         self.trailing = trailing
+        self.badge = badge
         self.summary = summary
         self.isAttention = isAttention
     }
@@ -146,19 +151,22 @@ struct CompactMetrics: Equatable {
     @MainActor
     init(session: AgentSession, summary: SessionStatusSummary = .empty) {
         let attention = CompactText.attentionText(session)
-        let badge = CompactText.backgroundBadgeWidth(session.backgroundTaskCount)
+        badge = CompactText.backgroundBadgeWidth(session.backgroundTaskCount)
         self.summary = CompactText.summaryWidth(summary)
         project = CompactText.width(session.projectName, font: IslandFont.bodyNS)
         if let attention {
             tool = 0
-            trailing = CompactText.joined(CompactText.width(attention.text, font: IslandFont.bodyNS), badge)
+            trailing = CompactText.width(attention.text, font: IslandFont.bodyNS)
             isAttention = true
         } else {
             tool = CompactText.width(IslandFormat.shortToolTitle(session), font: IslandFont.bodyNS)
-            trailing = CompactText.joined(CompactText.statWidth(added: session.turn.added, removed: session.turn.removed), badge)
+            trailing = CompactText.statWidth(added: session.turn.added, removed: session.turn.removed)
             isAttention = false
         }
     }
+
+    /// `+N −M`(또는 상태 문구) 끝에 백그라운드 배지까지 한 줄로 이은 폭 (`CompactSessionView.trailing` 뷰)
+    var trailingWithBadge: CGFloat { CompactText.joined(trailing, badge) }
 }
 
 /// 접힌 상태 문구 측정 · 결정 (뷰와 레이아웃이 같은 규칙을 쓴다)
@@ -500,9 +508,10 @@ struct IslandLayoutEngine {
         let shownProject = items.contains(.project) ? project : 0
         var left = leftPad + 14 + (shownProject > 0 ? 6 + shownProject : 0) + 4 + 8
         if summaryLeft { left += M.summaryLead + summary }
-        var rightText = metrics.trailing
+        let trailing = metrics.trailingWithBadge
+        var rightText = trailing
         let shownTool = items.contains(.tool) ? tool : 0
-        if shownTool > 0 { rightText += shownTool + (metrics.trailing > 0 ? 6 : 0) }
+        if shownTool > 0 { rightText += shownTool + (trailing > 0 ? 6 : 0) }
         if summary > 0, !summaryLeft { rightText += summary + (rightText > 0 ? M.summaryLead : 0) }
         return SplitPlan(items: items, left: left, right: 4 + rightText + rightPad + 8)
     }
@@ -676,7 +685,8 @@ struct IslandLayoutEngine {
         case let .session(metrics):
             // 양쪽: 왼쪽 상태(+ 프로젝트) · 오른쪽 (툴 +) `+N −M`
             let leftMin: CGFloat = 4 + 14 + 6
-            let main = metrics.trailing > 0 ? metrics.trailing : min(metrics.tool, 40)
+            let trailing = metrics.trailingWithBadge
+            let main = trailing > 0 ? trailing : min(metrics.tool, 40)
             let rightMin = 4 + main + 6
             if base.left > 0, base.right > 0,
                room.left >= max(minRoom, leftMin) + splitMargin, room.right >= max(minRoom, rightMin) + splitMargin {
@@ -687,7 +697,7 @@ struct IslandLayoutEngine {
                 let toolMargin = previousItems.map { $0.contains(.tool) ? 0 : Self.arrangementHysteresis } ?? 0
                 var items = CompactItems.all
                 if room.left < leftMin + 6 + min(metrics.project, 24) + projectMargin { items.remove(.project) }
-                if metrics.trailing > 0, room.right < rightMin + 6 + min(metrics.tool, 28) + toolMargin { items.remove(.tool) }
+                if trailing > 0, room.right < rightMin + 6 + min(metrics.tool, 28) + toolMargin { items.remove(.tool) }
                 // 다른 세션 요약: 노치 ~ 첫 구멍 사이에 통째로 들어가는 쪽에 둔다 (못 넣으면 생략)
                 if metrics.summary > 0 {
                     let spanL = min(spec.left, room.left)
@@ -795,7 +805,7 @@ struct IslandLayoutEngine {
         return variants
     }
 
-    /// 상태 아이콘 + 선택 요소 + `+N −M` 폭 (한 줄: 상태 · 프로젝트 · 요약 · 툴 · `+N −M`)
+    /// 상태 아이콘 + 선택 요소 + `+N −M` 폭 (한 줄: 상태 · 프로젝트 · 요약 · 툴 · `+N −M` · 백그라운드 배지)
     static func contentWidth(
         _ metrics: CompactMetrics,
         items: CompactItems,
@@ -807,15 +817,16 @@ struct IslandLayoutEngine {
         if items.contains(.project) { width += 6 + min(metrics.project, projectCap) }
         if items.contains(.summary), metrics.summary > 0 { width += M.summaryLead + metrics.summary }
         if items.contains(.tool), toolWidth > 0 { width += 6 + min(toolWidth, toolCap) }
-        if metrics.trailing > 0 { width += 6 + metrics.trailing }
+        if metrics.trailingWithBadge > 0 { width += 6 + metrics.trailingWithBadge }
         return width
     }
 
-    /// 노치 아래 띠 높이: 고른 요소(`stripItems`)에 요약이 있고 제목 줄에 함께 안 들어가면 두 줄로 (폭은 늘 노치 폭)
+    /// 노치 아래 띠 높이: 백그라운드 배지 · 요약(고른 요소 `stripItems` 에 있을 때)이 제목 줄에 함께 안 들어가면 두 줄로
+    /// (폭은 늘 노치 폭, `stripWraps`)
     func stripHeight(for content: CompactContent) -> CGFloat {
-        guard case let .session(metrics) = content, metrics.summary > 0 else { return M.stripHeight }
+        guard case let .session(metrics) = content, metrics.summary > 0 || metrics.badge > 0 else { return M.stripHeight }
         let items = Self.stripItems(metrics, width: notchWidth)
-        return Self.stripWrapsSummary(metrics, items: items, width: notchWidth) ? M.stripHeight + M.stripSummaryLineHeight : M.stripHeight
+        return Self.stripWraps(metrics, items: items, width: notchWidth) ? M.stripHeight + M.stripSecondLineHeight : M.stripHeight
     }
 
     /// 노치 아래 띠에 넣을 요소 (접힌 내용이 세션일 때만, 아니면 빈 값)
@@ -885,7 +896,7 @@ struct IslandLayoutEngine {
 
     // MARK: 한 줄 내용 요소 (알약 · 노치 아래 띠가 같은 규칙)
 
-    /// 한 줄 내용(상태 + 프로젝트명 · 툴 이름 + `+N −M` + 요약)의 틀. 알약과 노치 아래 띠는 틀만 다르고
+    /// 한 줄 내용(상태 + 프로젝트명 · 툴 이름 + `+N −M` + 백그라운드 배지 + 요약)의 틀. 알약과 노치 아래 띠는 틀만 다르고
     /// 요소 후보(`pillVariants`) · 빼는 순서 · 제목 최소 폭(`pillProjectMin` · `pillToolMin`)은 같다
     struct LineChrome: Equatable {
         /// 좌우 여백 + 상태 아이콘 (+ 배치 오차)
@@ -894,13 +905,14 @@ struct IslandLayoutEngine {
         var spacing: CGFloat
         /// 요약 앞 간격(`summaryLead`) 밖에 더 잡는 폭
         var summaryExtra: CGFloat
-        /// 요약이 제목 줄에 안 들어가면 둘째 줄로 내릴 수 있는지 (노치 아래 띠)
-        var summaryWraps: Bool
+        /// 백그라운드 배지 · 요약이 제목 줄에 안 들어가면 둘째 줄로 내릴 수 있는지 (노치 아래 띠).
+        /// 그러면 제목 줄 요소는 배지 · 요약 없이 고른다 (알약이 같은 내용에 배지 없이 고르는 것과 같은 요소)
+        var wraps: Bool
 
         /// 알약: 좌우 여백 12 · 상태 아이콘 · 간격 6. 요약은 `Spacer` 뒤에 붙어 8pt 더
-        static let pill = LineChrome(base: 24 + 12, spacing: 6, summaryExtra: 8, summaryWraps: false)
-        /// 노치 아래 띠: 좌우 여백 10 · 상태 12 · 간격 5 · 배치 오차 4. 요약은 둘째 줄로 내릴 수 있다
-        static let strip = LineChrome(base: 20 + 12 + 4, spacing: 5, summaryExtra: 0, summaryWraps: true)
+        static let pill = LineChrome(base: 24 + 12, spacing: 6, summaryExtra: 8, wraps: false)
+        /// 노치 아래 띠: 좌우 여백 10 · 상태 12 · 간격 5 · 배치 오차 4. 배지 · 요약은 둘째 줄로 내릴 수 있다
+        static let strip = LineChrome(base: 20 + 12 + 4, spacing: 5, summaryExtra: 0, wraps: true)
     }
 
     /// 알약 · 노치 아래 띠에 넣을 요소 후보 (앞에서부터 고른다).
@@ -921,26 +933,28 @@ struct IslandLayoutEngine {
         lineItems(metrics, width: width, chrome: .pill)
     }
 
-    /// 폭 `width`(노치 폭) 노치 아래 띠에 넣을 요소: 알약과 같은 규칙 (요약은 둘째 줄로 내릴 수 있다)
+    /// 폭 `width`(노치 폭) 노치 아래 띠에 넣을 요소: 알약과 같은 규칙 (백그라운드 배지 · 요약은 둘째 줄로 내릴 수 있어 빼고 고른다)
     static func stripItems(_ metrics: CompactMetrics, width: CGFloat) -> CompactItems {
         lineItems(metrics, width: width, chrome: .strip)
     }
 
     /// 한 줄 내용에 넣을 요소: 제목을 줄일 수 있는 만큼 줄여서라도 들어가는 첫 후보.
-    /// 제목을 통째로 빼는 것은 최소 폭으로도 안 들어갈 때뿐이라, 제목이 들어갈 자리가 있으면 상태 아이콘만 남기지 않는다
+    /// 제목을 통째로 빼는 것은 최소 폭으로도 안 들어갈 때뿐이라, 제목이 들어갈 자리가 있으면 상태 아이콘만 남기지 않는다.
+    /// 배지 · 요약을 둘째 줄로 내릴 수 있는 틀(노치 아래 띠)은 제목 줄(배지 · 요약 없이)만 들어가면 된다
     static func lineItems(_ metrics: CompactMetrics, width: CGFloat, chrome: LineChrome) -> CompactItems {
         pillVariants(metrics).first { items in
             let line = lineNeed(metrics, items: items, squeezed: true, chrome: chrome)
-            if chrome.summaryWraps { return line <= width }
+            if chrome.wraps { return line <= width }
             return line + summaryNeed(metrics, items: items, chrome: chrome) <= width
         } ?? []
     }
 
-    /// 노치 아래 띠가 요약을 둘째 줄에 두는지: 줄이지 않은 제목 줄 + 요약이 한 줄에 안 들어갈 때 (제목을 요약 때문에 줄이지 않게)
-    static func stripWrapsSummary(_ metrics: CompactMetrics, items: CompactItems, width: CGFloat) -> Bool {
-        let summary = summaryNeed(metrics, items: items, chrome: .strip)
-        guard summary > 0 else { return false }
-        return lineNeed(metrics, items: items, squeezed: false, chrome: .strip) + summary > width
+    /// 노치 아래 띠가 둘째 줄을 쓰는지: 줄이지 않은 제목 줄 + 백그라운드 배지 + 요약이 한 줄에 안 들어갈 때
+    /// (제목을 배지 · 요약 때문에 줄이지 않게). 둘째 줄에는 배지와 요약을 함께 둔다
+    static func stripWraps(_ metrics: CompactMetrics, items: CompactItems, width: CGFloat) -> Bool {
+        let extra = badgeNeed(metrics, chrome: .strip) + summaryNeed(metrics, items: items, chrome: .strip)
+        guard extra > 0 else { return false }
+        return lineNeed(metrics, items: items, squeezed: false, chrome: .strip) + extra > width
     }
 
     /// 제목(프로젝트명 · 툴 이름) 폭. 둘 다면 사이 " · " 14pt.
@@ -956,13 +970,22 @@ struct IslandLayoutEngine {
         return text
     }
 
-    /// 한 줄 내용 폭 (요약 제외): 틀 + 제목 + `+N −M`(또는 상태 문구)
+    /// 한 줄 내용 폭 (요약 제외): 틀 + 제목 + `+N −M`(또는 상태 문구) + 백그라운드 배지.
+    /// 배지를 둘째 줄로 내릴 수 있는 틀(노치 아래 띠)은 배지 없이 잰다 (제목 줄에 함께 두면 `badgeNeed` 만큼 더)
     static func lineNeed(_ metrics: CompactMetrics, items: CompactItems, squeezed: Bool, chrome: LineChrome) -> CGFloat {
         var width = chrome.base
         let text = titleWidth(metrics, items: items, squeezed: squeezed)
         if text > 0 { width += chrome.spacing + text }
-        if metrics.trailing > 0 { width += chrome.spacing + metrics.trailing }
+        let trailing = chrome.wraps ? metrics.trailing : metrics.trailingWithBadge
+        if trailing > 0 { width += chrome.spacing + trailing }
         return width
+    }
+
+    /// 배지를 둘째 줄로 내릴 수 있는 틀에서 배지를 제목 줄 끝에 함께 둘 때 더 필요한 폭 (아니면 0 — `lineNeed` 에 이미 있다).
+    /// `+N −M`(또는 상태 문구)이 있으면 그 뒤 `backgroundLead`, 없으면 제목 뒤 틀 간격
+    static func badgeNeed(_ metrics: CompactMetrics, chrome: LineChrome) -> CGFloat {
+        guard chrome.wraps, metrics.badge > 0 else { return 0 }
+        return (metrics.trailing > 0 ? M.backgroundLead : chrome.spacing) + metrics.badge
     }
 
     /// 요약 폭 (요소에 있고 다른 세션이 있을 때만): 앞 간격 + 칩 + 틀의 추가 폭
@@ -971,7 +994,7 @@ struct IslandLayoutEngine {
         return M.summaryLead + metrics.summary + chrome.summaryExtra
     }
 
-    /// 알약 내용 폭 (좌우 여백 12 포함). 프로젝트명 · 툴 이름을 한 줄로 이어 보여주고, 요약은 `+N −M` 뒤에 붙인다.
+    /// 알약 내용 폭 (좌우 여백 12 포함). 프로젝트명 · 툴 이름을 한 줄로 이어 보여주고, 요약은 `+N −M` · 백그라운드 배지 뒤에 붙인다.
     /// - squeezed: 제목을 최소 폭(`pillProjectMin` · `pillToolMin`)까지 줄였을 때
     static func pillNeed(_ metrics: CompactMetrics, items: CompactItems, squeezed: Bool = false) -> CGFloat {
         lineNeed(metrics, items: items, squeezed: squeezed, chrome: .pill) + summaryNeed(metrics, items: items, chrome: .pill)
