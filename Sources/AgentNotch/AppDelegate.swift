@@ -62,6 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
         installTerminationSignalHandlers()
         wireSocketServer()
         guard startSocketServer() else { return }
+        restoreRecentSessions()
 
         uiController.start()
         // 하루 한 번 새 버전 확인 (설정에서 끄면 멈춤, 테스트판은 확인하지 않음)
@@ -146,6 +147,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
             store.resolvePermission(id: requestID, decision: .passthrough)
         }
         return requestID
+    }
+
+    /// 앱이 꺼져 있던 사이 이미 돌고 있던 세션을 대화 기록 끝부분으로 되살린다 (설정에서 끌 수 있음, 데모에서는 안 함).
+    /// 파일 읽기는 백그라운드에서 하고, 그사이 이벤트로 먼저 알게 된 세션은 `SessionStore.restore` 가 건드리지 않는다
+    private func restoreRecentSessions() {
+        guard preferences.restoresRecentSessions, !options.demo else { return }
+        let restorer = SessionRestorer()
+        let store = store
+        Task.detached(priority: .utility) {
+            let restored = restorer.scan()
+            guard !restored.isEmpty else { return }
+            await store.restore(restored)
+        }
     }
 
     /// 시작에 실패해 앱을 끝내야 하면 false

@@ -183,6 +183,56 @@ public final class SessionStore {
         return requestID
     }
 
+    // MARK: - 앱을 새로 띄웠을 때 되살리기
+
+    /// 대화 기록으로 되살린 세션을 넣는다 (`TranscriptTail`). 앱을 새로 띄운 사이 이미 돌고 있던 세션을
+    /// 다음 훅 이벤트 전에도 보여주려는 것이라 알림(완료 · 미리보기 · 입력 대기 카드)은 띄우지 않는다.
+    /// 이미 이벤트로 알게 된 세션은 건드리지 않는다 (이벤트가 더 정확하다)
+    public func restore(_ restored: [RestoredSession]) {
+        var count = 0
+        for item in restored where sessions[item.id] == nil {
+            var session = AgentSession(
+                id: item.id,
+                cwd: item.cwd,
+                projectName: TextUtils.projectName(forCwd: item.cwd),
+                gitBranch: item.gitBranch ?? GitInfo.branch(forDirectory: item.cwd),
+                startedAt: item.lastEventAt,
+                lastEventAt: item.lastEventAt,
+                // 턴을 본 세션으로 둔다 (끝난 세션이면 백그라운드 서브에이전트 규칙이 적용되게)
+                turnStartedAt: item.lastEventAt
+            )
+            session.terminal = TerminalContext(entrypoint: item.entrypoint)
+            switch item.state {
+            case let .runningTool(name, input, toolUseID):
+                let summary = ToolSummarizer.summarize(toolName: name, toolInput: input, cwd: item.cwd)
+                let activity = ActivityItem(
+                    id: toolUseID ?? UUID().uuidString,
+                    kind: .tool,
+                    toolName: name,
+                    title: summary.title,
+                    detail: summary.detail,
+                    symbolName: summary.symbolName,
+                    label: summary.label,
+                    status: .running,
+                    startedAt: item.lastEventAt
+                )
+                appendActivity(&session, activity)
+                session.currentActivity = activity
+                session.phase = Self.userInteractionTools.contains(name) ? .waitingInput : .runningTool
+            case .thinking:
+                session.phase = .thinking
+            case .finished:
+                session.phase = .completed
+            }
+            sessions[item.id] = session
+            count += 1
+        }
+        if count > 0 {
+            Self.logger.info("대화 기록으로 세션 \(count, privacy: .public)개 되살림")
+            recomputeFocus()
+        }
+    }
+
     // MARK: - 사용자 동작
 
     /// 사용자가 권한 요청 · 질문 · 계획 승인에 대해 결정함 → 대기열에서 제거하고 `onPermissionResolved` 호출.

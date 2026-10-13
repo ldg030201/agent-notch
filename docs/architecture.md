@@ -87,6 +87,13 @@ Claude Code (CLI · 데스크톱 앱)
 | `SessionEnd` | 세션 제거, 해당 세션 권한 대기 정리 |
 
 - 처음 보는 `session_id` 의 이벤트가 오면(앱을 세션 도중 켠 경우) payload 의 `cwd` 로 세션을 즉석 생성한다.
+- 앱을 새로 띄우면 세션 목록이 비어서, 긴 Bash 처럼 툴이 도는 동안엔 다음 이벤트까지 그 세션이 보이지 않았다.
+  그래서 켤 때 최근 대화 기록 끝부분으로 세션을 되살린다 (`SessionRestorer` → `TranscriptTail` → `SessionStore.restore`,
+  설정 "앱을 켤 때 돌고 있던 세션 바로 보여주기", 기본 켬, 데모에서는 안 함).
+  - `~/.claude/projects/<프로젝트>/<세션>.jsonl` 중 30분 안에 바뀐 것(최근 40개)의 끝 256KB 만 읽는다. 서브에이전트 기록은 보지 않는다.
+  - 메인 대화 줄로 상태를 고른다: 결과 없는 마지막 `tool_use` → 툴 실행 중(질문 · 계획 승인이면 입력 대기),
+    `stop_hook_summary` · `end_turn` · 사용자 중단 → 끝남(15분 안에 끝난 것만), 그 밖 → 응답 중. `entrypoint` 로 데스크톱 앱 세션을 알아본다.
+  - 알림은 띄우지 않고, 이벤트로 먼저 알게 된 세션은 건드리지 않는다. 되살린 툴은 같은 `tool_use_id` 의 `PostToolUse` 로 끝난다.
 - 오래된 권한 대기 정리: 다른 경로(터미널)에서 이미 답한 요청은 **같은 호출의** `PostToolUse` / `PostToolUseFailure`
   (같은 에이전트 · 툴 이름 · 입력)가 오면 결정 없음으로 풀어준다. 병렬 형제 툴이 있어서 `PreToolUse` 는 기준으로 쓰지 않는다.
   `UserPromptSubmit` · `Stop` · `StopFailure` · `SessionEnd` · `SubagentStop` 은 해당 범위의 대기를 모두 정리한다.
@@ -469,6 +476,7 @@ Claude 의 객관식 질문과 계획 승인을 다이얼로그 대신 노치에
 - 훅 헬퍼는 **화이트리스트 환경변수만** 전달한다 (`NotchWire.forwardedEnvironmentKeys`).
 - 소켓 디렉터리 0700, 소켓 0600, 연결 시 `getpeereid` 로 같은 사용자만 허용.
 - 프롬프트·코드·응답 내용을 디스크에 기록하지 않는다. 메모리에만 두고 오래된 세션은 정리한다.
+- 앱을 켤 때만 최근 Claude Code 대화 기록 끝부분을 **읽는다** (세션 되살리기, 설정에서 끌 수 있음). 쓰지 않고, 상태 · 툴 요약만 메모리에 둔다.
   디버그 로그는 `os.Logger` + `privacy: .private`. 레이아웃 변화 로그(`Presentation`)만 숫자 · 모드 종류 · 자리 종류를 `.public` 으로 남긴다.
 - 네트워크 통신은 **업데이트 확인 하나뿐** — 하루 한 번 GitHub 의 `docs/changelog.json` (raw) 을 받는다. 설정에서 끌 수 있다.
   분석/텔레메트리 없음.

@@ -294,6 +294,14 @@ struct SettingsView: View {
                 }
             }
 
+            SettingsGroup(title: "세션") {
+                switchRow(
+                    "앱을 켤 때 돌고 있던 세션 바로 보여주기",
+                    note: "최근 30분 안의 Claude Code 대화 기록 끝부분을 읽어요 (읽기만 하고 저장하지 않아요)",
+                    isOn: $preferences.restoresRecentSessions
+                )
+            }
+
             SettingsGroup(title: "Claude Code 훅") {
                 SettingsRow(title: "상태") {
                     Text(model.hookStatusText)

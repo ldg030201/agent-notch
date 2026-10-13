@@ -67,6 +67,7 @@ public final class AppPreferences {
         static let compactOverlapStyle = "compactOverlapStyle"
         static let checksForUpdates = "checksForUpdates"
         static let notchStyle = "notchStyle"
+        static let restoresRecentSessions = "restoresRecentSessions"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -128,6 +129,11 @@ public final class AppPreferences {
         didSet { defaults.set(compactOverlapStyle.rawValue, forKey: Key.compactOverlapStyle) }
     }
 
+    /// 앱을 켤 때 최근 Claude Code 대화 기록 끝부분을 읽어 이미 돌고 있던 세션을 바로 보여줄지 (읽기만 하고 아무것도 쓰지 않음)
+    public var restoresRecentSessions: Bool {
+        didSet { defaults.set(restoresRecentSessions, forKey: Key.restoresRecentSessions) }
+    }
+
     /// 하루 한 번 GitHub 의 변경 내역으로 새 버전 확인 (앱의 유일한 네트워크 통신)
     public var checksForUpdates: Bool {
         didSet { defaults.set(checksForUpdates, forKey: Key.checksForUpdates) }
@@ -148,5 +154,6 @@ public final class AppPreferences {
         notchStyle = defaults.string(forKey: Key.notchStyle).flatMap(NotchStyle.init(rawValue:)) ?? .wings
         compactOverlapStyle = defaults.string(forKey: Key.compactOverlapStyle).flatMap(CompactOverlapStyle.init(rawValue:)) ?? .belowNotch
         checksForUpdates = defaults.object(forKey: Key.checksForUpdates) as? Bool ?? true
+        restoresRecentSessions = defaults.object(forKey: Key.restoresRecentSessions) as? Bool ?? true
     }
 }
