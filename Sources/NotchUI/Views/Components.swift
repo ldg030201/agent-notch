@@ -566,11 +566,18 @@ enum IslandFormat {
         case .thinking: return "생각 중"
         case .compacting: return "압축 중"
         case .completed:
-            return session.hasUnseenCompletion ? "완료" : "유휴 · \(idleText(since: session.lastEventAt, now: now))"
+            if session.hasUnseenCompletion { return "완료" }
+            return backgroundText(session) ?? "유휴 · \(idleText(since: session.lastEventAt, now: now))"
         case .failed: return "실패"
-        case .idle: return "유휴 · \(idleText(since: session.lastEventAt, now: now))"
+        case .idle: return backgroundText(session) ?? "유휴 · \(idleText(since: session.lastEventAt, now: now))"
         case .ended: return "종료"
         }
+    }
+
+    /// 메인 답변은 끝났지만 백그라운드 작업이 도는 세션의 상태 문구 (없으면 nil)
+    static func backgroundText(_ session: AgentSession) -> String? {
+        let count = session.backgroundTaskCount
+        return count > 0 ? "백그라운드 \(count)개 작업 중" : nil
     }
 
     /// 백그라운드 작업 종류별 내역 (예: "서브에이전트 2 · 셸 1"). 한 종류뿐이면 이름만 ("셸"), 없으면 nil

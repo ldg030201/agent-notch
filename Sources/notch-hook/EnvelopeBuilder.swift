@@ -12,7 +12,7 @@ enum EnvelopeBuilder {
         return value
     }
 
-    /// Stop · SubagentStop 의 `background_tasks` 는 앱이 개수만 쓰므로 항목마다 종류 · 상태만 남긴다 (명령 · 설명은 보내지 않는다).
+    /// Stop · SubagentStop 의 `background_tasks` 는 앱이 개수만 쓰므로 항목마다 작업 ID · 종류 · 상태만 남긴다 (명령 · 설명은 보내지 않는다).
     /// 쓰지 않는 `session_crons`(예약 프롬프트)는 뺀다
     static func reduceTaskLists(_ payload: JSONValue) -> JSONValue {
         guard var object = payload.objectValue else { return payload }
@@ -20,7 +20,7 @@ enum EnvelopeBuilder {
         if let tasks = object["background_tasks"]?.arrayValue {
             object["background_tasks"] = .array(tasks.prefix(maxBackgroundTasks).map { task in
                 var kept: [String: JSONValue] = [:]
-                for key in ["type", "status"] {
+                for key in ["id", "type", "status"] {
                     if let text = task[key]?.stringValue { kept[key] = .string(String(text.prefix(64))) }
                 }
                 return .object(kept)

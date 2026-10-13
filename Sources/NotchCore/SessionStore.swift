@@ -47,6 +47,9 @@ public final class SessionStore {
     @ObservationIgnored private var phaseBeforeCompact: [String: SessionPhase] = [:]
     /// Claude 앱 확인 카드를 띄울 수 있어 지켜보는 실행 중인 툴 (세션 ID → tool_use_id → 상태)
     @ObservationIgnored private var consentWatches: [String: [String: ConsentWatch]] = [:]
+    /// 세션별로 시작을 본(SubagentStart) 서브에이전트 `agent_id`. 턴 끝 목록에서만 아는 작업은 "task:<id>".
+    /// `activeSubagents` 는 이 집합의 크기다
+    @ObservationIgnored private var runningSubagents: [String: Set<String>] = [:]
     @ObservationIgnored private var signalSeq = 0
 
     private static let logger = Logger(subsystem: "com.ldg.agent-notch", category: "SessionStore")
@@ -91,6 +94,13 @@ public final class SessionStore {
         let isNew = sessions[sessionID] == nil
         var session = sessions[sessionID] ?? makeSession(id: sessionID, payload: payload, now: now)
         applyCommonFields(&session, payload: payload, environment: envelope.env, now: now)
+
+        // 메인 답변이 끝난 뒤 서브에이전트(백그라운드 에이전트)가 쓰는 툴은 타임라인에만 쌓고 세션 단계 · 지금 활동은 그대로 둔다.
+        // 그러지 않으면 백그라운드 툴 호출마다 끝난 세션이 "생각 중" 으로 바뀌었다가 다음 Stop 까지 그대로 남는다
+        let backgroundTool = agentID != nil && Self.settledPhases.contains(session.phase)
+            && (event == "PreToolUse" || event == "PostToolUse" || event == "PostToolUseFailure")
+        let phaseBefore = session.phase
+        let activityBefore = session.currentActivity
 
         var signal: IslandSignal?
         var requestID: UUID?
@@ -140,6 +150,11 @@ public final class SessionStore {
         default:
             // 알 수 없는 이벤트: 공통 필드(lastEventAt 등)만 갱신
             break
+        }
+        // 질문 · 권한처럼 사용자가 봐야 하는 단계로 바뀐 경우는 그대로 둔다
+        if backgroundTool, session.phase == .runningTool || session.phase == .thinking {
+            session.phase = phaseBefore
+            session.currentActivity = activityBefore
         }
 
         // 끝난 툴은 지켜보기에서 빼고, 이미 확인 대기로 알린 툴이 아직 실행 중이면 입력 대기 유지 (새 신호는 checkStalledTools 에서만).
@@ -617,8 +632,13 @@ public final class SessionStore {
         return .failed(sessionID: session.id)
     }
 
+    /// 메인 답변이 끝나 쉬는 단계 (이때 오는 서브에이전트 툴 호출은 백그라운드 작업)
+    static let settledPhases: Set<SessionPhase> = [.completed, .idle, .failed]
+
     private func handleSubagentStart(_ session: inout AgentSession, payload: HookPayload, now: Date) {
-        session.activeSubagents += 1
+        let agentID = payload.string("agent_id") ?? "unknown:\(UUID().uuidString)"
+        runningSubagents[session.id, default: []].insert(agentID)
+        session.activeSubagents = runningSubagents[session.id]?.count ?? 0
         appendActivity(&session, ActivityItem(
             id: Self.subagentActivityID(payload.string("agent_id")),
             kind: .subagent,
@@ -629,22 +649,19 @@ public final class SessionStore {
         ))
     }
 
+    /// 시작을 본 서브에이전트만 끝낸다. 시작 없이 오는 종료(Claude 앱이 턴이 끝날 때마다 내부에서 돌리는 보조 작업 등)는 무시한다:
+    /// 세면 실제로 도는 서브에이전트 수가 줄고, 타임라인에 가짜 "Agent" 가 붙고, 그 이벤트의 작업 목록으로 셸 수까지 지워진다
     private func handleSubagentStop(_ session: inout AgentSession, payload: HookPayload, now: Date) {
-        session.activeSubagents = max(0, session.activeSubagents - 1)
-        let id = Self.subagentActivityID(payload.string("agent_id"))
+        guard let agentID = payload.string("agent_id"), runningSubagents[session.id]?.remove(agentID) != nil else {
+            Self.logger.debug("시작을 못 본 SubagentStop 무시")
+            return
+        }
+        if runningSubagents[session.id]?.isEmpty == true { runningSubagents[session.id] = nil }
+        session.activeSubagents = runningSubagents[session.id]?.count ?? 0
+        let id = Self.subagentActivityID(agentID)
         if let index = session.activities.lastIndex(where: { $0.id == id }) {
             session.activities[index].status = .succeeded
             session.activities[index].endedAt = now
-        } else {
-            appendActivity(&session, ActivityItem(
-                id: id,
-                kind: .subagent,
-                title: Self.subagentTitle(payload.string("agent_type")),
-                symbolName: "person.2",
-                status: .succeeded,
-                startedAt: now,
-                endedAt: now
-            ))
         }
         if session.currentActivity?.id == id { session.currentActivity = nil }
         reconcileBackgroundTasks(&session, payload: payload, includesSubagents: false)
@@ -667,16 +684,40 @@ public final class SessionStore {
     /// Stop · SubagentStop 의 `background_tasks`(아직 도는 작업 목록)로 개수를 맞춘다. 목록이 없으면(작업 목록을 못 읽음 · 줄인 payload) 그대로 둔다.
     /// SubagentStop 목록에는 지금 끝나는 서브에이전트가 남아 있을 수 있어서 서브에이전트 수는 Stop 에서만 맞춘다
     private func reconcileBackgroundTasks(_ session: inout AgentSession, payload: HookPayload, includesSubagents: Bool) {
-        guard let tasks = payload["background_tasks"]?.arrayValue else { return }
+        guard let tasks = payload["background_tasks"]?.arrayValue else {
+            Self.logger.debug("백그라운드 작업 목록 없음 (그대로 둠)")
+            return
+        }
         let counts = Self.backgroundTaskCounts(tasks)
+        Self.logger.debug("백그라운드 작업 목록: 셸 \(counts.shells, privacy: .public) · 서브에이전트 \(counts.subagentIDs.count, privacy: .public) · 기타 \(counts.others, privacy: .public) (서브에이전트 맞춤 \(includesSubagents, privacy: .public))")
         session.backgroundShells = counts.shells
         session.backgroundOthers = counts.others
-        if includesSubagents { session.activeSubagents = counts.subagents }
+        guard includesSubagents else { return }
+        // 목록에 남은 서브에이전트만 남긴다. 시작을 본 ID 와 같으면 그 ID 로(이후 SubagentStop 으로 끝낼 수 있게),
+        // 모르는 작업은 "task:<id>" 로 센다 (다음 턴 끝 목록에서 다시 맞춘다)
+        let known = runningSubagents[session.id] ?? []
+        var next = Set<String>()
+        for taskID in counts.subagentIDs {
+            if let taskID, known.contains(taskID) {
+                next.insert(taskID)
+            } else {
+                next.insert("task:\(taskID ?? UUID().uuidString)")
+            }
+        }
+        runningSubagents[session.id] = next.isEmpty ? nil : next
+        session.activeSubagents = next.count
+    }
+
+    /// `background_tasks` 를 종류별로 센 결과 (서브에이전트는 작업 ID 목록, ID 가 없으면 nil)
+    struct BackgroundTaskCounts: Equatable {
+        var shells = 0
+        var subagentIDs: [String?] = []
+        var others = 0
     }
 
     /// `background_tasks` 항목을 종류별로 센다 (끝난 상태로 남은 항목은 뺀다)
-    static func backgroundTaskCounts(_ tasks: [JSONValue]) -> (shells: Int, subagents: Int, others: Int) {
-        var counts = (shells: 0, subagents: 0, others: 0)
+    static func backgroundTaskCounts(_ tasks: [JSONValue]) -> BackgroundTaskCounts {
+        var counts = BackgroundTaskCounts()
         for task in tasks {
             let status = task["status"]?.stringValue?.lowercased() ?? ""
             if finishedTaskStatuses.contains(status) { continue }
@@ -684,7 +725,7 @@ public final class SessionStore {
             if type.contains("shell") || type.contains("bash") {
                 counts.shells += 1
             } else if type == "subagent" || type.hasSuffix("agent") {
-                counts.subagents += 1
+                counts.subagentIDs.append(TextUtils.nonEmpty(task["id"]?.stringValue))
             } else {
                 counts.others += 1
             }
@@ -834,6 +875,7 @@ public final class SessionStore {
         phaseBeforeCompact[sessionID] = nil
         if handedOffInputs[sessionID] != nil { handedOffInputs[sessionID] = nil }
         consentWatches[sessionID] = nil
+        runningSubagents[sessionID] = nil
         if manualFocusID == sessionID { manualFocusID = nil }
         if pinnedSessionID == sessionID { pinnedSessionID = nil }
         return takePendings { request, _ in request.sessionID == sessionID }

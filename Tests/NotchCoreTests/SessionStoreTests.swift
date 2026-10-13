@@ -268,8 +268,69 @@ import NotchShared
         store.ingest(hook("SubagentStop", #"{"agent_id":"a3","agent_type":"Other"}"#))
         s = try #require(store.sessions["s1"])
         #expect(s.activeSubagents == 0)
-        #expect(s.activities.count == 3)
+        // 시작을 못 본 a3 의 종료는 무시 (가짜 "Agent" 항목을 붙이지 않음)
+        #expect(s.activities.count == 2)
         #expect(s.activities.allSatisfy { $0.status == .succeeded })
+    }
+
+    /// Claude 앱이 턴 끝마다 돌리는 내부 보조 작업처럼 시작 없이 오는 SubagentStop 은
+    /// 백그라운드 서브에이전트 수 · 셸 수 · 타임라인을 건드리지 않는다
+    @Test func unmatchedSubagentStopIsIgnored() throws {
+        let store = makeStore(clock)
+        store.ingest(hook("UserPromptSubmit", #"{"prompt":"백그라운드로 돌려줘"}"#))
+        store.ingest(hook("SubagentStart", #"{"agent_id":"bg1","agent_type":"general-purpose"}"#))
+        store.ingest(hook("PostToolUse", #"{"tool_name":"Bash","tool_use_id":"b1","tool_input":{"command":"log stream","run_in_background":true},"tool_response":{}}"#))
+        store.ingest(hook("Stop", #"{"background_tasks":[{"id":"bg1","type":"subagent","status":"running"},{"id":"sh1","type":"shell","status":"running"}]}"#))
+        var s = try #require(store.sessions["s1"])
+        #expect(s.activeSubagents == 1)
+        #expect(s.backgroundShells == 1)
+        let activityCount = s.activities.count
+
+        store.ingest(hook("SubagentStop", #"{"background_tasks":[]}"#))
+        store.ingest(hook("SubagentStop", #"{"agent_id":"helper","background_tasks":[]}"#))
+        s = try #require(store.sessions["s1"])
+        #expect(s.activeSubagents == 1)
+        #expect(s.backgroundShells == 1)
+        #expect(s.backgroundTaskCount == 2)
+        #expect(s.activities.count == activityCount)
+
+        // 시작을 본 서브에이전트(턴 끝 목록 ID 와 같음)의 종료는 센다
+        store.ingest(hook("SubagentStop", #"{"agent_id":"bg1","background_tasks":[{"id":"sh1","type":"shell","status":"running"}]}"#))
+        s = try #require(store.sessions["s1"])
+        #expect(s.activeSubagents == 0)
+        #expect(s.backgroundShells == 1)
+    }
+
+    /// 메인 답변이 끝난 뒤 백그라운드 서브에이전트의 툴 호출은 타임라인에만 쌓이고 세션 단계는 그대로
+    @Test func backgroundSubagentToolsKeepSettledPhase() throws {
+        let store = makeStore(clock)
+        store.ingest(hook("UserPromptSubmit", #"{"prompt":"백그라운드로 돌려줘"}"#))
+        store.ingest(hook("SubagentStart", #"{"agent_id":"bg1","agent_type":"general-purpose"}"#))
+        store.ingest(hook("Stop", #"{}"#))
+        var s = try #require(store.sessions["s1"])
+        #expect(s.phase == .completed)
+
+        store.ingest(hook("PreToolUse", #"{"agent_id":"bg1","tool_name":"Read","tool_use_id":"r1","tool_input":{"file_path":"/Users/dev/projects/api-server/a.swift"}}"#))
+        s = try #require(store.sessions["s1"])
+        #expect(s.phase == .completed)
+        #expect(s.currentActivity == nil)
+        #expect(s.activities.last?.id == "r1")
+        #expect(s.activities.last?.status == .running)
+
+        store.ingest(hook("PostToolUse", #"{"agent_id":"bg1","tool_name":"Read","tool_use_id":"r1","tool_input":{"file_path":"/Users/dev/projects/api-server/a.swift"},"tool_response":{}}"#))
+        s = try #require(store.sessions["s1"])
+        #expect(s.phase == .completed)
+        #expect(s.activities.last?.status == .succeeded)
+        #expect(SessionStatusSummary.group(for: s) == .working)
+
+        // 사용자가 봐야 하는 단계(질문)는 그대로 반영
+        store.ingest(hook("PreToolUse", #"{"agent_id":"bg1","tool_name":"AskUserQuestion","tool_use_id":"q1","tool_input":{"questions":[]}}"#))
+        #expect(try #require(store.sessions["s1"]).phase == .waitingInput)
+
+        // 메인 에이전트의 툴은 예전처럼 단계를 바꾼다
+        store.ingest(hook("UserPromptSubmit", #"{"prompt":"다음"}"#))
+        store.ingest(hook("PreToolUse", #"{"tool_name":"Read","tool_use_id":"r2","tool_input":{"file_path":"/Users/dev/projects/api-server/b.swift"}}"#))
+        #expect(try #require(store.sessions["s1"]).phase == .runningTool)
     }
 
     @Test func backgroundTasksCountedAndReconciled() throws {

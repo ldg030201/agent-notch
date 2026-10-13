@@ -91,13 +91,23 @@ Claude Code (CLI · 데스크톱 앱)
   (같은 에이전트 · 툴 이름 · 입력)가 오면 결정 없음으로 풀어준다. 병렬 형제 툴이 있어서 `PreToolUse` 는 기준으로 쓰지 않는다.
   `UserPromptSubmit` · `Stop` · `StopFailure` · `SessionEnd` · `SubagentStop` 은 해당 범위의 대기를 모두 정리한다.
 - 백그라운드 작업 수 (`backgroundTaskCount` = 서브에이전트 + 셸 + 기타):
-  - 서브에이전트는 `SubagentStart` / `SubagentStop` 으로 실시간으로 센다.
+  - 서브에이전트는 `SubagentStart` 로 본 `agent_id` 집합으로 센다 (`SessionStore.runningSubagents`).
+    시작을 못 본 `SubagentStop` 은 무시한다: Claude 데스크톱 앱은 턴이 끝날 때마다 약 2초 뒤 시작 이벤트 없는 `SubagentStop`
+    (내부 보조 작업)을 보내는데, 이걸 세면 도는 백그라운드 에이전트 수가 0 이 되고 타임라인에 가짜 "Agent" 가 붙고
+    그 이벤트의 목록으로 셸 수까지 지워졌다 (라이브 로그로 확인).
   - 셸은 `PostToolUse` 의 Bash `run_in_background: true`, 기타는 `Monitor` 툴로 늘린다. 끝났다는 훅은 오지 않으므로
     턴이 끝날 때(`Stop` · `SubagentStop`) 오는 `background_tasks`(아직 도는 작업 목록, 끝난 상태 항목은 뺌)로 종류별 수를 다시 맞춘다.
   - `SubagentStop` 목록에는 지금 끝나는 서브에이전트가 남아 있을 수 있어서 서브에이전트 수는 `Stop` 에서만 맞춘다.
+    `Stop` 목록의 서브에이전트 작업 ID 가 시작을 본 `agent_id` 와 같으면 그 ID 로 남기고(이후 `SubagentStop` 으로 끝낼 수 있게),
+    모르는 작업은 `task:<id>` 로 세어 다음 `Stop` 에서 다시 맞춘다. 훅 헬퍼는 항목마다 `id` · `type` · `status` 만 넘긴다.
     목록이 없으면(작업 목록을 못 읽었거나 payload 를 줄임) 그대로 둔다.
   - 훅 헬퍼는 `background_tasks` 항목마다 `type` · `status` 만 남기고(명령 · 설명은 보내지 않음) `session_crons` 는 뺀다.
     payload 를 4 · 5단계로 줄여도 이 작은 목록은 남긴다.
+  - 메인 답변이 끝난 뒤(`completed` · `idle` · `failed`) 서브에이전트(`agent_id` 있음)의 `PreToolUse` · `PostToolUse` ·
+    `PostToolUseFailure` 는 타임라인에만 쌓고 세션 단계 · 지금 활동은 바꾸지 않는다 (예전엔 끝난 세션이 "생각 중" 으로 남았다).
+    질문 · 권한처럼 사용자가 봐야 하는 단계로 바뀌는 건 그대로 반영한다.
+  - 이런 세션은 상태 문구를 "백그라운드 N개 작업 중" 으로 보여주고, 세션 상태 요약에서 진행 중(초록)으로 센다
+    (`SessionStatusSummary.group(for: session)`).
   - 표시: 접힌 상태는 끝 요소(`+N −M` · 상태 문구) 뒤에 배지 "⧉ N"(0 이면 숨김, 폭은 `CompactMetrics.trailing` 에 포함).
     펼친 화면은 세션 줄에 배지, 상세 머리에 "⧉ 3 서브에이전트 2 · 셸 1" (한 종류뿐이면 이름만).
 - 모든 payload 필드는 선택적으로 취급한다 (버전에 따라 필드가 없거나 늘어날 수 있음). 세부 스키마는 `docs/hook-events.md`.
