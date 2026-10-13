@@ -12,6 +12,25 @@ enum EnvelopeBuilder {
         return value
     }
 
+    /// Stop · SubagentStop 의 `background_tasks` 는 앱이 개수만 쓰므로 항목마다 종류 · 상태만 남긴다 (명령 · 설명은 보내지 않는다).
+    /// 쓰지 않는 `session_crons`(예약 프롬프트)는 뺀다
+    static func reduceTaskLists(_ payload: JSONValue) -> JSONValue {
+        guard var object = payload.objectValue else { return payload }
+        object["session_crons"] = nil
+        if let tasks = object["background_tasks"]?.arrayValue {
+            object["background_tasks"] = .array(tasks.prefix(maxBackgroundTasks).map { task in
+                var kept: [String: JSONValue] = [:]
+                for key in ["type", "status"] {
+                    if let text = task[key]?.stringValue { kept[key] = .string(String(text.prefix(64))) }
+                }
+                return .object(kept)
+            })
+        }
+        return .object(object)
+    }
+
+    static let maxBackgroundTasks = 256
+
     /// 화이트리스트 키 중 값이 있는 것만 담는다. 그 외 환경변수는 절대 전달하지 않는다.
     static func forwardedEnvironment(_ environment: [String: String]) -> [String: String] {
         var result: [String: String] = [:]
@@ -121,6 +140,8 @@ enum PayloadShrinker {
                     reduced[key] = scalar
                 }
             }
+            // 줄여 둔 백그라운드 작업 목록(종류 · 상태)은 작아서 남긴다 (없으면 앱이 개수를 맞추지 못한다)
+            if let tasks = object["background_tasks"] { reduced["background_tasks"] = tasks }
             reduced[truncatedMarkerKey] = .bool(true)
             return .object(reduced)
         }

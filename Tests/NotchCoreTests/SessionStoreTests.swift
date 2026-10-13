@@ -272,6 +272,44 @@ import NotchShared
         #expect(s.activities.allSatisfy { $0.status == .succeeded })
     }
 
+    @Test func backgroundTasksCountedAndReconciled() throws {
+        let store = makeStore(clock)
+        store.ingest(hook("UserPromptSubmit", #"{"prompt":"테스트 돌려줘"}"#))
+        // 백그라운드 셸 2개 (하나는 서브에이전트 안에서) · 일반 Bash · 모니터 · 서브에이전트
+        let background = #""tool_input":{"command":"npm run dev","run_in_background":true},"tool_response":{}"#
+        store.ingest(hook("PostToolUse", #"{"tool_name":"Bash","tool_use_id":"b1","# + background + "}"))
+        store.ingest(hook("PostToolUse", #"{"tool_name":"Bash","tool_use_id":"b2","agent_id":"a1","# + background + "}"))
+        store.ingest(hook("PostToolUse", #"{"tool_name":"Bash","tool_use_id":"b3","tool_input":{"command":"ls"},"tool_response":{}}"#))
+        store.ingest(hook("PostToolUse", #"{"tool_name":"Monitor","tool_use_id":"m1","tool_input":{},"tool_response":{}}"#))
+        store.ingest(hook("SubagentStart", #"{"agent_id":"a1","agent_type":"Explore"}"#))
+        var s = try #require(store.sessions["s1"])
+        #expect(s.backgroundShells == 2)
+        #expect(s.backgroundOthers == 1)
+        #expect(s.activeSubagents == 1)
+        #expect(s.backgroundTaskCount == 4)
+
+        // SubagentStop: 셸 · 기타만 목록으로 맞추고, 서브에이전트 수는 이벤트로만 줄인다 (목록에 끝나는 자신이 남아 있을 수 있음)
+        store.ingest(hook("SubagentStop", #"{"agent_id":"a1","agent_type":"Explore","background_tasks":[{"type":"shell","status":"running"},{"type":"subagent","status":"running"}]}"#))
+        s = try #require(store.sessions["s1"])
+        #expect(s.backgroundShells == 1)
+        #expect(s.backgroundOthers == 0)
+        #expect(s.activeSubagents == 0)
+
+        // Stop: 끝난 상태로 남은 항목은 빼고 종류별로 다시 센다
+        store.ingest(hook("Stop", #"{"background_tasks":[{"type":"shell","status":"running"},{"type":"shell","status":"completed"},{"type":"subagent","status":"running"},{"type":"monitor","status":"running"},{"type":"MCP task","status":"pending"}]}"#))
+        s = try #require(store.sessions["s1"])
+        #expect(s.backgroundShells == 1)
+        #expect(s.activeSubagents == 1)
+        #expect(s.backgroundOthers == 2)
+        #expect(s.backgroundTaskCount == 4)
+
+        // 목록이 없으면(작업 목록을 못 읽음) 그대로, 빈 목록이면 모두 0
+        store.ingest(hook("Stop", #"{}"#))
+        #expect(try #require(store.sessions["s1"]).backgroundTaskCount == 4)
+        store.ingest(hook("Stop", #"{"background_tasks":[]}"#))
+        #expect(try #require(store.sessions["s1"]).backgroundTaskCount == 0)
+    }
+
     @Test func compaction() throws {
         let store = makeStore(clock)
         store.ingest(hook("UserPromptSubmit", #"{"prompt":"go"}"#))

@@ -125,7 +125,7 @@ struct CompactMetrics: Equatable {
     var project: CGFloat
     /// 짧은 툴 이름 폭 (`IslandFormat.shortToolTitle`, 예: "Bash"). 접힌 상태는 어디서나 이 이름만 쓴다
     var tool: CGFloat
-    /// `+N −M` 또는 상태 문구 (없으면 0)
+    /// `+N −M` 또는 상태 문구 + 백그라운드 작업 배지 (없으면 0)
     var trailing: CGFloat
     /// 다른 세션 상태 요약 폭 (다른 세션이 없으면 0). 숫자는 고정폭이라 한 자리 안에서 바뀌면 폭이 같다
     var summary: CGFloat
@@ -144,15 +144,16 @@ struct CompactMetrics: Equatable {
     @MainActor
     init(session: AgentSession, summary: SessionStatusSummary = .empty) {
         let attention = CompactText.attentionText(session)
+        let badge = CompactText.backgroundBadgeWidth(session.backgroundTaskCount)
         self.summary = CompactText.summaryWidth(summary)
         project = CompactText.width(session.projectName, font: IslandFont.bodyNS)
         if let attention {
             tool = 0
-            trailing = CompactText.width(attention.text, font: IslandFont.bodyNS)
+            trailing = CompactText.joined(CompactText.width(attention.text, font: IslandFont.bodyNS), badge)
             isAttention = true
         } else {
             tool = CompactText.width(IslandFormat.shortToolTitle(session), font: IslandFont.bodyNS)
-            trailing = CompactText.statWidth(added: session.turn.added, removed: session.turn.removed)
+            trailing = CompactText.joined(CompactText.statWidth(added: session.turn.added, removed: session.turn.removed), badge)
             isAttention = false
         }
     }
@@ -182,6 +183,18 @@ enum CompactText {
     static func statWidth(added: Int, removed: Int) -> CGFloat {
         guard added > 0 || removed > 0 else { return 0 }
         return width("+\(added)", font: IslandFont.monoNS) + 4 + width("\u{2212}\(removed)", font: IslandFont.monoNS)
+    }
+
+    /// 백그라운드 작업 배지 폭: 아이콘 칸 + 숫자 (0 이면 표시 안 함). 요약처럼 자릿수로만 정해진다
+    static func backgroundBadgeWidth(_ count: Int) -> CGFloat {
+        guard count > 0 else { return 0 }
+        typealias M = IslandMetrics
+        return ceil(M.backgroundIconSize + M.backgroundIconGap + CGFloat(String(count).count) * summaryDigitWidth)
+    }
+
+    /// 한 줄에 이어 붙인 두 요소 폭 (`trailing` 뷰의 사이 간격 6)
+    static func joined(_ first: CGFloat, _ second: CGFloat) -> CGFloat {
+        first > 0 && second > 0 ? first + IslandMetrics.backgroundLead + second : first + second
     }
 
     /// 요약 숫자 한 자리 폭 (고정폭 숫자 11pt)

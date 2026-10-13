@@ -215,14 +215,14 @@ struct CompactSessionView: View {
         }
     }
 
-    /// 툴 이름 + `+N −M`, 또는 상태 문구 (승인 필요 등)
+    /// 툴 이름 + `+N −M`, 또는 상태 문구 (승인 필요 등). 백그라운드 작업이 돌고 있으면 끝에 배지 "⧉ N"
     @ViewBuilder
     private func trailing(_ session: AgentSession, toolTitle: String) -> some View {
-        if let attention = CompactText.attentionText(session) {
-            Text(attention.text)
-                .foregroundStyle(Self.color(attention.tone))
-        } else {
-            HStack(spacing: 6) {
+        HStack(spacing: IslandMetrics.backgroundLead) {
+            if let attention = CompactText.attentionText(session) {
+                Text(attention.text)
+                    .foregroundStyle(Self.color(attention.tone))
+            } else {
                 if !toolTitle.isEmpty {
                     Text(toolTitle)
                         .truncationMode(.middle)
@@ -232,13 +232,18 @@ struct CompactSessionView: View {
                         .layoutPriority(1)
                 }
             }
+            if session.backgroundTaskCount > 0 {
+                BackgroundTaskBadge(count: session.backgroundTaskCount)
+                    .layoutPriority(1)
+            }
         }
     }
 
-    /// `trailing` 이 그릴 것이 있는지 (상태 문구 · 툴 이름 · `+N −M`)
+    /// `trailing` 이 그릴 것이 있는지 (상태 문구 · 툴 이름 · `+N −M` · 백그라운드 배지)
     private static func hasTrailing(_ session: AgentSession, toolTitle: String) -> Bool {
         CompactText.attentionText(session) != nil || !toolTitle.isEmpty
             || session.turn.added > 0 || session.turn.removed > 0
+            || session.backgroundTaskCount > 0
     }
 
     /// 알약 · 노치 아래 띠 제목: 프로젝트명(끝 줄임) · 짧은 툴 이름(가운데 줄임). 자리가 모자라면 `PillTitleLayout` 이 줄인다.

@@ -168,6 +168,9 @@ struct SessionRow: View {
                     }
                     .lineLimit(1)
                     Spacer(minLength: 0)
+                    if session.backgroundTaskCount > 0 {
+                        BackgroundTaskBadge(count: session.backgroundTaskCount)
+                    }
                     if isPinned {
                         Image(systemName: "pin")
                             .font(.system(size: 11))
@@ -185,7 +188,7 @@ struct SessionRow: View {
             }
             .buttonStyle(.plain)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("\(session.projectName), \(subtitle)")
+            .accessibilityLabel(Self.spokenLabel(session, subtitle: subtitle))
             .accessibilityAddTraits(isSelected ? .isSelected : [])
             .contextMenu {
                 Button(isPinned ? "고정 해제" : "고정") {
@@ -200,6 +203,15 @@ struct SessionRow: View {
                 }
             }
         }
+    }
+}
+
+extension SessionRow {
+    static func spokenLabel(_ session: AgentSession, subtitle: String) -> String {
+        let count = session.backgroundTaskCount
+        return count > 0
+            ? "\(session.projectName), \(subtitle), 백그라운드 작업 \(count)개"
+            : "\(session.projectName), \(subtitle)"
     }
 }
 
@@ -221,6 +233,19 @@ struct SessionDetailView: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer(minLength: 6)
+                if let breakdown = IslandFormat.backgroundBreakdown(session) {
+                    // 백그라운드 작업: "⧉ 3 서브에이전트 2 · 셸 1"
+                    HStack(spacing: 4) {
+                        BackgroundTaskBadge(count: session.backgroundTaskCount)
+                        Text(breakdown)
+                            .font(IslandFont.caption)
+                            .foregroundStyle(Palette.muted)
+                    }
+                    .lineLimit(1)
+                    .fixedSize()
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("백그라운드 작업 \(session.backgroundTaskCount)개, \(breakdown)")
+                }
                 ElapsedText(session: session)
             }
             .frame(height: IslandMetrics.lineHeight)

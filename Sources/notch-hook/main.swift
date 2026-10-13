@@ -61,7 +61,7 @@ guard let connection = HookSocket.connect(path: socketPath, sendTimeout: HookHel
     exit(0)
 }
 
-let payload = EnvelopeBuilder.parsePayload(input.data)
+let payload = EnvelopeBuilder.reduceTaskLists(EnvelopeBuilder.parsePayload(input.data))
 let event = EnvelopeBuilder.eventName(payload: payload, argument: options.eventName)
 let expectsReply = NotchWire.replyEvents.contains(event)
 let line = EnvelopeBuilder.encodeLine(

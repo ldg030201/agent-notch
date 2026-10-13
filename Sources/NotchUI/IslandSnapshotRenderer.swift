@@ -90,6 +90,10 @@ enum SnapshotScenario: String, CaseIterable {
     /// 노치 아래 방식 + 노치 왼쪽 빈 곳이 64pt 뿐인 화면: 쉬는 중 요약은 왼쪽 날개, 세션 내용은 노치 아래 띠
     case workingBelowNotchNarrow = "working-below-notch-narrow"
     case workingMinimal = "working-minimal"
+    /// 작업 중 + 백그라운드 셸 1 · 서브에이전트 2 (접힌 상태 끝에 배지 "⧉ 3")
+    case workingBackground = "working-background"
+    /// `working-background` 를 노치 아래 띠로 (양옆이 막힌 메뉴바)
+    case workingBackgroundStrip = "working-background-strip"
     /// 세션 5개: 접힌 상태가 보여주는 세션(권한 대기, 카드 접음) 말고 기다리는 중 1 · 진행 중 1 · 끝남 2 요약
     case workingSummary = "working-summary"
     /// `working-summary` 를 노치 아래 띠로 (양옆이 막힌 메뉴바)
@@ -110,11 +114,15 @@ enum SnapshotScenario: String, CaseIterable {
     case expandedUpdate = "expanded-update"
     /// `working-summary` 를 펼친 모습: 머리에 "세션 5" + 모든 세션 요약
     case expandedSummary = "expanded-summary"
+    /// `working-background` 를 펼친 모습: 세션 줄에 배지, 상세 머리에 "⧉ 3 서브에이전트 2 · 셸 1"
+    case expandedBackground = "expanded-background"
     case menubarWorking = "menubar-working"
     /// 제목이 긴 MCP 툴 실행 중 (수정 없음), 빈 곳이 화면 가운데에서 오른쪽으로 치우친 메뉴바 (가운데에 두면 좁아 빈 곳 안으로 밀어 놓음)
     case menubarWorkingLongTool = "menubar-working-long-tool"
     /// `menubar-working-long-tool` 을 빈 곳이 좁은 메뉴바에 (제목을 줄여서라도 넣음)
     case menubarWorkingTight = "menubar-working-tight"
+    /// `working-background` 를 메뉴바 안 알약으로
+    case menubarBackground = "menubar-background"
     case menubarDot = "menubar-dot"
     case menubarPermission = "menubar-permission"
     /// 외부 모니터 "메뉴바 아래" 방식: 메뉴바 아래 알약 · 그 아래로 펼친 카드
@@ -126,7 +134,7 @@ enum SnapshotScenario: String, CaseIterable {
     /// 메뉴바 안 알약 장면은 style 과 관계없이 노치 없는 화면으로 그린다
     var forcesMenuBar: Bool {
         switch self {
-        case .menubarWorking, .menubarWorkingLongTool, .menubarWorkingTight, .menubarDot, .menubarPermission,
+        case .menubarWorking, .menubarWorkingLongTool, .menubarWorkingTight, .menubarBackground, .menubarDot, .menubarPermission,
              .menubarBelowWorking, .menubarBelowPermission: return true
         default: return false
         }
@@ -142,7 +150,8 @@ enum SnapshotScenario: String, CaseIterable {
     /// 노치 화면 표시 방식. 노치 아래 장면만 명시하고 나머지는 기본값(넓은 노치)
     var notchStyle: NotchStyle {
         switch self {
-        case .workingBelowNotch, .workingBelowNotchLeft, .workingBelowNotchStrip, .workingBelowNotchNarrow, .workingMinimal, .workingSummaryStrip:
+        case .workingBelowNotch, .workingBelowNotchLeft, .workingBelowNotchStrip, .workingBelowNotchNarrow, .workingMinimal, .workingSummaryStrip,
+             .workingBackgroundStrip:
             return .belowNotch
         default: return .wings
         }
@@ -152,7 +161,7 @@ enum SnapshotScenario: String, CaseIterable {
     var crowding: SnapshotMenuBar.Crowding {
         switch self {
         case .workingRightWing: return .leftBlocked
-        case .workingBelowNotch, .workingMinimal, .workingSummaryStrip: return .bothBlocked
+        case .workingBelowNotch, .workingMinimal, .workingSummaryStrip, .workingBackgroundStrip: return .bothBlocked
         case .idleWings, .workingWings, .workingWingsIcons, .workingWingsRetracted, .workingBelowNotchLeft: return .iconsToNotch
         case .workingWingsIconsStrip, .workingBelowNotchStrip: return .menusAndIconsToNotch
         case .workingWingsIconsNear: return .iconsNearNotch
@@ -499,6 +508,14 @@ enum SnapshotStage {
             world.apiServerRunsTests()
         case .menubarWorkingLongTool, .menubarWorkingTight:
             world.apiServerUsesBrowser()
+        case .workingBackground, .workingBackgroundStrip, .menubarBackground, .expandedBackground:
+            world.apiServerEdits()
+            world.apiServerStartsBackgroundWork()
+            world.apiServerRunsTests()
+            if scene == .expandedBackground {
+                showCompact()
+                presentation.toggleExpanded(on: screenID)
+            }
         case .workingWingsRetracted:
             // 아이콘 위치를 모를 때: 마우스를 올린 오른쪽 날개가 노치 안으로 들어간 모습
             world.apiServerEdits()

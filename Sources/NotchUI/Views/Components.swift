@@ -286,6 +286,26 @@ struct SessionSummaryChips: View {
     }
 }
 
+/// 백그라운드 작업 수 배지 (겹친 네모 + 숫자). 폭은 `CompactText.backgroundBadgeWidth` 와 같다
+struct BackgroundTaskBadge: View {
+    let count: Int
+
+    var body: some View {
+        HStack(spacing: IslandMetrics.backgroundIconGap) {
+            Image(systemName: "square.on.square")
+                .font(.system(size: 9, weight: .semibold))
+                .frame(width: IslandMetrics.backgroundIconSize)
+            Text(verbatim: "\(count)")
+                .font(IslandFont.summaryCount)
+        }
+        .foregroundStyle(Palette.secondary)
+        .lineLimit(1)
+        .fixedSize()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("백그라운드 작업 \(count)개")
+    }
+}
+
 // MARK: - diff
 
 /// `+N −M` (초록/빨강 고정폭)
@@ -551,6 +571,18 @@ enum IslandFormat {
         case .idle: return "유휴 · \(idleText(since: session.lastEventAt, now: now))"
         case .ended: return "종료"
         }
+    }
+
+    /// 백그라운드 작업 종류별 내역 (예: "서브에이전트 2 · 셸 1"). 한 종류뿐이면 이름만 ("셸"), 없으면 nil
+    static func backgroundBreakdown(_ session: AgentSession) -> String? {
+        let parts = [
+            ("서브에이전트", session.activeSubagents),
+            ("셸", session.backgroundShells),
+            ("기타", session.backgroundOthers),
+        ].filter { $0.1 > 0 }
+        guard !parts.isEmpty else { return nil }
+        if parts.count == 1 { return parts[0].0 }
+        return parts.map { "\($0.0) \($0.1)" }.joined(separator: " · ")
     }
 
     /// 이번 턴 소요 시간 (완료 시점 기준)

@@ -186,6 +186,17 @@ struct SnapshotWorld {
         return store.sessions[api.id]?.lastDiff
     }
 
+    /// api-server: 개발 서버를 백그라운드 셸로 띄우고 서브에이전트 2개가 도는 중 (접힌 상태 배지 "⧉ 3").
+    /// `apiServerEdits` 다음, `apiServerRunsTests` 전에 부른다
+    mutating func apiServerStartsBackgroundWork() {
+        let api = Self.apiServer
+        tool(api, "Bash", at: 613.5, input: ["command": "npm run dev", "description": "개발 서버", "run_in_background": true], response: [
+            "stdout": "", "stderr": "", "interrupted": false, "backgroundTaskId": "snapshot-shell-1",
+        ])
+        send(api, "SubagentStart", at: 613.7, ["agent_id": "snapshot-agent-1", "agent_type": "Explore"])
+        send(api, "SubagentStart", at: 613.8, ["agent_id": "snapshot-agent-2", "agent_type": "Plan"])
+    }
+
     /// api-server: 테스트 실행 중 (접힌 상태 · 펼침에 스피너)
     mutating func apiServerRunsTests() {
         start(Self.apiServer, "Bash", at: 614, input: ["command": "npm test", "description": "테스트 실행"])

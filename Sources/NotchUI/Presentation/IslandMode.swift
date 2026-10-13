@@ -84,6 +84,10 @@ enum IslandMetrics {
     static let summaryDotGap: CGFloat = 4
     static let summaryGroupSpacing: CGFloat = 6
     static let summaryLead: CGFloat = 8
+    /// 백그라운드 작업 배지 "⧉ 3": 아이콘 칸 폭 · 아이콘과 숫자 사이 · 앞 내용과 사이
+    static let backgroundIconSize: CGFloat = 11
+    static let backgroundIconGap: CGFloat = 3
+    static let backgroundLead: CGFloat = 6
     /// 요약을 넣느라 날개가 더 넓어질 수 있는 폭 (한쪽)
     static let summaryWingGrowth: CGFloat = 40
     /// 노치 아래 띠에 요약이 한 줄로 안 들어가면 띠를 이만큼 높여 두 줄로 (폭은 노치 폭 그대로)

@@ -309,6 +309,10 @@ public struct AgentSession: Identifiable, Hashable, Sendable {
     /// 완료됐지만 사용자가 아직 확인하지 않음
     public var hasUnseenCompletion: Bool
     public var activeSubagents: Int
+    /// 백그라운드 셸 수 (`run_in_background` Bash). 시작할 때 늘리고, 턴이 끝날 때 `background_tasks` 로 맞춘다
+    public var backgroundShells: Int
+    /// 그 밖의 백그라운드 작업 수 (모니터 · 워크플로 · 팀원 · MCP 작업 등). 셸과 같은 방식으로 센다
+    public var backgroundOthers: Int
     public var terminal: TerminalContext
 
     public init(
@@ -334,6 +338,8 @@ public struct AgentSession: Identifiable, Hashable, Sendable {
         errorMessage: String? = nil,
         hasUnseenCompletion: Bool = false,
         activeSubagents: Int = 0,
+        backgroundShells: Int = 0,
+        backgroundOthers: Int = 0,
         terminal: TerminalContext = TerminalContext()
     ) {
         self.id = id
@@ -358,11 +364,18 @@ public struct AgentSession: Identifiable, Hashable, Sendable {
         self.errorMessage = errorMessage
         self.hasUnseenCompletion = hasUnseenCompletion
         self.activeSubagents = activeSubagents
+        self.backgroundShells = backgroundShells
+        self.backgroundOthers = backgroundOthers
         self.terminal = terminal
     }
 }
 
 extension AgentSession {
+    /// 메인 대화와 따로 도는 작업 수: 서브에이전트 + 백그라운드 셸 + 그 밖의 작업
+    public var backgroundTaskCount: Int {
+        activeSubagents + backgroundShells + backgroundOthers
+    }
+
     /// 아일랜드에 한 줄로 보여줄 최근 응답 텍스트.
     /// 스트리밍 중이면 마지막 비어 있지 않은 줄, 아니면 `lastAssistantMessage` 의 마지막 비어 있지 않은 줄.
     public var latestTextLine: String? {

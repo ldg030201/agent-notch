@@ -396,6 +396,7 @@ public final class SessionStore {
                 signal = .edited(sessionID: session.id, diff: snippet)
             }
         }
+        noteBackgroundLaunch(&session, toolName: toolName, payload: payload)
         settleAfterTool(&session)
         return signal
     }
@@ -499,6 +500,7 @@ public final class SessionStore {
             session.lastAssistantMessage = String(message.suffix(Self.maxAssistantMessageCharacters))
         }
         closeRunningActivities(&session, status: .succeeded, at: now)
+        reconcileBackgroundTasks(&session, payload: payload, includesSubagents: true)
         session.currentActivity = nil
         session.phase = .completed
         session.hasUnseenCompletion = true
@@ -548,7 +550,54 @@ public final class SessionStore {
             ))
         }
         if session.currentActivity?.id == id { session.currentActivity = nil }
+        reconcileBackgroundTasks(&session, payload: payload, includesSubagents: false)
     }
+
+    // MARK: - 백그라운드 작업
+
+    /// 백그라운드로 시작한 툴 (Bash `run_in_background`, Monitor). 끝났다는 훅은 오지 않아서 턴이 끝날 때 맞춘다
+    private func noteBackgroundLaunch(_ session: inout AgentSession, toolName: String, payload: HookPayload) {
+        if toolName == "Bash", payload["tool_input"]?["run_in_background"]?.boolValue == true {
+            session.backgroundShells += 1
+        } else if Self.backgroundToolNames.contains(toolName) {
+            session.backgroundOthers += 1
+        }
+    }
+
+    /// 실행하면 그 자체로 백그라운드 작업이 되는 툴 (서브에이전트는 SubagentStart 로 따로 센다)
+    static let backgroundToolNames: Set<String> = ["Monitor"]
+
+    /// Stop · SubagentStop 의 `background_tasks`(아직 도는 작업 목록)로 개수를 맞춘다. 목록이 없으면(작업 목록을 못 읽음 · 줄인 payload) 그대로 둔다.
+    /// SubagentStop 목록에는 지금 끝나는 서브에이전트가 남아 있을 수 있어서 서브에이전트 수는 Stop 에서만 맞춘다
+    private func reconcileBackgroundTasks(_ session: inout AgentSession, payload: HookPayload, includesSubagents: Bool) {
+        guard let tasks = payload["background_tasks"]?.arrayValue else { return }
+        let counts = Self.backgroundTaskCounts(tasks)
+        session.backgroundShells = counts.shells
+        session.backgroundOthers = counts.others
+        if includesSubagents { session.activeSubagents = counts.subagents }
+    }
+
+    /// `background_tasks` 항목을 종류별로 센다 (끝난 상태로 남은 항목은 뺀다)
+    static func backgroundTaskCounts(_ tasks: [JSONValue]) -> (shells: Int, subagents: Int, others: Int) {
+        var counts = (shells: 0, subagents: 0, others: 0)
+        for task in tasks {
+            let status = task["status"]?.stringValue?.lowercased() ?? ""
+            if finishedTaskStatuses.contains(status) { continue }
+            let type = task["type"]?.stringValue?.lowercased() ?? ""
+            if type.contains("shell") || type.contains("bash") {
+                counts.shells += 1
+            } else if type == "subagent" || type.hasSuffix("agent") {
+                counts.subagents += 1
+            } else {
+                counts.others += 1
+            }
+        }
+        return counts
+    }
+
+    static let finishedTaskStatuses: Set<String> = [
+        "completed", "complete", "done", "finished", "failed", "error", "killed", "stopped", "cancelled", "canceled",
+    ]
 
     private func handlePreCompact(_ session: inout AgentSession, now: Date) {
         if session.phase != .compacting {

@@ -54,9 +54,9 @@ Claude Code (CLI · 데스크톱 앱)
 | `PermissionRequest` | `PermissionRequestInfo` 생성 → 대기열, phase `waitingPermission`, 신호 `permissionRequested`, 요청 ID 반환. 단 `AskUserQuestion` / `ExitPlanMode` 는 대기열에 넣지 않고 바로 결정 없음(Claude Code 가 `updatedInput` 없는 allow 를 무시하므로) → 입력 대기 카드 |
 | `Notification` | `lastNotification` 갱신. `elicitation_dialog`/`agent_needs_input` → `waitingInput` + `needsInput`. `permission_prompt` 인데 해당 세션의 훅 대기 요청이 없으면 `waitingPermission` + `needsInput`. `idle_prompt` → 작업 중 · 훅 대기 없는 승인 대기 · 입력 대기를 `idle` 로 정리 (터미널에서 거부/Esc 한 경우 약 60초 뒤 복구) |
 | `MessageDisplay` | `delta` 를 `streamingText` 뒤에 붙임(최근 2000자 유지) |
-| `Stop` | phase `completed`, `lastAssistantMessage`, 미확인 완료 표시, 신호 `completed`, 해당 세션 남은 권한 대기 정리 |
+| `Stop` | phase `completed`, `lastAssistantMessage`, 미확인 완료 표시, 신호 `completed`, 해당 세션 남은 권한 대기 정리. `background_tasks` 로 백그라운드 작업 수(서브에이전트 포함)를 맞춤 |
 | `StopFailure` | phase `failed`, `errorMessage`, 신호 `failed` |
-| `SubagentStart` / `SubagentStop` | `activeSubagents` 증감 |
+| `SubagentStart` / `SubagentStop` | `activeSubagents` 증감. `SubagentStop` 의 `background_tasks` 로 셸 · 기타 백그라운드 수를 맞춤 |
 | `PreCompact` / `PostCompact` | `compacting` / 이전 상태 복귀 |
 | `SessionEnd` | 세션 제거, 해당 세션 권한 대기 정리 |
 
@@ -64,6 +64,16 @@ Claude Code (CLI · 데스크톱 앱)
 - 오래된 권한 대기 정리: 다른 경로(터미널)에서 이미 답한 요청은 **같은 호출의** `PostToolUse` / `PostToolUseFailure`
   (같은 에이전트 · 툴 이름 · 입력)가 오면 결정 없음으로 풀어준다. 병렬 형제 툴이 있어서 `PreToolUse` 는 기준으로 쓰지 않는다.
   `UserPromptSubmit` · `Stop` · `StopFailure` · `SessionEnd` · `SubagentStop` 은 해당 범위의 대기를 모두 정리한다.
+- 백그라운드 작업 수 (`backgroundTaskCount` = 서브에이전트 + 셸 + 기타):
+  - 서브에이전트는 `SubagentStart` / `SubagentStop` 으로 실시간으로 센다.
+  - 셸은 `PostToolUse` 의 Bash `run_in_background: true`, 기타는 `Monitor` 툴로 늘린다. 끝났다는 훅은 오지 않으므로
+    턴이 끝날 때(`Stop` · `SubagentStop`) 오는 `background_tasks`(아직 도는 작업 목록, 끝난 상태 항목은 뺌)로 종류별 수를 다시 맞춘다.
+  - `SubagentStop` 목록에는 지금 끝나는 서브에이전트가 남아 있을 수 있어서 서브에이전트 수는 `Stop` 에서만 맞춘다.
+    목록이 없으면(작업 목록을 못 읽었거나 payload 를 줄임) 그대로 둔다.
+  - 훅 헬퍼는 `background_tasks` 항목마다 `type` · `status` 만 남기고(명령 · 설명은 보내지 않음) `session_crons` 는 뺀다.
+    payload 를 4 · 5단계로 줄여도 이 작은 목록은 남긴다.
+  - 표시: 접힌 상태는 끝 요소(`+N −M` · 상태 문구) 뒤에 배지 "⧉ N"(0 이면 숨김, 폭은 `CompactMetrics.trailing` 에 포함).
+    펼친 화면은 세션 줄에 배지, 상세 머리에 "⧉ 3 서브에이전트 2 · 셸 1" (한 종류뿐이면 이름만).
 - 모든 payload 필드는 선택적으로 취급한다 (버전에 따라 필드가 없거나 늘어날 수 있음). 세부 스키마는 `docs/hook-events.md`.
 
 ## 5. 주로 볼 세션 (포커스) 규칙
