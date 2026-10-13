@@ -1,6 +1,33 @@
 # 개발 · 릴리스
 
-[← README](../README.md) · 설계는 [architecture.md](architecture.md)
+[← README](../README.md) · 사용법은 [usage.md](usage.md) · 설계는 [architecture.md](architecture.md)
+
+## 빠르게 시작
+
+```bash
+git clone https://github.com/ldg030201/agent-notch.git && cd agent-notch
+scripts/dev.sh                    # 테스트판(AgentNotch-Test) 빌드 후 다시 띄우기 · `scripts/dev.sh watch` 는 저장할 때마다
+scripts/test.sh                   # 테스트 (Command Line Tools 용 swift test 래퍼)
+VARIANT=test scripts/build.sh     # build/AgentNotch-Test.app 만 만들기
+```
+
+| 명령 | 하는 일 |
+|---|---|
+| `scripts/build.sh` | `build/AgentNotch.app` (정식판). 버전 세 곳이 다르면 멈춘다. 서명 인증서가 없으면 ad-hoc |
+| `scripts/run.sh` | 빌드된 정식판을 다시 띄운다 (켜져 있으면 끄고 켬, 없으면 먼저 빌드). `--build` 로 새로 빌드, 그 밖의 인자는 앱에 그대로 (`--demo` 등) |
+| `scripts/stop.sh` | 실행 중인 앱을 끈다 (정상 종료로 소켓 정리, 5초 안에 안 꺼지면 강제). 테스트판은 `VARIANT=test` |
+| `AgentNotch --install-hooks` | Claude Code 훅 설치 (settings.json 백업 후 AgentNotch 항목만 추가, `--no-message-display` 로 응답 스트리밍 훅 제외) |
+| `AgentNotch --uninstall-hooks` | AgentNotch 훅만 제거 (다른 훅은 그대로) |
+| `AgentNotch --hook-status` | 훅 설치 상태 확인 |
+
+| 모듈 | 역할 |
+|---|---|
+| `NotchShared` | 와이어 프로토콜(`HookEnvelope`, `HookReply`), `JSONValue` |
+| `notch-hook` | 훅 헬퍼 실행 파일 |
+| `NotchCore` | 세션 상태(`SessionStore`), 포커스 엔진, diff 계산, 툴 요약, 설정 |
+| `NotchServices` | 소켓 서버, 훅 설치기, 터미널 이동, 로그인 시 실행, 업데이트 확인 · 업그레이드 |
+| `NotchUI` | 노치 패널, 아일랜드 SwiftUI 뷰, 설정 화면 |
+| `AgentNotch` | 앱 진입점, 메뉴바, 모듈 조립, 데모, 변경 내역 |
 
 ## 툴체인
 
@@ -62,7 +89,7 @@ codesign -dv --verbose=4 build/AgentNotch-Test.app 2>&1 | grep Authority
 - 인증서가 있으면 `scripts/build.sh` 가 그걸로, 없거나 실패하면 ad-hoc 으로 서명한다. **서명 때문에 빌드가 실패하지는 않는다.**
 - 개인키는 임시 폴더에서만 만들고 바로 지운다. p12 암호도 매번 새로 만드는 일회용이다.
 - **인증서를 배포하지 않는다.** 개인키가 새면 그 키로 서명한 앱을 macOS 가 같은 앱으로 보고 허용해 둔 권한을 물려받는다.
-  그래서 Homebrew 사용자(bottle 포함)는 ad-hoc 이고, 업데이트 후 권한을 다시 물을 수 있다 (README 에 안내).
+  그래서 Homebrew 사용자(bottle 포함)는 ad-hoc 이고, 업데이트 후 권한을 다시 물을 수 있다 ([usage.md](usage.md) 에 안내).
 
 ## 버전
 
