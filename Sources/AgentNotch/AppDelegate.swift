@@ -10,6 +10,8 @@ import os
 final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
     /// 오래된 세션 정리 주기
     private static let pruneInterval: TimeInterval = 5 * 60
+    /// Claude 앱 확인 카드 추정 주기 (훅이 오지 않아 직접 살핀다)
+    private static let stallCheckInterval: TimeInterval = 1
     private static let log = Logger(subsystem: NotchServices.logSubsystem, category: "app")
 
     private let options: LaunchOptions
@@ -27,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
     private var statusMenu: StatusMenuController?
     private var hotKey: GlobalHotKey?
     private var pruneTimer: Timer?
+    private var stallTimer: Timer?
     /// SIGTERM(launchd, 업데이트 교체 스크립트) · SIGINT 에도 정상 종료 경로를 타게 한다 (소켓 파일 정리)
     private var signalSources: [DispatchSourceSignal] = []
 
@@ -72,6 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
         pruneTimer = Timer.scheduledTimer(withTimeInterval: Self.pruneInterval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.pruneStaleSessions() }
         }
+        startStallTimer()
         settings.refreshHelperIfNeeded()
 
         if options.demo {
@@ -86,6 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
         updates.stop()
         demo.stop()
         pruneTimer?.invalidate()
+        stallTimer?.invalidate()
         hotKey?.invalidate()
         uiController.stop()
         // 대기 중인 훅은 연결이 끊기면 결정 없이 종료된다 (Claude Code 기본 프롬프트로 넘어감)
@@ -160,6 +165,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
 
     private func pruneStaleSessions() {
         store.pruneStaleSessions(olderThan: preferences.staleSessionTimeout)
+    }
+
+    /// Claude 데스크톱 앱이 띄우는 확인 카드(화면 제어 · 사이트 접근 등)는 훅이 오지 않아 1초마다 멈춘 툴을 살핀다.
+    /// 메뉴가 열려 있어도 돌도록 common 모드에 건다.
+    private func startStallTimer() {
+        let timer = Timer(timeInterval: Self.stallCheckInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.store.checkStalledTools() }
+        }
+        timer.tolerance = 0.3
+        RunLoop.main.add(timer, forMode: .common)
+        stallTimer = timer
     }
 
     // MARK: - 훅 설치

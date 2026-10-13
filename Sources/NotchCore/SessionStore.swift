@@ -30,6 +30,9 @@ public final class SessionStore {
     /// 권한 요청에 대한 사용자 결정이 나면 호출된다 (SocketServer 가 훅 프로세스에 응답을 전달).
     public var onPermissionResolved: (@MainActor (PermissionRequestInfo, PermissionDecision) -> Void)?
 
+    /// Claude 데스크톱 앱 확인 카드 추정 규칙 (`checkStalledTools()`)
+    @ObservationIgnored public var appConsent: AppConsentHeuristic = .default
+
     private let clock: () -> Date
 
     /// 사용자가 직접 선택한 세션 (세션이 제거되면 해제)
@@ -38,6 +41,8 @@ public final class SessionStore {
     @ObservationIgnored private var pendingAgentIDs: [UUID: String] = [:]
     /// PreCompact 직전 phase (PostCompact 에서 복귀)
     @ObservationIgnored private var phaseBeforeCompact: [String: SessionPhase] = [:]
+    /// Claude 앱 확인 카드를 띄울 수 있어 지켜보는 실행 중인 툴 (세션 ID → tool_use_id → 상태)
+    @ObservationIgnored private var consentWatches: [String: [String: ConsentWatch]] = [:]
     @ObservationIgnored private var signalSeq = 0
 
     private static let logger = Logger(subsystem: "com.ldg.agent-notch", category: "SessionStore")
@@ -104,6 +109,8 @@ public final class SessionStore {
                 let info = handlePermissionRequest(&session, payload: payload, agentID: agentID, now: now)
                 requestID = info.id
                 signal = .permissionRequested(id: info.id, sessionID: sessionID)
+                linkConsentWatch(info, toolInput: Self.isShrunk(payload) ? nil : payload["tool_input"], in: session)
+                restartConsentClocks(sessionID, at: now)
             }
         case "Notification":
             signal = handleNotification(&session, payload: payload, now: now)
@@ -126,6 +133,13 @@ public final class SessionStore {
             break
         }
 
+        // 끝난 툴은 지켜보기에서 빼고, 이미 확인 대기로 알린 툴이 아직 실행 중이면 입력 대기 유지 (새 신호는 checkStalledTools 에서만).
+        // 다른 곳에서 답한 권한 요청의 툴은 실행됐는지 모른다 (거부면 PostToolUse 가 오지 않는다) → 지켜보지 않는다
+        for request in released { dropConsentWatch(permissionID: request.id, sessionID: sessionID) }
+        if !released.isEmpty { restartConsentClocks(sessionID, at: now) }
+        pruneConsentWatches(session)
+        _ = applyConsentWait(&session, now: now, allowSignal: false)
+
         // 다른 에이전트(서브에이전트)의 권한 요청이 아직 남아 있으면 승인 대기로 표시
         if hasPending(sessionID), session.phase == .thinking || session.phase == .runningTool {
             session.phase = .waitingPermission
@@ -146,6 +160,13 @@ public final class SessionStore {
         guard let index = pendingPermissions.firstIndex(where: { $0.id == id }) else { return }
         let info = pendingPermissions.remove(at: index)
         pendingAgentIDs[id] = nil
+        // 거부하면 툴이 실행되지 않아 PostToolUse 가 오지 않을 수 있고, 터미널로 넘기면 결과를 모른다 → 그 호출은 지켜보지 않는다.
+        // 허용이면 승인 대기 동안 툴이 실행되지 않았으니 앱 확인 카드 지연은 지금부터 잰다
+        switch decision {
+        case .allow, .allowAlways: unlinkConsentWatch(permissionID: id, sessionID: info.sessionID)
+        case .deny, .passthrough: dropConsentWatch(permissionID: id, sessionID: info.sessionID)
+        }
+        restartConsentClocks(info.sessionID, at: clock())
 
         if var session = sessions[info.sessionID], session.phase == .waitingPermission, !hasPending(info.sessionID) {
             switch decision {
@@ -166,8 +187,11 @@ public final class SessionStore {
     /// 훅 연결이 끊기거나 타임아웃 → 대기열에서만 제거 (`onPermissionResolved` 호출 안 함)
     public func cancelPermission(id: UUID) {
         guard let index = pendingPermissions.firstIndex(where: { $0.id == id }) else { return }
-        pendingPermissions.remove(at: index)
+        let info = pendingPermissions.remove(at: index)
         pendingAgentIDs[id] = nil
+        // 다른 곳(Claude 앱 · 터미널)에서 먼저 답했거나 시간이 지났다: 허용됐는지 모른다 → 그 호출은 지켜보지 않는다
+        dropConsentWatch(permissionID: id, sessionID: info.sessionID)
+        restartConsentClocks(info.sessionID, at: clock())
         recomputeFocus()
     }
 
@@ -220,6 +244,33 @@ public final class SessionStore {
             _ = removeSession(id)
         }
         recomputeFocus()
+    }
+
+    /// Claude 데스크톱 앱이 띄우는 확인 카드(예: "화면을 전체 제어할까요?")를 기다리는 것으로 보이는 툴을 찾는다.
+    ///
+    /// 이 카드는 훅이 오지 않으므로 앱이 1초마다 호출한다. 다음이 모두 맞으면 입력 대기 + `.needsInput` 신호:
+    /// - Claude 데스크톱 앱 세션
+    /// - `appConsent` 목록의 툴이 PostToolUse 없이 `appConsent.delay` 이상 실행 중 (훅 승인 대기 시간은 빼고 잰다)
+    /// - 훅 권한 요청 대기가 없음
+    /// 같은 tool_use_id 에는 신호를 한 번만 보낸다. 툴이 끝나면(PostToolUse · Stop 등) 평소 상태로 돌아간다.
+    public func checkStalledTools() {
+        guard !consentWatches.isEmpty else { return }
+        let now = clock()
+        var changed = false
+        for sessionID in Array(consentWatches.keys) {
+            guard var session = sessions[sessionID] else {
+                consentWatches[sessionID] = nil
+                continue
+            }
+            pruneConsentWatches(session)
+            let signal = applyConsentWait(&session, now: now, allowSignal: true)
+            if session != sessions[sessionID] {
+                sessions[sessionID] = session
+                changed = true
+            }
+            if let signal { emit(signal, at: now) }
+        }
+        if changed { recomputeFocus() }
     }
 
     // MARK: - 이벤트별 처리
@@ -285,6 +336,13 @@ public final class SessionStore {
             session.turn.toolCount += 1
         }
         session.currentActivity = item
+        if session.terminal.isClaudeDesktopApp,
+           appConsent.watches(toolName: toolName, toolInput: toolInput),
+           consentWatches[session.id]?[item.id] == nil {
+            consentWatches[session.id, default: [:]][item.id] = ConsentWatch(
+                since: now, toolName: toolName, toolInput: Self.isShrunk(payload) ? nil : toolInput
+            )
+        }
 
         if Self.userInteractionTools.contains(toolName) {
             session.phase = .waitingInput
@@ -626,9 +684,115 @@ public final class SessionStore {
     private func removeSession(_ sessionID: String) -> [PermissionRequestInfo] {
         sessions[sessionID] = nil
         phaseBeforeCompact[sessionID] = nil
+        consentWatches[sessionID] = nil
         if manualFocusID == sessionID { manualFocusID = nil }
         if pinnedSessionID == sessionID { pinnedSessionID = nil }
         return takePendings { request, _ in request.sessionID == sessionID }
+    }
+
+    // MARK: - Claude 앱 확인 카드 추정
+
+    /// 지켜보는 툴 한 건
+    private struct ConsentWatch {
+        /// 지연을 재기 시작한 시각 (PreToolUse, 훅 승인 대기가 끝나면 그 시각으로 미룬다)
+        var since: Date
+        var toolName: String
+        /// PreToolUse 의 `tool_input` (헬퍼가 payload 를 줄였으면 nil)
+        var toolInput: JSONValue?
+        /// 이 호출을 묻는 훅 권한 요청 (PermissionRequest 에는 tool_use_id 가 없어 툴 이름 · 입력으로 잇는다)
+        var permissionID: UUID?
+        /// 이 툴로 `.needsInput` 신호를 이미 보냄
+        var signaled = false
+    }
+
+    /// 훅 권한 요청을 그 호출의 지켜보기에 잇는다 (거부 · 결과 모름이면 `dropConsentWatch` 로 뺀다).
+    /// 같은 이름 · 입력의 실행 중인 호출 중 마지막 것, 입력이 다르면(PreToolUse 훅이 바꿈 등) 이름이 같은 호출이 하나뿐일 때 그것
+    private func linkConsentWatch(_ request: PermissionRequestInfo, toolInput: JSONValue?, in session: AgentSession) {
+        guard var watches = consentWatches[session.id] else { return }
+        let candidates = session.activities.reversed().filter { item in
+            item.kind == .tool && item.status == .running
+                && watches[item.id].map { $0.permissionID == nil && $0.toolName == request.toolName } == true
+        }
+        let exact = candidates.first { item in
+            guard let input = toolInput, let watched = watches[item.id]?.toolInput else { return true }
+            return watched == input
+        }
+        guard let id = exact?.id ?? (candidates.count == 1 ? candidates[0].id : nil) else { return }
+        watches[id]?.permissionID = request.id
+        // 훅 승인을 기다리느라 늦어진 것을 앱 확인 대기로 알렸을 수 있다 → 승인 뒤 실행부터 다시 본다
+        watches[id]?.signaled = false
+        consentWatches[session.id] = watches
+    }
+
+    /// 허용된 권한 요청: 그 호출은 이제 실행되므로 계속 지켜본다
+    private func unlinkConsentWatch(permissionID: UUID, sessionID: String) {
+        guard let watches = consentWatches[sessionID],
+              let id = watches.first(where: { $0.value.permissionID == permissionID })?.key
+        else { return }
+        consentWatches[sessionID]?[id]?.permissionID = nil
+    }
+
+    /// 거부됐거나 허용됐는지 모르는 권한 요청: 그 호출은 지켜보지 않는다.
+    /// 거부된 툴은 PostToolUse 가 오지 않아 타임라인에서 실행 중으로 남으므로, 그대로 두면 지연으로 보고 잘못 알린다
+    private func dropConsentWatch(permissionID: UUID, sessionID: String) {
+        guard let watches = consentWatches[sessionID] else { return }
+        let kept = watches.filter { $0.value.permissionID != permissionID }
+        if kept.count != watches.count {
+            consentWatches[sessionID] = kept.isEmpty ? nil : kept
+        }
+    }
+
+    /// 실행이 끝난(또는 타임라인에서 밀려난) 툴은 지켜보기에서 뺀다
+    private func pruneConsentWatches(_ session: AgentSession) {
+        guard let watches = consentWatches[session.id] else { return }
+        let kept = watches.filter { id, _ in
+            session.activities.contains { $0.id == id && $0.kind == .tool && $0.status == .running }
+        }
+        if kept.count != watches.count {
+            consentWatches[session.id] = kept.isEmpty ? nil : kept
+        }
+    }
+
+    /// 아직 알리지 않은 툴의 지연을 다시 잰다 (훅 승인 대기 중 · 직후)
+    private func restartConsentClocks(_ sessionID: String, at date: Date) {
+        guard let watches = consentWatches[sessionID] else { return }
+        consentWatches[sessionID] = watches.mapValues { watch in
+            var watch = watch
+            if !watch.signaled { watch.since = date }
+            return watch
+        }
+    }
+
+    /// 확인 대기로 볼 툴이 있으면 입력 대기로 바꾼다.
+    /// 이미 알린 툴이 아직 실행 중이면 조용히 유지하고, `allowSignal` 일 때만 새로 멈춘 툴을 찾아 신호를 돌려준다.
+    private func applyConsentWait(_ session: inout AgentSession, now: Date, allowSignal: Bool) -> IslandSignal? {
+        guard var watches = consentWatches[session.id], !watches.isEmpty else { return nil }
+        if hasPending(session.id) {
+            // 훅 권한 카드가 우선. 승인 대기 동안은 툴이 실행되지 않으므로 지연도 세지 않는다
+            restartConsentClocks(session.id, at: now)
+            return nil
+        }
+        // 승인 대기(터미널 다이얼로그) · 질문 · 압축 등 다른 대기는 건드리지 않는다
+        guard session.phase == .runningTool || session.phase == .thinking else { return nil }
+
+        let running = session.activities.filter { $0.kind == .tool && $0.status == .running && watches[$0.id] != nil }
+        if let waiting = running.last(where: { watches[$0.id]?.signaled == true }) {
+            session.phase = .waitingInput
+            session.currentActivity = waiting
+            return nil
+        }
+        // 새로 알리는 것은 툴 실행 중일 때만 (thinking 이면 Claude Code 는 실행 중인 툴이 없다고 본다. 예: 거부 직후)
+        guard allowSignal, session.phase == .runningTool,
+              let stalled = running.first(where: { item in
+                  watches[item.id].map { now.timeIntervalSince($0.since) >= appConsent.delay } == true
+              })
+        else { return nil }
+
+        watches[stalled.id]?.signaled = true
+        consentWatches[session.id] = watches
+        session.phase = .waitingInput
+        session.currentActivity = stalled
+        return .needsInput(sessionID: session.id, message: AppConsentHeuristic.message(toolTitle: stalled.title))
     }
 
     // MARK: - 권한 대기열 헬퍼
