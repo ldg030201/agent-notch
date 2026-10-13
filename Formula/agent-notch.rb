@@ -11,7 +11,7 @@ class AgentNotch < Formula
   url "https://github.com/ldg030201/agent-notch/archive/refs/tags/v0.1.0.tar.gz"
   # 첫 릴리스 전 자리표시자. scripts/release.sh 가 태그를 올린 뒤 tarball 해시로 채운다.
   sha256 "0000000000000000000000000000000000000000000000000000000000000000"
-  # TODO: 라이선스를 정하면 license "..." 를 추가한다 (아직 미정)
+  license "MIT"
   head "https://github.com/ldg030201/agent-notch.git", branch: "main"
 
   # Xcode 는 필요 없다. Command Line Tools 의 Swift 만으로 빌드된다 (depends_on xcode 를 넣지 않는다).

@@ -8,7 +8,7 @@
 ![Swift](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)
 [![Release](https://img.shields.io/github/v/release/ldg030201/agent-notch?label=release&color=3A72C4)](https://github.com/ldg030201/agent-notch/releases)
 ![Dependencies](https://img.shields.io/badge/dependencies-0-57CC85)
-![License](https://img.shields.io/badge/license-미정-lightgrey)
+[![License](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
 </div>
 
@@ -276,4 +276,4 @@ VARIANT=test scripts/build.sh     # build/AgentNotch-Test.app 만 만들기
 
 ## 📄 라이선스
 
-미정
+[MIT](LICENSE)
