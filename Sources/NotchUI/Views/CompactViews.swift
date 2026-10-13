@@ -64,8 +64,9 @@ struct IdleCompactView: View {
 /// 접힌 상태로 포커스 세션 표시. 다른 세션이 있으면 상태 요약("● 2")을 레이아웃이 정한 자리에 함께 둔다.
 /// - 양쪽 날개: 왼쪽 = 상태 + 프로젝트명 (+ 요약), 오른쪽 = (노치 쪽에 고정한 요약 …) 현재 툴 + `+N −M`
 /// - 한쪽 날개: 상태 + (프로젝트) + (요약) + (툴) + `+N −M` 을 노치 옆에 모은다
-/// - 노치 아래 띠: 상태 + 짧은 툴 이름 + `+N −M` + 요약 (한 줄에 안 들어가면 요약은 둘째 줄)
-/// - 알약: 상태 + 프로젝트 · 툴 제목 + `+N −M` + 요약
+/// - 노치 아래 띠: 알약과 같은 요소 (상태 + 프로젝트 · 툴 이름 + `+N −M` + 요약, 한 줄에 안 들어가면 요약은 둘째 줄)
+/// - 알약: 상태 + 프로젝트 · 툴 이름 + `+N −M` + 요약
+/// 툴은 어디서나 짧은 이름만 (`IslandFormat.shortToolTitle`, 예: "Bash")
 struct CompactSessionView: View {
     let session: AgentSession?
     /// 이 세션을 뺀 다른 세션 요약
@@ -86,7 +87,7 @@ struct CompactSessionView: View {
     private func content(_ session: AgentSession) -> some View {
         switch layout.compact {
         case let .wings(spec) where spec.arrangement == .strip:
-            stripContent(session)
+            stripContent(session, items: spec.items)
 
         case let .wings(spec):
             if spec.arrangement == .split {
@@ -125,8 +126,8 @@ struct CompactSessionView: View {
                 }
             }
 
-        case .strip:
-            stripContent(session)
+        case let .strip(items):
+            stripContent(session, items: items)
 
         case .line:
             StatusLine(layout: layout, color: Self.toneColor(session))
@@ -157,15 +158,20 @@ struct CompactSessionView: View {
         }
     }
 
-    /// 노치 아래 띠: 상태 + 짧은 툴 이름 + `+N −M` + 요약. 띠가 두 줄 높이면 요약은 둘째 줄 (폭은 노치 폭 그대로)
+    /// 노치 아래 띠: 알약과 같은 요소(`IslandLayoutEngine.stripItems`) — 상태 + 프로젝트 · 툴 이름 + `+N −M` + 요약.
+    /// 띠가 두 줄 높이면 요약은 둘째 줄 (폭은 노치 폭 그대로)
     @ViewBuilder
-    private func stripContent(_ session: AgentSession) -> some View {
+    private func stripContent(_ session: AgentSession, items: CompactItems) -> some View {
         let line = HStack(spacing: 5) {
             StatusIndicator(session: session, reduceMotion: reduceMotion, size: 12)
-            trailing(session, toolTitle: IslandFormat.shortToolTitle(session))
+            pillTitle(session, items: items)
+            if Self.hasTrailing(session, toolTitle: "") {
+                trailing(session, toolTitle: "")
+                    .layoutPriority(1)
+            }
         }
         CompactStrip(layout: layout) {
-            if summary.isEmpty {
+            if summary.isEmpty || !items.contains(.summary) {
                 line
             } else if layout.hasTwoLineStrip {
                 VStack(spacing: 1) {
@@ -235,12 +241,12 @@ struct CompactSessionView: View {
             || session.turn.added > 0 || session.turn.removed > 0
     }
 
-    /// 알약 제목: 프로젝트명(끝 줄임) · 툴 제목(가운데 줄임). 자리가 모자라면 `PillTitleLayout` 이 줄인다.
-    /// 레이아웃(`IslandLayoutEngine.pillItems`)은 둘 다 최소 폭까지 줄인 폭으로 요소를 고른다
+    /// 알약 · 노치 아래 띠 제목: 프로젝트명(끝 줄임) · 짧은 툴 이름(가운데 줄임). 자리가 모자라면 `PillTitleLayout` 이 줄인다.
+    /// 레이아웃(`IslandLayoutEngine.lineItems`)은 둘 다 최소 폭까지 줄인 폭으로 요소를 고른다
     @ViewBuilder
     private func pillTitle(_ session: AgentSession, items: CompactItems) -> some View {
         let project = items.contains(.project) ? session.projectName : ""
-        let tool = items.contains(.tool) && CompactText.attentionText(session) == nil ? IslandFormat.fullToolTitle(session) : ""
+        let tool = items.contains(.tool) && CompactText.attentionText(session) == nil ? IslandFormat.shortToolTitle(session) : ""
         if !project.isEmpty, !tool.isEmpty {
             // 빼는 순서와 같게 줄인다: 요약이 없으면 프로젝트명부터, 있으면 툴 제목부터
             PillTitleLayout(projectFirst: !items.contains(.summary)) {
@@ -281,7 +287,7 @@ struct CompactSessionView: View {
     }
 }
 
-/// 알약 제목 배치: 프로젝트명 · 구분점 · 툴 제목을 한 줄로 잇는다.
+/// 알약 · 노치 아래 띠 제목 배치: 프로젝트명 · 구분점 · 툴 이름을 한 줄로 잇는다.
 /// 자리가 모자라면 한쪽을 먼저 최소 폭(`IslandLayoutEngine.pillProjectMin` · `pillToolMin`)까지 줄이고, 그래도 모자라면 다른 쪽을 줄인다.
 /// 줄인 글자의 실제 폭대로 이어 붙여 사이가 벌어지지 않는다
 struct PillTitleLayout: Layout {

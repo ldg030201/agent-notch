@@ -5,32 +5,48 @@ import NotchShared
 
 @Suite struct ToolSummarizerTests {
     @Test(arguments: [
-        ("Read", #"{"file_path":"/Users/dev/projects/api-server/src/a.ts"}"#, "Read a.ts", "doc.text"),
-        ("Edit", #"{"file_path":"/Users/dev/projects/api-server/src/session.ts"}"#, "Edit session.ts", "pencil"),
-        ("MultiEdit", #"{"file_path":"/Users/dev/projects/api-server/src/session.ts"}"#, "Edit session.ts", "pencil"),
-        ("Write", #"{"file_path":"/Users/dev/projects/api-server/new.ts"}"#, "Write new.ts", "doc.badge.plus"),
-        ("NotebookEdit", #"{"notebook_path":"/Users/dev/projects/api-server/n.ipynb"}"#, "Edit n.ipynb", "book"),
-        ("Bash", #"{"command":"npm test"}"#, "Bash npm test", "terminal"),
-        ("Grep", #"{"pattern":"TODO"}"#, "Grep TODO", "magnifyingglass"),
-        ("Glob", #"{"pattern":"**/*.ts"}"#, "Glob **/*.ts", "doc.text.magnifyingglass"),
-        ("WebFetch", #"{"url":"https://docs.example.com/a/b?c=1"}"#, "Fetch docs.example.com", "globe"),
-        ("WebSearch", #"{"query":"swift testing"}"#, "Search swift testing", "magnifyingglass.circle"),
-        ("Agent", #"{"description":"코드 탐색","subagent_type":"Explore"}"#, "Agent 코드 탐색", "person.2"),
-        ("Task", #"{"description":"리뷰"}"#, "Agent 리뷰", "person.2"),
-        ("TodoWrite", #"{"todos":[{"content":"a"},{"content":"b"}]}"#, "Todo", "checklist"),
-        ("TaskCreate", "{}", "Todo", "checklist"),
-        ("TaskUpdate", "{}", "Todo", "checklist"),
-        ("AskUserQuestion", #"{"questions":[{"question":"어느 쪽?"}]}"#, "질문", "questionmark.bubble"),
-        ("ExitPlanMode", #"{"plan":"계획"}"#, "Plan", "list.bullet.clipboard"),
-        ("mcp__github__create_issue", "{}", "github · create_issue", "puzzlepiece.extension"),
-        ("mcp__plugin_design_figma__get_file", "{}", "plugin_design_figma · get_file", "puzzlepiece.extension"),
-        ("LSP", "{}", "LSP", "wrench.and.screwdriver"),
-        ("Read", "{}", "Read", "doc.text"),
+        ("Read", #"{"file_path":"/Users/dev/projects/api-server/src/a.ts"}"#, "Read a.ts", "doc.text", "Read"),
+        ("Edit", #"{"file_path":"/Users/dev/projects/api-server/src/session.ts"}"#, "Edit session.ts", "pencil", "Edit"),
+        ("MultiEdit", #"{"file_path":"/Users/dev/projects/api-server/src/session.ts"}"#, "Edit session.ts", "pencil", "Edit"),
+        ("Write", #"{"file_path":"/Users/dev/projects/api-server/new.ts"}"#, "Write new.ts", "doc.badge.plus", "Write"),
+        ("NotebookEdit", #"{"notebook_path":"/Users/dev/projects/api-server/n.ipynb"}"#, "Edit n.ipynb", "book", "Edit"),
+        ("Bash", #"{"command":"npm test"}"#, "Bash npm test", "terminal", "Bash"),
+        ("Grep", #"{"pattern":"TODO"}"#, "Grep TODO", "magnifyingglass", "Grep"),
+        ("Glob", #"{"pattern":"**/*.ts"}"#, "Glob **/*.ts", "doc.text.magnifyingglass", "Glob"),
+        ("WebFetch", #"{"url":"https://docs.example.com/a/b?c=1"}"#, "Fetch docs.example.com", "globe", "Fetch"),
+        ("WebSearch", #"{"query":"swift testing"}"#, "Search swift testing", "magnifyingglass.circle", "Search"),
+        ("Agent", #"{"description":"코드 탐색","subagent_type":"Explore"}"#, "Agent 코드 탐색", "person.2", "Agent"),
+        ("Task", #"{"description":"리뷰"}"#, "Agent 리뷰", "person.2", "Agent"),
+        ("TodoWrite", #"{"todos":[{"content":"a"},{"content":"b"}]}"#, "Todo", "checklist", "Todo"),
+        ("TaskCreate", "{}", "Todo", "checklist", "Todo"),
+        ("TaskUpdate", "{}", "Todo", "checklist", "Todo"),
+        ("AskUserQuestion", #"{"questions":[{"question":"어느 쪽?"}]}"#, "질문", "questionmark.bubble", "질문"),
+        ("ExitPlanMode", #"{"plan":"계획"}"#, "Plan", "list.bullet.clipboard", "Plan"),
+        ("mcp__github__create_issue", "{}", "github · create_issue", "puzzlepiece.extension", "github"),
+        ("mcp__plugin_design_figma__get_file", "{}", "plugin_design_figma · get_file", "puzzlepiece.extension", "plugin_design_figma"),
+        ("mcp__Claude_Browser__browser_batch", #"{"actions":[]}"#, "Claude_Browser · browser_batch", "puzzlepiece.extension", "Claude_Browser"),
+        ("LSP", "{}", "LSP", "wrench.and.screwdriver", "LSP"),
+        ("Read", "{}", "Read", "doc.text", "Read"),
+        ("", "{}", "Tool", "wrench.and.screwdriver", "Tool"),
     ])
-    func titles(tool: String, input: String, title: String, symbol: String) {
+    func titles(tool: String, input: String, title: String, symbol: String, label: String) {
         let summary = ToolSummarizer.summarize(toolName: tool, toolInput: json(input), cwd: projectCwd)
         #expect(summary.title == title)
         #expect(summary.symbolName == symbol)
+        // 접힌 상태엔 짧은 이름만 (명령 · 경로 · MCP 툴 이름 없이)
+        #expect(summary.label == label)
+    }
+
+    @Test func labelDefaultsToFirstWord() {
+        #expect(ToolSummary(title: "Agent Explore", detail: nil, symbolName: "person.2").label == "Agent")
+        #expect(ToolSummary(title: "Todo", detail: nil, symbolName: "checklist").label == "Todo")
+        let item = ActivityItem(id: "a", kind: .subagent, title: "Agent Explore", symbolName: "person.2", status: .running, startedAt: Date())
+        #expect(item.shortLabel == "Agent")
+        let labeled = ActivityItem(
+            id: "b", kind: .tool, toolName: "Bash", title: "Bash SP=/private/tmp/x && ls", symbolName: "terminal",
+            label: "Bash", status: .running, startedAt: Date()
+        )
+        #expect(labeled.shortLabel == "Bash")
     }
 
     @Test func bashTitleAndDetail() {

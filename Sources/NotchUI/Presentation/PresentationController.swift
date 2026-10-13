@@ -77,6 +77,12 @@ final class PresentationController {
     @ObservationIgnored private var lastPart1: [ScreenID: IslandLayout] = [:]
     /// 화면별 직전 메뉴바 알약 (노치 없는 화면). 펼친 카드가 같은 알약을 부분 1 로 쓴다
     @ObservationIgnored private var lastPill: [ScreenID: CompactPlacement] = [:]
+    /// 화면별 직전에 그린 접힌 내용 (폭 측정값). 펼친 카드는 지금 접힌 내용이 아니라 이 내용으로 부분 1 을 그린다:
+    /// 카드를 여는 순간 · 열린 동안 접힌 내용이 바뀌어도(완료 확인 · 권한 요청 · 보여주는 세션 · 요약 · 툴) 부분 1 은 직전 접힌 모양 그대로.
+    /// 접힌 상태를 그리지 않고(숨김) 카드를 열었으면 처음 계산한 내용을 카드가 열린 동안 쓴다
+    @ObservationIgnored private var lastCompactContent: [ScreenID: CompactContent] = [:]
+    /// 화면별 마지막으로 로그에 남긴 레이아웃 (바뀔 때만 남긴다)
+    @ObservationIgnored private var loggedLayouts: [ScreenID: LayoutLogEntry] = [:]
     /// 화면별 지금 열린 카드의 띠 · 목 알약 자리 (`IslandLayoutEngine.cardBand`). 카드가 접히기 시작하면 `collapseHolds` 로 넘긴다
     @ObservationIgnored private var lastCardBand: [ScreenID: CompactPlacement] = [:]
     /// 화면별 접히는 동안 붙잡는 카드 띠와 놓을 시각 (부팅 후 초).
@@ -450,9 +456,12 @@ final class PresentationController {
         guard let engine = layoutEngine(for: id) else {
             return IslandLayout(size: .zero, origin: .zero, shape: IslandShapeSpec(), compact: nil)
         }
-        let (result, placement, part1) = resolvedLayout(for: mode, engine: engine)
+        let resolved = resolvedLayout(for: mode, engine: engine, on: id)
+        let result = resolved.layout
+        let placement = resolved.placement
         if mode == .idle || mode == .working {
             lastPart1[id] = result
+            lastCompactContent[id] = resolved.content
             // 날개 없이 그렸으면(노치 아래 띠 · 선 · 알약) 그것도 기억한다 (날개로 다시 바꿀 때도 이력을 적용하게)
             if case let .wings(spec)? = result.compact {
                 lastWings[id] = spec
@@ -463,7 +472,8 @@ final class PresentationController {
         } else if mode.isOpen, let placement {
             // 펼친 카드의 부분 1 (띠 · 알약)을 접힌 이력으로 기억한다:
             // 카드가 열려 있는 동안 부분 1 이 그대로이고, 접을 때도 같은 부분 1 에서 시작해(`collapseHolds`) 접힌 뒤 이력대로 접힌 모양을 고른다
-            if let part1 { lastPart1[id] = part1 }
+            if let part1 = resolved.part1 { lastPart1[id] = part1 }
+            if let content = resolved.content { lastCompactContent[id] = content }
             let band = engine.cardBand(for: placement)
             lastCardBand[id] = band
             if engine.geometry.hasNotch {
@@ -471,36 +481,72 @@ final class PresentationController {
             } else if case .menuBarPill = band {
                 lastPill[id] = band
             }
+        } else if mode == .hidden {
+            // 숨겼다가 여는 카드는 그때 내용으로 부분 1 을 새로 그린다
+            lastCompactContent[id] = nil
         }
+        logLayoutChange(id, mode: mode, layout: result, placement: placement)
         return result
     }
 
-    func layout(for mode: IslandMode, engine: IslandLayoutEngine) -> IslandLayout {
-        resolvedLayout(for: mode, engine: engine).layout
+    /// 로그에 남기는 레이아웃 값 (숫자 · 모드 종류 · 자리 종류만, 세션 이름 · 내용 없음)
+    private struct LayoutLogEntry: Equatable {
+        var mode: IslandMode.Kind
+        var frame: CGRect
+        var part1: CGRect
+        var placement: String
     }
 
-    /// 레이아웃과 그때 쓴 접힌 자리 (접힌 상태면 그 자리, 펼친 카드면 카드 뒤의 접힌 자리, 숨김이면 nil), 펼친 카드의 부분 1
+    /// 화면의 레이아웃이 바뀌었을 때만 디버그 로그를 남긴다 (`log stream --level debug --predicate 'category == "Presentation"'`)
+    private func logLayoutChange(_ id: ScreenID, mode: IslandMode, layout: IslandLayout, placement: CompactPlacement?) {
+        let entry = LayoutLogEntry(
+            mode: mode.kind, frame: layout.panelRect, part1: layout.shape.part1.rect, placement: placement?.kindName ?? "none"
+        )
+        guard loggedLayouts[id] != entry else { return }
+        loggedLayouts[id] = entry
+        let f = entry.frame
+        let p = entry.part1
+        logger.debug("""
+            레이아웃 화면 \(id, privacy: .public) \(String(describing: entry.mode), privacy: .public) \
+            크기 \(Double(f.width), privacy: .public)×\(Double(f.height), privacy: .public) \
+            원점 (\(Double(f.minX), privacy: .public), \(Double(f.minY), privacy: .public)) \
+            부분1 (\(Double(p.minX), privacy: .public), \(Double(p.minY), privacy: .public), \
+            \(Double(p.width), privacy: .public), \(Double(p.height), privacy: .public)) \
+            자리 \(entry.placement, privacy: .public)
+            """)
+    }
+
+    func layout(for mode: IslandMode, engine: IslandLayoutEngine, on id: ScreenID) -> IslandLayout {
+        resolvedLayout(for: mode, engine: engine, on: id).layout
+    }
+
+    /// 레이아웃과 그때 쓴 접힌 자리 (접힌 상태면 그 자리, 펼친 카드면 카드 뒤의 접힌 자리, 숨김이면 nil),
+    /// 펼친 카드의 부분 1, 접힌 자리를 고른 접힌 내용 (접힌 상태 · 펼친 카드)
     private func resolvedLayout(
         for mode: IslandMode,
-        engine: IslandLayoutEngine
-    ) -> (layout: IslandLayout, placement: CompactPlacement?, part1: IslandLayout?) {
+        engine: IslandLayoutEngine,
+        on id: ScreenID
+    ) -> (layout: IslandLayout, placement: CompactPlacement?, part1: IslandLayout?, content: CompactContent?) {
         typealias M = IslandMetrics
         let contentWidth: (CGFloat) -> CGFloat = { $0 - M.bodyPadding * 2 }
 
-        func card(_ width: CGFloat, radius: CGFloat, body: @escaping (CGFloat) -> CGFloat) -> (IslandLayout, CompactPlacement?, IslandLayout?) {
-            let content = compactContent(for: compactSession == nil ? .idle : .working)
+        func card(
+            _ width: CGFloat, radius: CGFloat, body: @escaping (CGFloat) -> CGFloat
+        ) -> (IslandLayout, CompactPlacement?, IslandLayout?, CompactContent?) {
+            // 부분 1 은 직전에 그린 접힌 내용으로 (지금 접힌 내용이 바뀌었어도 카드가 열린 동안 그대로)
+            let content = lastCompactContent[id] ?? compactContent(for: compactSession == nil ? .idle : .working)
             let compact = engine.compactPlacement(for: content)
             let part1 = engine.cardPart1(for: compact, content: content)
-            return (engine.cardLayout(preferredWidth: width, radius: radius, part1: part1, bodyHeight: body), compact, part1)
+            return (engine.cardLayout(preferredWidth: width, radius: radius, part1: part1, bodyHeight: body), compact, part1, content)
         }
 
         switch mode {
         case .hidden:
-            return (engine.hiddenLayout(), nil, nil)
+            return (engine.hiddenLayout(), nil, nil, nil)
 
         case .idle, .working:
             let content = compactContent(for: mode)
-            return (engine.compactLayout(for: content), engine.compactPlacement(for: content), nil)
+            return (engine.compactLayout(for: content), engine.compactPlacement(for: content), nil, content)
 
         case let .peek(sessionID, diff):
             let rows = DiffPresentation.visibleLines(diff).count
@@ -547,7 +593,7 @@ final class PresentationController {
     ///   여기와 겹칠 때만 접힌 상태를 숨긴다 (카드 자리 아래쪽에 뜬 다른 앱 팝업 · 툴팁엔 숨지 않는다)
     func overlapZones(for id: ScreenID) -> (zone: CGRect, island: CGRect)? {
         guard let engine = layoutEngine(for: id) else { return nil }
-        let current = layout(for: mode(for: id), engine: engine).panelRect
+        let current = layout(for: mode(for: id), engine: engine, on: id).panelRect
         let bottom = max(current.maxY, engine.menuBarHeight) + 6
         let island = CGRect(x: current.minX - 4, y: current.minY, width: current.width + 8, height: bottom - current.minY)
         return (current.union(engine.cardZone()), island)
@@ -752,6 +798,7 @@ final class PresentationController {
         lastPart1 = other.lastPart1
         lastPill = other.lastPill
         lastCardBand = other.lastCardBand
+        lastCompactContent = other.lastCompactContent
     }
 
     /// 타이머 없이 일시 펼침을 띄운다 (스냅숏 렌더링용)

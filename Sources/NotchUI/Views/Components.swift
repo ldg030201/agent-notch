@@ -523,7 +523,8 @@ enum IslandFormat {
         return "\(hours / 24)일"
     }
 
-    /// 접힌 날개용 짧은 툴 이름 (예: "Edit")
+    /// 접힌 상태(날개 · 노치 아래 띠 · 알약)용 짧은 툴 이름 (예: "Bash", "Edit", MCP 는 서버 이름 "Claude_Browser").
+    /// 명령 · 경로 · MCP 툴 이름은 펼친 타임라인과 카드에서 보여준다
     static func shortToolTitle(_ session: AgentSession) -> String {
         switch session.phase {
         case .compacting: return "압축 중"
@@ -531,17 +532,7 @@ enum IslandFormat {
         default: break
         }
         guard let activity = session.currentActivity else { return session.phase == .thinking ? "생각 중" : "" }
-        if let tool = activity.toolName, !tool.isEmpty, !tool.hasPrefix("mcp__") { return tool }
-        return activity.title.split(separator: " ").first.map(String.init) ?? activity.title
-    }
-
-    /// 알약/목록용 툴 제목 (예: "Edit session.ts")
-    static func fullToolTitle(_ session: AgentSession) -> String {
-        switch session.phase {
-        case .compacting: return "압축 중"
-        case .thinking where session.currentActivity?.status != .running: return "생각 중"
-        default: return session.currentActivity?.title ?? (session.phase == .thinking ? "생각 중" : "")
-        }
+        return activity.shortLabel
     }
 
     /// 세션 목록 부제 (승인 대기 / Edit 중 / 유휴 · 12분)

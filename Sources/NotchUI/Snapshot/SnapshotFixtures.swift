@@ -225,6 +225,16 @@ struct SnapshotWorld {
         clock.set(736)
     }
 
+    /// 세션 하나가 새 턴에서 긴 Bash 명령을 실행 (접힌 상태엔 짧은 이름 "Bash" 만, 명령은 펼친 타임라인에)
+    mutating func runsLongCommand(_ project: Project, at seconds: TimeInterval) {
+        send(project, "UserPromptSubmit", at: seconds, ["prompt": "빌드해서 확인해줘"])
+        start(project, "Bash", at: seconds + 2, input: [
+            "command": "SP=/private/tmp/build && swift build --scratch-path $SP/debug 2>&1 | tail -5",
+            "description": "빌드",
+        ])
+        clock.set(seconds + 4)
+    }
+
     /// web-app: 테스트 실행 권한 요청 대기
     mutating func webAppAsksPermission() {
         let web = Self.webApp

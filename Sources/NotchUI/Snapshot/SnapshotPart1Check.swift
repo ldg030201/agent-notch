@@ -34,18 +34,30 @@ enum SnapshotPart1Check {
         var bandRR: CGFloat?
     }
 
-    /// 전환 양 끝: 한쪽은 펼친 카드, 다른 쪽은 접힌 상태 (아니면 nil — 검사하지 않음)
+    /// 전환 양 끝: 한쪽은 펼친 카드, 다른 쪽은 접힌 상태 (아니면 nil — 검사하지 않음).
+    /// `cardToCard` 면 카드 → 카드 (열린 동안 접힌 내용이 바뀜): 전 카드의 부분 1 이 그대로여야 한다
     struct Ends {
+        /// 기준 모양 (접힌 상태, 카드 → 카드면 전 카드)
         let compact: IslandLayout
         let card: IslandLayout
         let reference: Geometry
+        let cardToCard: Bool
 
-        @MainActor init?(from: IslandLayout, to: IslandLayout) {
+        @MainActor init?(from: IslandLayout, to: IslandLayout, cardToCard: Bool = false) {
             let fromCard = from.compact == nil && from.cardWidth > 0
             let toCard = to.compact == nil && to.cardWidth > 0
+            if cardToCard {
+                guard fromCard, toCard, from.shape.part1.width > 1 else { return nil }
+                compact = from
+                card = to
+                self.cardToCard = true
+                reference = SnapshotPart1Check.geometry(from)
+                return
+            }
             guard fromCard != toCard else { return nil }
             compact = fromCard ? to : from
             card = fromCard ? from : to
+            self.cardToCard = false
             guard compact.compact != nil else { return nil }
             reference = SnapshotPart1Check.geometry(compact)
         }
@@ -129,6 +141,8 @@ enum SnapshotPart1Check {
 
     /// 부분 2 가 부분 1 과 옆면이 맞닿은 채 부분 1 아래로 이어지는지 (쪽 이름, 이어진 깊이)
     static func merged(_ layout: IslandLayout, ends: Ends) -> (side: String, depth: CGFloat)? {
+        // 카드 → 카드는 몸통이 늘 부분 1 아래에 있다 (늘어나 보이는 순간 없음)
+        guard !ends.cardToCard else { return nil }
         let o = SnapshotShapeCheck.outline(layout)
         let depth = layout.origin.y + o.bottom - ends.reference.bottom
         guard depth > mergedDepth else { return nil }

@@ -36,6 +36,7 @@ import NotchShared
         #expect(s.currentActivity?.id == "toolu_1")
         #expect(s.currentActivity?.title == "Edit session.ts")
         #expect(s.currentActivity?.detail == "src/auth/session.ts")
+        #expect(s.currentActivity?.label == "Edit")
         #expect(s.currentActivity?.status == .running)
         #expect(s.turn.toolCount == 1)
 

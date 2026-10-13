@@ -329,6 +329,7 @@ public final class SessionStore {
             title: summary.title,
             detail: summary.detail,
             symbolName: summary.symbolName,
+            label: summary.label,
             status: .running,
             startedAt: now
         )
@@ -647,6 +648,7 @@ public final class SessionStore {
             title: summary.title,
             detail: summary.detail,
             symbolName: summary.symbolName,
+            label: summary.label,
             status: .running,
             startedAt: now
         ))

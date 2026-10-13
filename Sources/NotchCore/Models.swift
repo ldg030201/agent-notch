@@ -163,6 +163,8 @@ public struct ActivityItem: Identifiable, Hashable, Sendable {
     public var detail: String?
     /// SF Symbol 이름
     public var symbolName: String
+    /// 접힌 상태에 쓰는 짧은 툴 이름 (예: "Bash", MCP 는 서버 이름). 없으면 제목 첫 단어 (`shortLabel`)
+    public var label: String?
     public var status: ActivityStatus
     public var startedAt: Date
     public var endedAt: Date?
@@ -175,6 +177,7 @@ public struct ActivityItem: Identifiable, Hashable, Sendable {
         title: String,
         detail: String? = nil,
         symbolName: String,
+        label: String? = nil,
         status: ActivityStatus,
         startedAt: Date,
         endedAt: Date? = nil,
@@ -186,10 +189,17 @@ public struct ActivityItem: Identifiable, Hashable, Sendable {
         self.title = title
         self.detail = detail
         self.symbolName = symbolName
+        self.label = label
         self.status = status
         self.startedAt = startedAt
         self.endedAt = endedAt
         self.diff = diff
+    }
+
+    /// 접힌 상태용 짧은 이름: `label`, 없으면 제목 첫 단어 (예: "Agent Explore" → "Agent")
+    public var shortLabel: String {
+        if let label = TextUtils.nonEmpty(label) { return label }
+        return title.split(separator: " ").first.map(String.init) ?? title
     }
 }
 

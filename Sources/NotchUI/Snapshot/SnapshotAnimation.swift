@@ -13,6 +13,7 @@ import NotchCore
 // MARK: - 전환 정의
 
 /// 두 장면 사이 전환 (`anim-<전>-<후>`)
+@MainActor
 struct SnapshotTransition {
     let name: String
     let from: SnapshotScenario
@@ -27,6 +28,10 @@ struct SnapshotTransition {
     var fixedIconShift: CGFloat?
     /// `from` 카드를 접은 직후(카드 띠를 붙잡은 `to` 접힌 상태) → 띠를 놓은 `to` 접힌 상태 (접힌 뒤 띠가 바뀌는 단계)
     var afterCollapse = false
+    /// 한 표시 상태로 이어서 계산하는 전환 (`SnapshotSequence`, `environment` 화면). 있으면 `from` · `to` 는 쓰지 않는다
+    var sequence: (sequence: SnapshotSequence, phase: SnapshotSequence.Phase)?
+    /// 화면 종류를 고정한다 (nil 이면 `--style` 대로)
+    var style: IslandSnapshotRenderer.Style?
 
     static func named(_ name: String) -> SnapshotTransition? {
         all.first { $0.name == name }
@@ -118,7 +123,150 @@ struct SnapshotTransition {
             cardShift.fixedIconShift = distance
             list.append(cardShift)
         }
+        // 접힌 내용이 카드를 여는 순간 · 열린 동안 바뀌는 전환 (한 표시 상태로 이어서): 넓은 노치 · 아이콘 구멍 · 노치 아래 띠 ·
+        // 노치 아래 날개 ↔ 띠 · 메뉴바 알약 · 메뉴바 아래 알약
+        for sequence in SnapshotSequence.all {
+            for env in SnapshotSequence.environments {
+                for phase in SnapshotSequence.Phase.allCases where phase != .change || sequence.during != nil {
+                    var seq = t(env.scene, env.scene, env: env.scene, name: "anim-seq-\(sequence.name)-\(env.name)-\(phase.rawValue)")
+                    seq.sequence = (sequence, phase)
+                    seq.style = env.style
+                    list.append(seq)
+                }
+            }
+        }
         return list
+    }
+}
+
+// MARK: - 이어서 계산하는 전환
+
+/// 한 표시 상태(`PresentationController`)로 접힌 상태 → 카드 → 접힌 상태를 이어서 계산하는 전환.
+/// 실제 앱처럼 접힌 내용이 카드를 여는 순간(완료 확인 · 권한 요청) · 열린 동안(다른 세션 · 보여주는 세션이 바뀜) 바뀐다.
+/// 단계: open(접힌 상태 → 카드) · change(카드 → 접힌 내용이 바뀐 카드) · close(카드 → 붙잡은 접힌 상태) · release(붙잡은 띠를 놓음)
+@MainActor
+struct SnapshotSequence {
+    enum Phase: String, CaseIterable {
+        case open, change, close, release
+    }
+
+    typealias Step = @MainActor (inout SnapshotWorld, PresentationController, ScreenID) -> Void
+
+    let name: String
+    /// 카드를 열기 전 접힌 상태
+    let before: Step
+    /// 카드를 연다 (이때 접힌 내용이 바뀔 수 있다)
+    let open: Step
+    /// 카드가 열린 동안 접힌 내용이 바뀐다 (없으면 change 단계 없음)
+    let during: Step?
+    /// 카드를 접는다
+    let close: Step
+
+    /// 화면 (장면 · 이름 · 고정할 화면 종류). 넓은 노치 화면은 노치 없는 화면 스타일로도 그려 메뉴바 안 알약도 본다.
+    /// 노치 전용 배치(아이콘 구멍 · 노치 아래 띠 · 좁은 왼쪽)는 노치 화면만 (노치 없는 화면에선 빈 곳이 좁아 점이 된다)
+    static let environments: [(scene: SnapshotScenario, name: String, style: IslandSnapshotRenderer.Style?)] = [
+        (.working, "wings", nil), (.workingWingsIcons, "icons", .notch), (.workingBelowNotch, "strip", .notch),
+        (.workingBelowNotchNarrow, "narrow", .notch), (.menubarWorking, "pill", .menuBar), (.menubarBelowWorking, "below", .menuBar),
+    ]
+
+    static var all: [SnapshotSequence] {
+        let web = SnapshotWorld.webApp
+        return [
+            // 완료(미확인) 세션을 펼치면 확인 처리돼 접힌 내용이 쉬는 중 요약으로 바뀜
+            SnapshotSequence(
+                name: "seen",
+                before: { world, _, _ in
+                    world.apiServerEdits()
+                    world.apiServerCompletes()
+                },
+                open: { _, presentation, id in presentation.toggleExpanded(on: id) },
+                during: nil,
+                close: { _, presentation, id in presentation.toggleExpanded(on: id) }
+            ),
+            // 쉬는 중 → 권한 요청 카드 (보여주는 세션 · 요약이 바뀜) → 열린 동안 다른 세션이 긴 명령 실행 → 허용하고 접음
+            SnapshotSequence(
+                name: "permission",
+                before: { _, _, _ in },
+                open: { world, presentation, _ in
+                    world.webAppAsksPermission()
+                    presentation.handleLatestSignal()
+                },
+                during: { world, _, _ in world.runsLongCommand(SnapshotWorld.apiServer, at: 850) },
+                close: { world, presentation, _ in
+                    if let request = world.store.pendingPermissions.first {
+                        world.store.resolvePermission(id: request.id, decision: .allow)
+                    }
+                    presentation.handleLatestSignal()
+                }
+            ),
+            // 작업 중 → 펼침 → 열린 동안 다른 세션이 긴 명령을 실행하고 그 세션을 고름 (보여주는 세션 · 툴 · 요약이 바뀜) → 접음
+            SnapshotSequence(
+                name: "focus",
+                before: { world, _, _ in
+                    world.startMoreSessions()
+                    world.apiServerEdits()
+                    world.apiServerRunsTests()
+                },
+                open: { _, presentation, id in presentation.toggleExpanded(on: id) },
+                during: { world, _, _ in
+                    world.runsLongCommand(web, at: 850)
+                    world.store.focus(sessionID: web.id)
+                },
+                close: { _, presentation, id in presentation.toggleExpanded(on: id) }
+            ),
+        ]
+    }
+
+    /// 같은 단계들을 차례로 밟는 표시 상태. 단계마다 그려서(레이아웃 계산) 배치 이력을 남긴다
+    @MainActor
+    private struct Run {
+        var setup: SnapshotSetup
+        var world: SnapshotWorld
+        var layout: IslandLayout
+
+        var current: SnapshotSetup { SnapshotSetup(bar: setup.bar, presentation: setup.presentation, world: world) }
+
+        mutating func apply(_ step: Step, draw: Bool = true) {
+            step(&world, setup.presentation, setup.screenID)
+            if draw { layout = current.layout }
+        }
+    }
+
+    /// 단계 `count` 개(접힌 상태 · 열기 · 열린 동안 · 접기)를 밟고 그린 표시 상태
+    private func run(steps count: Int, style: IslandSnapshotRenderer.Style, environment: SnapshotScenario) throws -> Run {
+        let setup = try SnapshotStage.prepare(.idle, style: style, environment: environment)
+        var run = Run(setup: setup, world: setup.world, layout: setup.layout)
+        let steps: [Step] = [before, open, during ?? { _, _, _ in }, close]
+        for step in steps.prefix(count) { run.apply(step) }
+        return run
+    }
+
+    /// 전 상태(내용을 그릴 표시 상태) · 전 레이아웃 · 후 상태 (후 레이아웃은 시트가 계산한다)
+    func prepare(
+        _ phase: Phase,
+        style: IslandSnapshotRenderer.Style,
+        environment: SnapshotScenario
+    ) throws -> (from: SnapshotSetup, fromLayout: IslandLayout, to: SnapshotSetup, note: String) {
+        let index: Int
+        let next: Step?
+        switch phase {
+        case .open: (index, next) = (1, open)
+        case .change: (index, next) = (2, during)
+        case .close: (index, next) = (3, close)
+        case .release: (index, next) = (4, nil)
+        }
+        var main = try run(steps: index, style: style, environment: environment)
+        let fromLayout = main.layout
+        let note = "이어서 계산 · \(name) · \(phase.rawValue)"
+        guard let next else {
+            // 붙잡은 띠를 놓는다 (접힌 상태 안의 변화)
+            main.setup.presentation.releaseCollapseHold(on: main.setup.screenID)
+            return (main.current, fromLayout, main.current, note)
+        }
+        // 전 내용은 같은 단계까지 밟은 다른 표시 상태로 그린다 (후 상태가 이어서 바뀌므로)
+        let replica = try run(steps: index, style: style, environment: environment)
+        main.apply(next, draw: false)
+        return (replica.current, fromLayout, main.current, note)
     }
 }
 
@@ -386,7 +534,7 @@ enum SnapshotContentSwapCheck {
         // 같은 종류에서 표시 방식만 바뀜 (왼쪽 날개 → 노치 아래 띠): 이전 내용이 흐려진 뒤 새 내용
         do {
             let panel = Panel(.working, width: 383, compact: .wings(.plain(left: 192, right: 0, items: .all)))
-            expect("날개→띠 첫 렌더", panel.change(to: .working, width: 185, compact: .strip), .working, 383)
+            expect("날개→띠 첫 렌더", panel.change(to: .working, width: 185, compact: .strip(items: [])), .working, 383)
             expect("날개→띠 교체 중", panel.render(), .working, 383)
             if panel.state.contentVisible { problems.append("날개→띠: 교체 중인데 내용이 보임") }
             if panel.state.contentDelay(to: IslandContentKey(mode: panel.mode, layout: panel.layout)) != IslandMotion.branchContentDelay {
@@ -396,7 +544,7 @@ enum SnapshotContentSwapCheck {
             settled("날개→띠", panel)
             // 교체 끝 전에 다시 날개로: 원래 내용을 바로 보인다
             _ = panel.change(to: .working, width: 383, compact: .wings(.plain(left: 192, right: 0, items: .all)))
-            expect("띠→날개→띠 첫 렌더", panel.change(to: .working, width: 185, compact: .strip), .working, 185)
+            expect("띠→날개→띠 첫 렌더", panel.change(to: .working, width: 185, compact: .strip(items: [])), .working, 185)
             settled("띠→날개→띠", panel)
         }
         // 동작 줄이기: 교체 없이 바로 새 모드
@@ -421,7 +569,7 @@ enum SnapshotHoverCheck {
         var problems: [String] = []
         var cases = 0
         let state = IslandViewState()
-        let compact = IslandContentKey(mode: .working, layout: IslandLayout(size: .zero, origin: .zero, shape: IslandShapeSpec(), compact: .strip))
+        let compact = IslandContentKey(mode: .working, layout: IslandLayout(size: .zero, origin: .zero, shape: IslandShapeSpec(), compact: .strip(items: [])))
         let card = IslandContentKey(mode: .expanded, layout: IslandLayout(size: .zero, origin: .zero, shape: IslandShapeSpec(), compact: nil))
         func expect(_ name: String, wants: Bool, _ scaled: Bool) {
             cases += 1
@@ -780,7 +928,9 @@ enum SnapshotShapeCheck {
             to.shape.bottomRadius - from.shape.bottomRadius,
         ]
         let rawStep = (rawDeltas.map(abs).max() ?? 0) * CGFloat(step)
-        let threshold = max(1.0, rawStep * 12)
+        // 몸통 끝은 입력보다 최대 12배 가파르다 (부분 2 가 나오는 폭 6배 × 1 → 2pt 곧은 옆면 풀림 2배).
+        // 같은 칸에서 목 폭 등 다른 입력이 함께 움직이는 만큼 10% 여유 (키 큰 펼침 카드에서 경계값을 넘지 않게)
+        let threshold = max(1.0, rawStep * 12 * 1.1)
 
         // 접힌 상태끼리면 부분 1 (그리는 모양), 아니면 주 외곽선 + 부분 1 층
         let part1Only = drawsPart1Only(from) && drawsPart1Only(to)
@@ -853,12 +1003,19 @@ enum SnapshotAnimationSheet {
         let label: String
     }
 
-    static func render(_ transition: SnapshotTransition, style: IslandSnapshotRenderer.Style) throws -> CGImage {
+    static func render(_ transition: SnapshotTransition, style requested: IslandSnapshotRenderer.Style) throws -> CGImage {
+        let style = transition.style ?? requested
         let from: SnapshotSetup
         let fromLayout: IslandLayout
         let to: SnapshotSetup
         var shiftNote = ""
-        if transition.afterCollapse {
+        if let (sequence, phase) = transition.sequence {
+            let prepared = try sequence.prepare(phase, style: style, environment: transition.environment)
+            from = prepared.from
+            fromLayout = prepared.fromLayout
+            to = prepared.to
+            shiftNote = prepared.note
+        } else if transition.afterCollapse {
             // 카드를 그려 카드 띠를 기록 → 접힌 상태가 그 띠를 붙잡음(전) → 띠를 놓음(후). 같은 표시 상태에서 이어서 계산한다
             let card = try SnapshotStage.prepare(transition.from, style: style, environment: transition.environment)
             _ = card.layout
@@ -916,7 +1073,7 @@ enum SnapshotAnimationSheet {
         let seamEnds = SnapshotSeamCheck.Ends(from: fromLayout, to: toLayout)
         // 부분 1 검사 (카드 ↔ 접힌 상태): 촘촘한 훑기를 먼저 해서 맞닿아 늘어나 보이는 구간을 프레임에도 표시한다
         let peak = timeline.spring.peak
-        let part1Ends = SnapshotPart1Check.Ends(from: fromLayout, to: toLayout)
+        let part1Ends = SnapshotPart1Check.Ends(from: fromLayout, to: toLayout, cardToCard: transition.sequence?.phase == .change)
         let part1Dense = part1Ends.map {
             SnapshotPart1Check.dense(ends: $0, from: fromLayout, to: toLayout, maxValue: max(1, peak.value), timeline: timeline)
         }
@@ -1004,7 +1161,8 @@ enum SnapshotAnimationSheet {
         let seamSelfTest = (cases: 3, problems: SnapshotSeamCheck.selfTest())
         for (label, check) in [
             ("겹침 감지", SnapshotOverlapCheck.run()), ("세션 요약 자리", SnapshotSummaryCheck.run()), ("이음매 래스터 자체", seamSelfTest),
-            ("메뉴바 알약 제목", SnapshotPillCheck.run()), ("메뉴바 창 찾기", SnapshotMenuBarScanCheck.run()),
+            ("메뉴바 알약 제목", SnapshotPillCheck.run()), ("노치 아래 띠 요소", SnapshotStripCheck.run()),
+            ("메뉴바 창 찾기", SnapshotMenuBarScanCheck.run()),
         ] {
             if check.problems.isEmpty {
                 report.append("   \(label) 검사 \(check.cases)개 통과")

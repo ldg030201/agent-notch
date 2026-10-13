@@ -87,6 +87,8 @@ enum SnapshotScenario: String, CaseIterable {
     case workingBelowNotchLeft = "working-below-notch-left"
     /// `working-below-notch-left` 에서 앞 앱 메뉴만 노치까지 길어진 화면 (왼쪽 날개도 못 써서 노치 아래 띠)
     case workingBelowNotchStrip = "working-below-notch-strip"
+    /// 노치 아래 방식 + 노치 왼쪽 빈 곳이 64pt 뿐인 화면: 쉬는 중 요약은 왼쪽 날개, 세션 내용은 노치 아래 띠
+    case workingBelowNotchNarrow = "working-below-notch-narrow"
     case workingMinimal = "working-minimal"
     /// 세션 5개: 접힌 상태가 보여주는 세션(권한 대기, 카드 접음) 말고 기다리는 중 1 · 진행 중 1 · 끝남 2 요약
     case workingSummary = "working-summary"
@@ -140,7 +142,8 @@ enum SnapshotScenario: String, CaseIterable {
     /// 노치 화면 표시 방식. 노치 아래 장면만 명시하고 나머지는 기본값(넓은 노치)
     var notchStyle: NotchStyle {
         switch self {
-        case .workingBelowNotch, .workingBelowNotchLeft, .workingBelowNotchStrip, .workingMinimal, .workingSummaryStrip: return .belowNotch
+        case .workingBelowNotch, .workingBelowNotchLeft, .workingBelowNotchStrip, .workingBelowNotchNarrow, .workingMinimal, .workingSummaryStrip:
+            return .belowNotch
         default: return .wings
         }
     }
@@ -153,6 +156,7 @@ enum SnapshotScenario: String, CaseIterable {
         case .idleWings, .workingWings, .workingWingsIcons, .workingWingsRetracted, .workingBelowNotchLeft: return .iconsToNotch
         case .workingWingsIconsStrip, .workingBelowNotchStrip: return .menusAndIconsToNotch
         case .workingWingsIconsNear: return .iconsNearNotch
+        case .workingBelowNotchNarrow: return .narrowLeftRoom
         case .menubarDot: return .narrowGap
         case .menubarWorkingLongTool: return .offCenterGap
         case .menubarWorkingTight: return .tightGap
@@ -183,6 +187,8 @@ struct SnapshotMenuBar {
         case menusAndIconsToNotch
         /// 앱 메뉴는 짧고, 상태 아이콘이 노치 오른쪽 118pt 부터 (카드 목이 아이콘 앞에서 멈추는 폭)
         case iconsNearNotch
+        /// 앱 메뉴가 노치 왼쪽 64pt(+ 여백 8) 앞까지, 상태 아이콘은 노치 바로 옆부터 (작은 내용만 왼쪽 날개에 들어감)
+        case narrowLeftRoom
         /// 노치 없는 화면: 앱 메뉴와 상태 아이콘 사이가 좁음 (알약 대신 점)
         case narrowGap
         /// 노치 없는 화면: 앱 메뉴가 화면 가운데 가까이까지 길고 빈 곳(약 296pt)이 오른쪽으로 치우침.
@@ -203,6 +209,8 @@ struct SnapshotMenuBar {
     static let clockText = "1월 15일 (목) 오전 10:44"
     static let iconSize = CGSize(width: 16, height: 14)
     static let iconStep: CGFloat = 28
+    /// `narrowLeftRoom` 의 노치 왼쪽 빈 곳 (여백 제외)
+    static let narrowLeftRoom: CGFloat = 64
     /// 아이콘 사각형(손쉬운 사용으로 읽히는 크기) 좌우 여백
     static let iconItemPadding: CGFloat = 6
     /// 가짜 상태 아이콘 (SF Symbols)
@@ -249,11 +257,15 @@ struct SnapshotMenuBar {
             menus = Self.layoutMenus(shortMenus, limit: .greatestFiniteMagnitude)
         case .leftBlocked, .bothBlocked, .menusAndIconsToNotch:
             menus = Self.layoutMenus(longMenus, limit: notchMinX - 6)
+        case .narrowLeftRoom:
+            menus = Self.layoutMenus(longMenus, limit: notchMinX - Self.narrowLeftRoom - IslandMetrics.menuBarMargin)
         case .narrowGap, .offCenterGap, .tightGap:
             menus = Self.layoutMenus(longMenus, limit: width * 0.46)
         }
         menuItems = menus
-        let appMenuEnd = menus.last.map { $0.x + Self.textWidth($0.text, bold: $0.bold) } ?? 40
+        var appMenuEnd = menus.last.map { $0.x + Self.textWidth($0.text, bold: $0.bold) } ?? 40
+        // 손쉬운 사용이 재는 앱 메뉴 끝 (마지막 메뉴 뒤 여백까지): 노치 왼쪽 빈 곳이 정확히 `narrowLeftRoom`
+        if crowding == .narrowLeftRoom { appMenuEnd = notchMinX - Self.narrowLeftRoom - IslandMetrics.menuBarMargin }
 
         // 상태 아이콘 시작 위치
         var statusStart: CGFloat
@@ -261,7 +273,7 @@ struct SnapshotMenuBar {
         case .roomy: statusStart = hasNotch ? 760 : 800
         case .leftBlocked: statusStart = notchMaxX + 210
         case .bothBlocked: statusStart = notchMaxX + 38
-        case .iconsToNotch, .menusAndIconsToNotch: statusStart = notchMaxX + 8
+        case .iconsToNotch, .menusAndIconsToNotch, .narrowLeftRoom: statusStart = notchMaxX + 8
         case .iconsNearNotch: statusStart = notchMaxX + 118
         case .narrowGap: statusStart = appMenuEnd + 92
         case .offCenterGap: statusStart = appMenuEnd + 296
@@ -482,7 +494,7 @@ enum SnapshotStage {
                 presentation.toggleExpanded(on: screenID)
             }
         case .working, .workingWings, .workingWingsIcons, .workingWingsIconsStrip, .workingWingsIconsNear, .workingRightWing, .workingBelowNotch,
-             .workingBelowNotchLeft, .workingBelowNotchStrip, .menubarWorking, .menubarDot, .menubarBelowWorking:
+             .workingBelowNotchLeft, .workingBelowNotchStrip, .workingBelowNotchNarrow, .menubarWorking, .menubarDot, .menubarBelowWorking:
             world.apiServerEdits()
             world.apiServerRunsTests()
         case .menubarWorkingLongTool, .menubarWorkingTight:

@@ -196,8 +196,7 @@ enum SnapshotSummaryCheck {
                 cases += 1
                 let metrics = CompactMetrics(
                     project: CompactText.width("api-server", font: IslandFont.bodyNS),
-                    shortTool: CompactText.width("Bash", font: IslandFont.bodyNS),
-                    fullTool: CompactText.width("Bash npm test", font: IslandFont.bodyNS),
+                    tool: CompactText.width("Bash", font: IslandFont.bodyNS),
                     trailing: CompactText.statWidth(added: 12, removed: 3),
                     summary: CompactText.summaryWidth(summary),
                     isAttention: false
@@ -205,8 +204,8 @@ enum SnapshotSummaryCheck {
                 let layout = engine.compactLayout(for: .session(metrics))
                 let shown: Bool
                 switch layout.compact {
-                case let .wings(spec): shown = spec.arrangement == .strip || spec.items.contains(.summary)
-                case .strip: shown = true
+                case let .wings(spec): shown = spec.items.contains(.summary)
+                case let .strip(items): shown = items.contains(.summary)
                 case let .pill(items): shown = items.contains(.summary)
                 default: shown = false
                 }
@@ -253,14 +252,14 @@ enum SnapshotPillCheck {
         func metrics(tool: String, project: String = "agent-notch", stat: (Int, Int) = (0, 0), summary: SessionStatusSummary = .empty) -> CompactMetrics {
             CompactMetrics(
                 project: CompactText.width(project, font: font),
-                shortTool: CompactText.width(String(tool.split(separator: " ").first ?? ""), font: font),
-                fullTool: CompactText.width(tool, font: font),
+                tool: CompactText.width(tool, font: font),
                 trailing: CompactText.statWidth(added: stat.0, removed: stat.1),
                 summary: CompactText.summaryWidth(summary),
                 isAttention: false
             )
         }
-        let tools = ["Claude_Browser · computer", "Claude_Browser · browser_batch", "Bash npm run build -- --filter web-app --verbose", "생각 중"]
+        // 접힌 상태 툴은 짧은 이름만 (MCP 는 서버 이름). 긴 서버 이름은 줄여서 넣는다
+        let tools = ["Claude_Browser", "plugin_design_figma", "Bash", "생각 중"]
         let summaries: [(String, SessionStatusSummary)] = [("요약 없음", .empty), ("요약", SessionStatusSummary(waiting: 1, done: 2))]
 
         // 1) 메뉴바 안 알약: 제목이 들어가고, 빈 곳(여백 8pt 안쪽) 안에 있다
@@ -298,7 +297,7 @@ enum SnapshotPillCheck {
         let tight = engine(.inMenuBar, space: MenuBarSpace(
             menuBarVisible: true, menuBarHeight: 24, appMenuEnd: 880, appMenuMeasured: true, statusStart: 1020, statusMeasured: true
         ))
-        if case let .pill(items) = tight.compactLayout(for: .session(metrics(tool: "Claude_Browser · browser_batch"))).compact {
+        if case let .pill(items) = tight.compactLayout(for: .session(metrics(tool: "plugin_design_figma"))).compact {
             if !items.contains(.tool), !items.contains(.project) { problems.append("좁은 빈 곳: 제목 없이 상태 아이콘만") }
         } else {
             problems.append("좁은 빈 곳: 알약이 아님")
@@ -306,7 +305,7 @@ enum SnapshotPillCheck {
 
         // 3-1) 빈 곳 폭을 80…200pt 로 훑기: 줄인 프로젝트명이라도 들어가면 상태 아이콘만 남기지 않는다.
         //      요약이 없으면 툴 제목이 먼저이고, 툴 제목이 줄여도 안 들어갈 때만 프로젝트명. 제목을 넣었으면 알약 안에 들어간다
-        for tool in ["Claude_Browser · browser_batch", "Bash npm run build -- --filter web-app --verbose"] {
+        for tool in ["Claude_Browser", "plugin_design_figma"] {
             for stat in [(0, 0), (12, 3)] {
                 for (summaryName, summary) in summaries {
                     cases += 1
@@ -361,11 +360,119 @@ enum SnapshotPillCheck {
 
         // 5) 펼친 카드 목 알약: 빈 곳 안으로 민 알약을 그대로 이어받는다
         cases += 1
-        let content = CompactContent.session(metrics(tool: "Claude_Browser · browser_batch"))
+        let content = CompactContent.session(metrics(tool: "Claude_Browser"))
         let compact = inMenuBar.compactPlacement(for: content)
         var opened = inMenuBar
         opened.previousPill = compact
         if opened.cardPill(for: compact) != compact { problems.append("펼친 카드 목 알약이 접힌 알약과 다름") }
+        return (cases, problems)
+    }
+}
+
+// MARK: - 노치 아래 띠 요소
+
+/// 노치 아래 띠가 메뉴바 알약과 같은 규칙으로 요소를 고르는지 (두 화면이 같은 세션 상태에 같은 내용을 보여주는지).
+/// 띠 폭은 노치 폭 그대로이고, 요약은 둘째 줄로 내릴 수 있다
+@MainActor
+enum SnapshotStripCheck {
+    static func run() -> (cases: Int, problems: [String]) {
+        var problems: [String] = []
+        var cases = 0
+        let font = IslandFont.bodyNS
+        func metrics(project: String, tool: String, stat: (Int, Int), summary: SessionStatusSummary, attention: String? = nil) -> CompactMetrics {
+            CompactMetrics(
+                project: CompactText.width(project, font: font),
+                tool: attention == nil ? CompactText.width(tool, font: font) : 0,
+                trailing: attention.map { CompactText.width($0, font: font) } ?? CompactText.statWidth(added: stat.0, removed: stat.1),
+                summary: CompactText.summaryWidth(summary),
+                isAttention: attention != nil
+            )
+        }
+        typealias E = IslandLayoutEngine
+
+        // 1) 사용자 화면: 노치 아래 띠(노치 185pt)와 메뉴바 알약이 같은 요소 ("agent-notch · 생각 중")
+        let notchBar = SnapshotMenuBar(style: .notch, crowding: .bothBlocked)
+        let stripEngine = IslandLayoutEngine(
+            geometry: notchBar.geometry, space: notchBar.space, externalStyle: .inMenuBar,
+            notchStyle: .belowNotch, overlapStyle: .belowNotch, notchConflict: false
+        )
+        let pillBar = SnapshotMenuBar(style: .menuBar, crowding: .roomy)
+        let pillEngine = IslandLayoutEngine(
+            geometry: pillBar.geometry, space: pillBar.space, externalStyle: .inMenuBar,
+            notchStyle: .wings, overlapStyle: .belowNotch, notchConflict: false
+        )
+        func items(_ layout: IslandLayout) -> CompactItems? {
+            switch layout.compact {
+            case let .strip(items)?, let .pill(items)?: return items
+            case let .wings(spec)? where spec.arrangement == .strip: return spec.items
+            default: return nil
+            }
+        }
+        let user = metrics(project: "agent-notch", tool: "생각 중", stat: (0, 0), summary: .empty)
+        cases += 1
+        let userStrip = items(stripEngine.compactLayout(for: .session(user)))
+        let userPill = items(pillEngine.compactLayout(for: .session(user)))
+        if userStrip != [.project, .tool] { problems.append("agent-notch · 생각 중: 노치 아래 띠 요소 \(String(describing: userStrip)) (프로젝트 · 툴 기대)") }
+        if userStrip != userPill { problems.append("agent-notch · 생각 중: 띠 \(String(describing: userStrip)) ≠ 알약 \(String(describing: userPill))") }
+
+        // 2) 같은 측정값이면 두 폭에 다 들어가는 한 같은 요소 (같은 후보 순서 · 같은 줄임 규칙)
+        let projects = ["agent-notch", "api-server", "blog", "a-very-long-project-name"]
+        let tools = ["생각 중", "Bash", "Read", "Claude_Browser", "plugin_design_figma"]
+        let stats = [(0, 0), (12, 3), (1234, 567)]
+        let summaries: [SessionStatusSummary] = [.empty, SessionStatusSummary(waiting: 1, done: 2)]
+        var samples: [CompactMetrics] = []
+        for project in projects {
+            for tool in tools { for stat in stats { for summary in summaries { samples.append(metrics(project: project, tool: tool, stat: stat, summary: summary)) } } }
+            for summary in summaries { samples.append(metrics(project: project, tool: "", stat: (0, 0), summary: summary, attention: "승인 필요")) }
+        }
+        let wingsIconsBar = SnapshotMenuBar(style: .notch, crowding: .menusAndIconsToNotch, measuresItems: true)
+        let wingsIconsEngine = IslandLayoutEngine(
+            geometry: wingsIconsBar.geometry, space: wingsIconsBar.space, externalStyle: .inMenuBar,
+            notchStyle: .wings, overlapStyle: .belowNotch, notchConflict: false
+        )
+        for sample in samples {
+            let content = CompactContent.session(sample)
+            let strip = stripEngine.compactLayout(for: content)
+            let pill = pillEngine.compactLayout(for: content)
+            guard let stripItems = items(strip), let pillItems = items(pill) else {
+                cases += 1
+                problems.append(String(format: "프로젝트 %.0f · 툴 %.0f: 띠 · 알약이 아님", sample.project, sample.tool))
+                continue
+            }
+            let name = String(format: "프로젝트 %.0f · 툴 %.0f · 뒤 %.0f · 요약 %.0f%@", sample.project, sample.tool, sample.trailing, sample.summary, sample.isAttention ? " · 상태 문구" : "")
+            let first = E.pillVariants(sample)[0]
+            let stripRoom = stripEngine.notchWidth
+            // 띠 · 알약 모두 첫 후보(가장 많은 요소)가 들어가면 둘 다 그것
+            cases += 1
+            if E.lineNeed(sample, items: first, squeezed: true, chrome: .strip) <= stripRoom,
+               E.pillNeed(sample, items: first, squeezed: true) <= pill.size.width,
+               stripItems != first || pillItems != first {
+                problems.append("\(name): 둘 다 들어가는데 띠 \(stripItems.rawValue) · 알약 \(pillItems.rawValue) (기대 \(first.rawValue))")
+            }
+            // 띠는 알약 규칙(`lineItems`) 그대로: 들어가는 첫 후보
+            cases += 1
+            if stripItems != E.lineItems(sample, width: stripRoom, chrome: .strip) {
+                problems.append("\(name): 띠 요소가 알약 규칙과 다름")
+            }
+            // 줄인 프로젝트명이라도 들어가면 상태 아이콘만 남기지 않는다
+            cases += 1
+            let titled = stripItems.contains(.project) || stripItems.contains(.tool)
+            if !titled, E.lineNeed(sample, items: [.project], squeezed: true, chrome: .strip) <= stripRoom {
+                problems.append("\(name): 줄인 프로젝트명이 들어가는데 상태 아이콘만")
+            }
+            // 띠 높이: 요약이 제목 줄에 함께 안 들어갈 때만 두 줄 (폭은 늘 노치 폭)
+            cases += 1
+            let twoLine = strip.hasTwoLineStrip
+            if twoLine != E.stripWrapsSummary(sample, items: stripItems, width: stripRoom) || abs(strip.size.width - stripRoom) > 0.5 {
+                problems.append("\(name): 띠 높이 · 폭이 규칙과 다름 (두 줄 \(twoLine), 폭 \(Int(strip.size.width)))")
+            }
+            // 넓은 노치 + 아이콘 구멍에서 내용을 노치 아래 띠로 내린 경우도 같은 요소
+            cases += 1
+            let iconStrip = wingsIconsEngine.compactLayout(for: content)
+            if case let .wings(spec)? = iconStrip.compact, spec.arrangement == .strip, spec.items != stripItems {
+                problems.append("\(name): 아이콘 구멍 날개의 노치 아래 띠 요소 \(spec.items.rawValue) ≠ 띠 \(stripItems.rawValue)")
+            }
+        }
         return (cases, problems)
     }
 }

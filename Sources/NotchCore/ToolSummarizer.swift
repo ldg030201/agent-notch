@@ -9,11 +9,15 @@ public struct ToolSummary: Hashable, Sendable {
     public var detail: String?
     /// SF Symbol 이름
     public var symbolName: String
+    /// 접힌 상태에 쓰는 짧은 툴 이름 (예: "Bash", "Edit", MCP 는 서버 이름 "Claude_Browser")
+    public var label: String
 
-    public init(title: String, detail: String?, symbolName: String) {
+    /// - label: 없으면 제목 첫 단어
+    public init(title: String, detail: String?, symbolName: String, label: String? = nil) {
         self.title = title
         self.detail = detail
         self.symbolName = symbolName
+        self.label = label ?? title.split(separator: " ").first.map(String.init) ?? title
     }
 }
 
@@ -58,60 +62,67 @@ public enum ToolSummarizer {
 
         switch toolName {
         case "Read":
-            return ToolSummary(title: titled("Read", file("file_path")), detail: path("file_path"), symbolName: "doc.text")
+            return ToolSummary(title: titled("Read", file("file_path")), detail: path("file_path"), symbolName: "doc.text", label: "Read")
         case "Edit", "MultiEdit":
-            return ToolSummary(title: titled("Edit", file("file_path")), detail: path("file_path"), symbolName: "pencil")
+            return ToolSummary(title: titled("Edit", file("file_path")), detail: path("file_path"), symbolName: "pencil", label: "Edit")
         case "Write":
-            return ToolSummary(title: titled("Write", file("file_path")), detail: path("file_path"), symbolName: "doc.badge.plus")
+            return ToolSummary(title: titled("Write", file("file_path")), detail: path("file_path"), symbolName: "doc.badge.plus", label: "Write")
         case "NotebookEdit":
-            return ToolSummary(title: titled("Edit", file("notebook_path")), detail: path("notebook_path"), symbolName: "book")
+            return ToolSummary(title: titled("Edit", file("notebook_path")), detail: path("notebook_path"), symbolName: "book", label: "Edit")
         case "Bash":
             let command = input.string("command")
             let detail = input.string("description") ?? command
             return ToolSummary(
                 title: titled("Bash", command),
                 detail: detail.map { TextUtils.truncate($0, max: maxDetail) },
-                symbolName: "terminal"
+                symbolName: "terminal",
+                label: "Bash"
             )
         case "Grep":
-            return ToolSummary(title: titled("Grep", input.string("pattern")), detail: path("path"), symbolName: "magnifyingglass")
+            return ToolSummary(title: titled("Grep", input.string("pattern")), detail: path("path"), symbolName: "magnifyingglass", label: "Grep")
         case "Glob":
-            return ToolSummary(title: titled("Glob", input.string("pattern")), detail: path("path"), symbolName: "doc.text.magnifyingglass")
+            return ToolSummary(title: titled("Glob", input.string("pattern")), detail: path("path"), symbolName: "doc.text.magnifyingglass", label: "Glob")
         case "WebFetch":
             let url = input.string("url")
             return ToolSummary(
                 title: titled("Fetch", url.flatMap(host(of:))),
                 detail: url.map { TextUtils.truncate($0, max: maxDetail) },
-                symbolName: "globe"
+                symbolName: "globe",
+                label: "Fetch"
             )
         case "WebSearch":
-            return ToolSummary(title: titled("Search", input.string("query")), detail: nil, symbolName: "magnifyingglass.circle")
+            return ToolSummary(title: titled("Search", input.string("query")), detail: nil, symbolName: "magnifyingglass.circle", label: "Search")
         case "Agent", "Task":
             return ToolSummary(
                 title: titled("Agent", input.string("description")),
                 detail: input.string("subagent_type"),
-                symbolName: "person.2"
+                symbolName: "person.2",
+                label: "Agent"
             )
         case "TodoWrite", "TaskCreate", "TaskUpdate":
             let count = input["todos"]?.arrayValue?.count
-            return ToolSummary(title: "Todo", detail: count.map { "\($0)개 항목" }, symbolName: "checklist")
+            return ToolSummary(title: "Todo", detail: count.map { "\($0)개 항목" }, symbolName: "checklist", label: "Todo")
         case "AskUserQuestion":
             return ToolSummary(
                 title: "질문",
                 detail: firstQuestion(in: toolInput).map { TextUtils.truncate($0, max: maxDetail) },
-                symbolName: "questionmark.bubble"
+                symbolName: "questionmark.bubble",
+                label: "질문"
             )
         case "ExitPlanMode":
             return ToolSummary(
                 title: "Plan",
                 detail: firstPlanLine(in: toolInput).map { TextUtils.truncate($0, max: maxDetail) },
-                symbolName: "list.bullet.clipboard"
+                symbolName: "list.bullet.clipboard",
+                label: "Plan"
             )
         default:
             if let mcp = mcpParts(toolName) {
-                return ToolSummary(title: "\(mcp.server) · \(mcp.tool)", detail: nil, symbolName: "puzzlepiece.extension")
+                // 접힌 상태엔 서버 이름만 (툴 이름은 펼친 타임라인에)
+                return ToolSummary(title: "\(mcp.server) · \(mcp.tool)", detail: nil, symbolName: "puzzlepiece.extension", label: mcp.server)
             }
-            return ToolSummary(title: toolName.isEmpty ? "Tool" : toolName, detail: nil, symbolName: "wrench.and.screwdriver")
+            let name = toolName.isEmpty ? "Tool" : toolName
+            return ToolSummary(title: name, detail: nil, symbolName: "wrench.and.screwdriver", label: name)
         }
     }
 
