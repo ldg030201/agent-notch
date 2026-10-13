@@ -73,6 +73,9 @@ struct SnapshotTransition {
             // 메뉴바 알약 → 카드
             t(.menubarWorking, .menubarPermission, env: .menubarWorking),
             t(.menubarPermission, .menubarWorking, env: .menubarWorking),
+            // 화면 가운데가 좁아 빈 곳 안으로 밀어 놓은 메뉴바 알약 ↔ 카드
+            t(.menubarWorkingLongTool, .menubarPermission, env: .menubarWorkingLongTool),
+            t(.menubarPermission, .menubarWorkingLongTool, env: .menubarWorkingLongTool),
             // 실제 사용 환경에 가까운 것: 노치 오른쪽이 상태 아이콘으로 꽉 참
             t(.workingWings, .peek, env: .workingWings, name: "anim-working-wings-peek"),
             t(.workingWingsIcons, .permission, env: .workingWingsIcons, name: "anim-working-wings-icons-permission"),
@@ -950,6 +953,7 @@ enum SnapshotAnimationSheet {
         let seamSelfTest = (cases: 3, problems: SnapshotSeamCheck.selfTest())
         for (label, check) in [
             ("겹침 감지", SnapshotOverlapCheck.run()), ("세션 요약 자리", SnapshotSummaryCheck.run()), ("이음매 래스터 자체", seamSelfTest),
+            ("메뉴바 알약 제목", SnapshotPillCheck.run()), ("메뉴바 창 찾기", SnapshotMenuBarScanCheck.run()),
         ] {
             if check.problems.isEmpty {
                 report.append("   \(label) 검사 \(check.cases)개 통과")

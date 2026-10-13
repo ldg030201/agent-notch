@@ -310,7 +310,7 @@ final class PresentationController {
         return nil
     }
 
-    /// 입력 대기 중이거나, 훅 대기 없이 터미널에서 승인을 기다리는 세션
+    /// 입력 대기 중이거나, 훅 대기 없이 터미널(또는 Claude 앱)에서 승인을 기다리는 세션
     private func pendingInput() -> (sessionID: String, message: String, isPermissionPrompt: Bool)? {
         var candidates: [AgentSession] = []
         if let focused = store.focusedSession { candidates.append(focused) }
@@ -323,7 +323,8 @@ final class PresentationController {
                 let message = inputMessages[session.id] ?? session.lastNotification ?? "입력이 필요해"
                 return (session.id, message, false)
             case .waitingPermission where !hookPendingSessions.contains(session.id):
-                return (session.id, "터미널에서 승인 필요", true)
+                // 버튼("터미널로" · "Claude로")과 같은 곳을 가리킨다
+                return (session.id, "\(SessionHost(session.terminal).placeName)에서 승인 필요", true)
             default:
                 continue
             }
@@ -795,7 +796,10 @@ struct PermissionCardModel {
     let fullScope: [String]
 
     static let maxScopeLines = 3
-    static let clippedNote = "요청이 길어서 다 못 보여줘 · 터미널에서 확인해 줘"
+    /// 상세가 잘렸을 때 안내 (세션을 띄운 앱에서 확인하라고)
+    static func clippedNote(_ host: SessionHost) -> String {
+        "요청이 길어서 다 못 보여줘 · \(host.placeName)에서 확인해 줘"
+    }
 
     var canAllow: Bool { !isClipped }
 

@@ -191,7 +191,7 @@ struct SessionRow: View {
                 Button(isPinned ? "고정 해제" : "고정") {
                     actions.togglePin(sessionID: session.id)
                 }
-                Button("터미널로") {
+                Button(SessionHost(session.terminal).jumpLabel) {
                     actions.jumpToTerminal(sessionID: session.id)
                 }
                 Divider()

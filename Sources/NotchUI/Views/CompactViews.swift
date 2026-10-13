@@ -134,14 +134,13 @@ struct CompactSessionView: View {
         case let .pill(items):
             HStack(spacing: 6) {
                 StatusIndicator(session: session, reduceMotion: reduceMotion, size: min(14, layout.size.height - 6))
-                let title = pillTitle(session, items: items)
-                if !title.isEmpty {
-                    Text(title)
-                        .truncationMode(.middle)
-                }
+                pillTitle(session, items: items)
                 Spacer(minLength: 0)
-                trailing(session, toolTitle: "")
-                    .layoutPriority(1)
+                // 그릴 것이 없으면 빼서 사이 간격이 겹치지 않게 (제목 자리가 그만큼 넓어진다)
+                if Self.hasTrailing(session, toolTitle: "") {
+                    trailing(session, toolTitle: "")
+                        .layoutPriority(1)
+                }
                 summaryChips(items, leading: 2)
             }
             .padding(.horizontal, 12)
@@ -236,14 +235,28 @@ struct CompactSessionView: View {
             || session.turn.added > 0 || session.turn.removed > 0
     }
 
-    private func pillTitle(_ session: AgentSession, items: CompactItems) -> String {
-        var parts: [String] = []
-        if items.contains(.project) { parts.append(session.projectName) }
-        if items.contains(.tool), CompactText.attentionText(session) == nil {
-            let tool = IslandFormat.fullToolTitle(session)
-            if !tool.isEmpty { parts.append(tool) }
+    /// 알약 제목: 프로젝트명(끝 줄임) · 툴 제목(가운데 줄임). 자리가 모자라면 `PillTitleLayout` 이 줄인다.
+    /// 레이아웃(`IslandLayoutEngine.pillItems`)은 둘 다 최소 폭까지 줄인 폭으로 요소를 고른다
+    @ViewBuilder
+    private func pillTitle(_ session: AgentSession, items: CompactItems) -> some View {
+        let project = items.contains(.project) ? session.projectName : ""
+        let tool = items.contains(.tool) && CompactText.attentionText(session) == nil ? IslandFormat.fullToolTitle(session) : ""
+        if !project.isEmpty, !tool.isEmpty {
+            // 빼는 순서와 같게 줄인다: 요약이 없으면 프로젝트명부터, 있으면 툴 제목부터
+            PillTitleLayout(projectFirst: !items.contains(.summary)) {
+                Text(project)
+                    .truncationMode(.tail)
+                Text(verbatim: " · ")
+                Text(tool)
+                    .truncationMode(.middle)
+            }
+        } else if !project.isEmpty {
+            Text(project)
+                .truncationMode(.tail)
+        } else if !tool.isEmpty {
+            Text(tool)
+                .truncationMode(.middle)
         }
-        return parts.joined(separator: " · ")
     }
 
     static func tone(_ session: AgentSession) -> MenuBarDotView.Tone {
@@ -265,6 +278,50 @@ struct CompactSessionView: View {
         case .red: return Palette.red
         case .muted: return Palette.muted
         }
+    }
+}
+
+/// 알약 제목 배치: 프로젝트명 · 구분점 · 툴 제목을 한 줄로 잇는다.
+/// 자리가 모자라면 한쪽을 먼저 최소 폭(`IslandLayoutEngine.pillProjectMin` · `pillToolMin`)까지 줄이고, 그래도 모자라면 다른 쪽을 줄인다.
+/// 줄인 글자의 실제 폭대로 이어 붙여 사이가 벌어지지 않는다
+struct PillTitleLayout: Layout {
+    /// true 면 프로젝트명을 먼저 줄이고, false 면 툴 제목을 먼저 줄인다
+    var projectFirst: Bool
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let sizes = sizes(proposal, subviews)
+        return CGSize(width: sizes.reduce(0) { $0 + $1.width }, height: sizes.map(\.height).max() ?? 0)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        for (subview, size) in zip(subviews, sizes(ProposedViewSize(width: bounds.width, height: bounds.height), subviews)) {
+            subview.place(at: CGPoint(x: x, y: bounds.midY), anchor: .leading, proposal: ProposedViewSize(size))
+            x += size.width
+        }
+    }
+
+    /// 하위 뷰(프로젝트명 · 구분점 · 툴 제목) 크기
+    private func sizes(_ proposal: ProposedViewSize, _ subviews: Subviews) -> [CGSize] {
+        let ideal = subviews.map { $0.sizeThatFits(.unspecified) }
+        guard subviews.count == 3, let available = proposal.width,
+              available < ideal.reduce(0, { $0 + $1.width })
+        else { return ideal }
+        let room = max(0, available - ideal[1].width)
+        func fit(_ index: Int, _ width: CGFloat) -> CGSize {
+            subviews[index].sizeThatFits(ProposedViewSize(width: max(0, width), height: proposal.height))
+        }
+        // 먼저 줄일 쪽(first)은 다른 쪽이 다 들어가고 남는 만큼(최소 폭까지), 다른 쪽이 최소 폭도 안 되면 그보다 더 줄인다.
+        // 다른 쪽(second)은 first 가 실제로 쓴 폭을 뺀 나머지 전부
+        let (first, second) = projectFirst ? (0, 2) : (2, 0)
+        let floors = [min(ideal[0].width, IslandLayoutEngine.pillProjectMin), 0, min(ideal[2].width, IslandLayoutEngine.pillToolMin)]
+        let firstWidth = min(ideal[first].width, max(floors[first], room - ideal[second].width), max(0, room - floors[second]))
+        let firstSize = fit(first, firstWidth)
+        let secondSize = fit(second, room - firstSize.width)
+        var sizes = ideal
+        sizes[first] = firstSize
+        sizes[second] = secondSize
+        return sizes
     }
 }
 

@@ -69,8 +69,10 @@ enum MenuBarScanner {
             guard rect.width >= 2, rect.height >= 2 else { continue }
             for screen in screens {
                 let frame = screen.frame
-                guard rect.intersects(frame) || abs(rect.maxY - frame.maxY) < 1.5 else { continue }
                 let touchesTop = abs(rect.maxY - frame.maxY) < 1.5
+                // 위 가장자리 높이가 같은 옆 화면(나란히 둔 외부 모니터)의 메뉴바 창을 이 화면 것으로 보지 않게 가로로 겹쳐야 한다
+                let overlapsX = rect.maxX > frame.minX + 1 && rect.minX < frame.maxX - 1
+                guard overlapsX, rect.intersects(frame) || touchesTop else { continue }
                 if window.layer == WindowLevels.mainMenu, touchesTop,
                    rect.width >= frame.width * 0.9, rect.height >= 16, rect.height <= 60 {
                     results[screen.id]?.menuBarHeight = rect.height

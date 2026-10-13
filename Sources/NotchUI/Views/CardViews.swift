@@ -85,6 +85,7 @@ struct PermissionView: View {
 
     var body: some View {
         let card = PermissionCardModel(request: request, cardWidth: layout.cardWidth)
+        let host = SessionHost(session?.terminal)
 
         CardScaffold(layout: layout) {
             CardHeaderLeading(
@@ -118,7 +119,7 @@ struct PermissionView: View {
                     // 다 보이지 않는 요청은 노치에서 허용하지 않는다 (승인하면 안 보이는 부분까지 실행된다)
                     HStack(spacing: 5) {
                         Image(systemName: "eye.slash")
-                        Text(PermissionCardModel.clippedNote)
+                        Text(PermissionCardModel.clippedNote(host))
                     }
                     .font(IslandFont.caption)
                     .foregroundStyle(Palette.amber)
@@ -159,7 +160,7 @@ struct PermissionView: View {
                     .buttonStyle(IslandButtonStyle(prominent: card.canAllow))
                     .disabled(!card.canAllow)
                     .accessibilityLabel("허용")
-                    .help(card.canAllow ? "허용 (⌘↩)" : "다 보이지 않는 요청은 여기서 허용할 수 없어 · 터미널로")
+                    .help(card.canAllow ? "허용 (⌘↩)" : Self.clippedHelp(host))
 
                     Button {
                         presentation.resolve(request, decision: .allowAlways)
@@ -169,7 +170,7 @@ struct PermissionView: View {
                     .buttonStyle(IslandButtonStyle())
                     .disabled(!card.canAllowAlways)
                     .accessibilityLabel("항상 허용")
-                    .help(allowAlwaysHelp(card))
+                    .help(allowAlwaysHelp(card, host: host))
 
                     Button {
                         presentation.resolve(request, decision: .deny(message: nil))
@@ -195,13 +196,13 @@ struct PermissionView: View {
                         presentation.sendToTerminal(request)
                     } label: {
                         HStack(spacing: 4) {
-                            Image(systemName: "terminal")
-                            Text("터미널로")
+                            Image(systemName: host.symbolName)
+                            Text(host.jumpLabel)
                         }
                     }
                     .buttonStyle(IslandButtonStyle(prominent: card.isClipped))
-                    .accessibilityLabel("터미널로")
-                    .help("터미널에서 직접 결정")
+                    .accessibilityLabel(host.jumpLabel)
+                    .help("\(host.placeName)에서 직접 결정")
                 }
                 .padding(.top, 12)
             }
@@ -212,8 +213,12 @@ struct PermissionView: View {
         }
     }
 
-    private func allowAlwaysHelp(_ card: PermissionCardModel) -> String {
-        if card.isClipped { return "다 보이지 않는 요청은 여기서 허용할 수 없어 · 터미널로" }
+    private static func clippedHelp(_ host: SessionHost) -> String {
+        "다 보이지 않는 요청은 여기서 허용할 수 없어 · \(host.jumpLabel)"
+    }
+
+    private func allowAlwaysHelp(_ card: PermissionCardModel, host: SessionHost) -> String {
+        if card.isClipped { return Self.clippedHelp(host) }
         if !card.canAllowAlways { return "이 요청은 항상 허용 규칙이 없어" }
         return "다음부터 묻지 않음 (⌥⌘↩)"
     }
@@ -231,6 +236,8 @@ struct NeedsInputView: View {
     let reduceMotion: Bool
 
     var body: some View {
+        let host = SessionHost(session?.terminal)
+
         CardScaffold(layout: layout) {
             CardHeaderLeading(
                 session: session,
@@ -264,12 +271,12 @@ struct NeedsInputView: View {
                         presentation.actions.jumpToTerminal(sessionID: sessionID)
                     } label: {
                         HStack(spacing: 4) {
-                            Image(systemName: "terminal")
-                            Text("터미널로")
+                            Image(systemName: host.symbolName)
+                            Text(host.jumpLabel)
                         }
                     }
                     .buttonStyle(IslandButtonStyle(prominent: isPermissionPrompt))
-                    .accessibilityLabel("터미널로")
+                    .accessibilityLabel(host.jumpLabel)
                 }
                 .padding(.top, 10)
             }

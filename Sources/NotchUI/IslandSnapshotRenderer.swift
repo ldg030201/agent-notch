@@ -98,6 +98,10 @@ enum SnapshotScenario: String, CaseIterable {
     case permissionScope = "permission-scope"
     case permissionCollapsed = "permission-collapsed"
     case needsInput = "needs-input"
+    /// `needs-input` 인데 질문한 세션이 Claude 데스크톱 앱에서 돌아감 (버튼이 "Claude로")
+    case needsInputDesktop = "needs-input-desktop"
+    /// Claude 데스크톱 앱 세션의 권한 요청을 "Claude로" 넘긴 뒤: 훅 대기 없이 앱에서 승인을 기다림 (문구 · 버튼이 Claude 앱)
+    case permissionHandoffDesktop = "permission-handoff-desktop"
     case done
     case failed
     case expanded
@@ -105,6 +109,10 @@ enum SnapshotScenario: String, CaseIterable {
     /// `working-summary` 를 펼친 모습: 머리에 "세션 5" + 모든 세션 요약
     case expandedSummary = "expanded-summary"
     case menubarWorking = "menubar-working"
+    /// 제목이 긴 MCP 툴 실행 중 (수정 없음), 빈 곳이 화면 가운데에서 오른쪽으로 치우친 메뉴바 (가운데에 두면 좁아 빈 곳 안으로 밀어 놓음)
+    case menubarWorkingLongTool = "menubar-working-long-tool"
+    /// `menubar-working-long-tool` 을 빈 곳이 좁은 메뉴바에 (제목을 줄여서라도 넣음)
+    case menubarWorkingTight = "menubar-working-tight"
     case menubarDot = "menubar-dot"
     case menubarPermission = "menubar-permission"
     case settings
@@ -113,7 +121,7 @@ enum SnapshotScenario: String, CaseIterable {
     /// 메뉴바 안 알약 장면은 style 과 관계없이 노치 없는 화면으로 그린다
     var forcesMenuBar: Bool {
         switch self {
-        case .menubarWorking, .menubarDot, .menubarPermission: return true
+        case .menubarWorking, .menubarWorkingLongTool, .menubarWorkingTight, .menubarDot, .menubarPermission: return true
         default: return false
         }
     }
@@ -137,6 +145,8 @@ enum SnapshotScenario: String, CaseIterable {
         case .workingWingsIconsStrip, .workingBelowNotchStrip: return .menusAndIconsToNotch
         case .workingWingsIconsNear: return .iconsNearNotch
         case .menubarDot: return .narrowGap
+        case .menubarWorkingLongTool: return .offCenterGap
+        case .menubarWorkingTight: return .tightGap
         default: return .roomy
         }
     }
@@ -164,8 +174,13 @@ struct SnapshotMenuBar {
         case menusAndIconsToNotch
         /// 앱 메뉴는 짧고, 상태 아이콘이 노치 오른쪽 118pt 부터 (카드 목이 아이콘 앞에서 멈추는 폭)
         case iconsNearNotch
-        /// 노치 없는 화면: 앱 메뉴와 상태 아이콘 사이가 좁음
+        /// 노치 없는 화면: 앱 메뉴와 상태 아이콘 사이가 좁음 (알약 대신 점)
         case narrowGap
+        /// 노치 없는 화면: 앱 메뉴가 화면 가운데 가까이까지 길고 빈 곳(약 296pt)이 오른쪽으로 치우침.
+        /// 화면 가운데에 두면 알약이 좁다 (손쉬운 사용 없이 외부 모니터에서 추정한 빈 곳과 같은 모양)
+        case offCenterGap
+        /// 노치 없는 화면: 빈 곳이 알약 하나 겨우 들어갈 만큼(약 140pt)
+        case tightGap
     }
 
     struct MenuItem {
@@ -225,7 +240,7 @@ struct SnapshotMenuBar {
             menus = Self.layoutMenus(shortMenus, limit: .greatestFiniteMagnitude)
         case .leftBlocked, .bothBlocked, .menusAndIconsToNotch:
             menus = Self.layoutMenus(longMenus, limit: notchMinX - 6)
-        case .narrowGap:
+        case .narrowGap, .offCenterGap, .tightGap:
             menus = Self.layoutMenus(longMenus, limit: width * 0.46)
         }
         menuItems = menus
@@ -240,6 +255,8 @@ struct SnapshotMenuBar {
         case .iconsToNotch, .menusAndIconsToNotch: statusStart = notchMaxX + 8
         case .iconsNearNotch: statusStart = notchMaxX + 118
         case .narrowGap: statusStart = appMenuEnd + 92
+        case .offCenterGap: statusStart = appMenuEnd + 296
+        case .tightGap: statusStart = appMenuEnd + 140
         }
         statusStart += iconShift
         clockX = width - 12 - Self.textWidth(Self.clockText, bold: false)
@@ -458,6 +475,8 @@ enum SnapshotStage {
              .workingBelowNotchLeft, .workingBelowNotchStrip, .menubarWorking, .menubarDot:
             world.apiServerEdits()
             world.apiServerRunsTests()
+        case .menubarWorkingLongTool, .menubarWorkingTight:
+            world.apiServerUsesBrowser()
         case .workingWingsRetracted:
             // 아이콘 위치를 모를 때: 마우스를 올린 오른쪽 날개가 노치 안으로 들어간 모습
             world.apiServerEdits()
@@ -495,7 +514,19 @@ enum SnapshotStage {
             if let request = world.store.pendingPermissions.first {
                 presentation.minimize(request)
             }
-        case .needsInput:
+        case .permissionHandoffDesktop:
+            world.hostEnvironment[SnapshotWorld.webApp.id] = SnapshotWorld.desktopEnvironment
+            world.apiServerEdits()
+            world.apiServerRunsTests()
+            showCompact()
+            world.webAppAsksPermission()
+            if let request = world.store.pendingPermissions.first {
+                world.store.resolvePermission(id: request.id, decision: .passthrough)
+            }
+        case .needsInput, .needsInputDesktop:
+            if scene == .needsInputDesktop {
+                world.hostEnvironment[SnapshotWorld.blog.id] = SnapshotWorld.desktopEnvironment
+            }
             world.apiServerEdits()
             world.apiServerRunsTests()
             showCompact()

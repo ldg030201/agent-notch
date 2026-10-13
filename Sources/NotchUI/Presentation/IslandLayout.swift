@@ -336,8 +336,7 @@ struct IslandLayoutEngine {
             // 카드 띠가 노치 폭이었다: 노치 아래 띠 · 선으로 접는다
             return held
         case let (.menuBarPill(centerX, width, _), .menuBarPill):
-            guard let slot = menuBarPillSlot, abs(centerX - slot.center) < 0.5, width <= slot.room + 0.5 else { return nil }
-            return held
+            return pillStillFits(centerX: centerX, width: width) ? held : nil
         default:
             return nil
         }
@@ -800,59 +799,85 @@ struct IslandLayoutEngine {
             switch content {
             case let .idle(dots): return .belowMenuBarPill(width: dots + 28, items: .all)
             case let .session(metrics):
-                // 요약이 없으면 지금처럼 프로젝트 · 툴을 다 넣고 넘치는 제목은 줄인다
-                guard metrics.summary > 0 else { return .belowMenuBarPill(width: M.pillWorkingWidth, items: .all) }
-                let items = Self.pillVariants(metrics).first { pillNeed(metrics, items: $0) <= M.pillWorkingWidth } ?? []
-                return .belowMenuBarPill(width: M.pillWorkingWidth, items: items)
+                // 폭은 늘 같고, 넘치는 제목은 줄인다 (요소는 메뉴바 안 알약과 같은 규칙)
+                return .belowMenuBarPill(width: M.pillWorkingWidth, items: Self.pillItems(metrics, width: M.pillWorkingWidth))
             }
         case .inMenuBar:
-            guard let (center, room) = menuBarPillSlot else { return .none }
-            if room < M.minMenuBarPill {
-                return room >= M.menuBarDotSize ? .menuBarDot(centerX: center) : .none
+            guard let range = menuBarPillRange else { return .none }
+            let gapRoom = range.hi - range.lo
+            if gapRoom < M.minMenuBarPill {
+                return gapRoom >= M.menuBarDotSize ? .menuBarDot(centerX: ((range.lo + range.hi) / 2).rounded()) : .none
             }
             switch content {
             case let .idle(dots):
-                return .menuBarPill(centerX: center, width: min(dots + 28, room), items: .all)
+                let width = min(dots + 28, gapRoom)
+                return .menuBarPill(centerX: pillCenter(width: width, in: range), width: width, items: .all)
             case let .session(metrics):
-                let variants = Self.pillVariants(metrics)
-                let full = pillNeed(metrics, items: variants[0])
+                let full = Self.pillNeed(metrics, items: Self.pillVariants(metrics)[0])
                 let desired = min(max((full / 20).rounded(.up) * 20, 120), M.pillWorkingWidth)
-                let width = min(desired, room).rounded(.down)
-                let items = variants.first { pillNeed(metrics, items: $0) <= width } ?? []
-                return .menuBarPill(centerX: center, width: width, items: items)
+                let width = min(desired, gapRoom).rounded(.down)
+                return .menuBarPill(
+                    centerX: pillCenter(width: width, in: range), width: width, items: Self.pillItems(metrics, width: width)
+                )
             }
         }
     }
 
-    /// 메뉴바 안 알약 자리: 가운데 x 와 쓸 수 있는 폭 (메뉴바가 숨었거나 빈 구간이 없으면 nil).
-    /// 화면 가운데가 빈 구간 안이고 가운데에 둘 자리가 있으면 가운데, 아니면 빈 구간 가운데
-    private var menuBarPillSlot: (center: CGFloat, room: CGFloat)? {
+    /// 메뉴바 안 알약을 둘 수 있는 가로 구간 (빈 구간에서 양쪽 여백을 뺀 것). 메뉴바가 숨었거나 빈 구간이 없으면 nil
+    private var menuBarPillRange: (lo: CGFloat, hi: CGFloat)? {
         guard menuBarVisible, let gap = menuBarGap else { return nil }
-        let margins = M.menuBarMargin * 2
-        var center = ((gap.start + gap.end) / 2).rounded()
-        var room = gap.end - gap.start - margins
-        if midX > gap.start, midX < gap.end {
-            let centeredRoom = 2 * min(midX - gap.start, gap.end - midX) - margins
-            if centeredRoom >= M.minMenuBarPill {
-                center = midX
-                room = centeredRoom
-            }
-        }
-        return (center, room)
+        let lo = gap.start + M.menuBarMargin
+        let hi = gap.end - M.menuBarMargin
+        return hi > lo ? (lo, hi) : nil
     }
 
-    /// 알약에 넣을 요소 후보. 요약이 있으면 툴 이름 → 프로젝트명 순으로 빼고 요약은 끝까지 남긴다
+    /// 폭 `width` 알약의 가운데 x.
+    /// 화면 가운데가 빈 구간 안이면 화면 가운데에 두되, 가운데로는 자리가 모자라면 빈 구간 안으로 들어올 만큼만 민다.
+    /// 화면 가운데가 빈 구간 밖이면 빈 구간 가운데
+    private func pillCenter(width: CGFloat, in range: (lo: CGFloat, hi: CGFloat)) -> CGFloat {
+        let gapCenter = ((range.lo + range.hi) / 2).rounded()
+        let margin = M.menuBarMargin
+        guard midX > range.lo - margin, midX < range.hi + margin else { return gapCenter }
+        let lower = (range.lo + width / 2).rounded(.up)
+        let upper = (range.hi - width / 2).rounded(.down)
+        guard lower <= upper else { return gapCenter }
+        return min(max(midX, lower), upper)
+    }
+
+    /// 직전 알약(가운데 · 폭)이 지금 메뉴바에서도 그 폭 알약이 놓일 자리 그대로인지
+    private func pillStillFits(centerX: CGFloat, width: CGFloat) -> Bool {
+        guard let range = menuBarPillRange else { return false }
+        return width <= range.hi - range.lo + 0.5 && abs(centerX - pillCenter(width: width, in: range)) < 0.5
+    }
+
+    /// 알약에 넣을 요소 후보 (앞에서부터 고른다).
+    /// 요약이 없으면 프로젝트명 → 툴 제목 순으로, 요약이 있으면 툴 제목 → 프로젝트명 순으로 빼고 요약은 끝까지 남긴다.
+    /// 요약이 없을 때 툴 제목이 줄여도 안 들어가면 그보다 짧게 줄일 수 있는 프로젝트명이라도 남긴다 (상태 아이콘만 남지 않게)
     static func pillVariants(_ metrics: CompactMetrics) -> [CompactItems] {
-        guard metrics.summary > 0 else { return [.all, [.tool], []] }
+        guard metrics.summary > 0 else { return [.all, [.tool], [.project], []] }
         return [[.project, .tool, .summary], [.project, .summary], [.summary], []]
     }
 
-    /// 알약 내용 폭 (좌우 여백 12 포함). 프로젝트 · 툴 제목을 한 덩어리로 보여주고, 요약은 `+N −M` 뒤에 붙인다.
-    private func pillNeed(_ metrics: CompactMetrics, items: CompactItems) -> CGFloat {
+    /// 알약 제목을 줄일 수 있는 최소 폭: 프로젝트명(끝 줄임) · 툴 제목(가운데 줄임).
+    /// 뷰(`PillTitleLayout`)는 빼는 순서와 같은 쪽을 먼저 이만큼까지 줄이고, 그래도 모자라면 다른 쪽을 줄인다
+    static let pillProjectMin: CGFloat = 40
+    static let pillToolMin: CGFloat = 64
+
+    /// 폭 `width` 알약에 넣을 요소: 제목을 줄일 수 있는 만큼 줄여서라도 들어가는 첫 후보.
+    /// 제목을 통째로 빼는 것은 최소 폭으로도 안 들어갈 때뿐이라, 제목이 들어갈 자리가 있으면 상태 아이콘만 남기지 않는다
+    static func pillItems(_ metrics: CompactMetrics, width: CGFloat) -> CompactItems {
+        pillVariants(metrics).first { pillNeed(metrics, items: $0, squeezed: true) <= width } ?? []
+    }
+
+    /// 알약 내용 폭 (좌우 여백 12 포함). 프로젝트명 · 툴 제목을 한 줄로 이어 보여주고, 요약은 `+N −M` 뒤에 붙인다.
+    /// - squeezed: 제목을 최소 폭(`pillProjectMin` · `pillToolMin`)까지 줄였을 때
+    static func pillNeed(_ metrics: CompactMetrics, items: CompactItems, squeezed: Bool = false) -> CGFloat {
         var text: CGFloat = 0
-        if items.contains(.project) { text += min(metrics.project, 110) }
+        if items.contains(.project), metrics.project > 0 {
+            text += min(metrics.project, squeezed ? pillProjectMin : 110)
+        }
         if items.contains(.tool), !metrics.isAttention, metrics.fullTool > 0 {
-            text += (text > 0 ? 14 : 0) + min(metrics.fullTool, 200)
+            text += (text > 0 ? 14 : 0) + min(metrics.fullTool, squeezed ? pillToolMin : 200)
         }
         var width: CGFloat = 24 + 12
         if text > 0 { width += 6 + text }
@@ -1169,14 +1194,15 @@ struct IslandLayoutEngine {
         return overlapStyle == .minimal ? .line : .strip(width: notchWidth)
     }
 
-    /// 펼친 카드 목이 될 메뉴바 알약 (노치 없는 화면): 직전에 그린 알약이 아직 빈 구간 안이면 그것
-    /// 빈 구간이 줄어 그대로 안 들어가면 지금 자리에서 들어가는 만큼만 줄인다 (지금 내용 폭보다 좁게는 두지 않음)
+    /// 펼친 카드 목이 될 메뉴바 알약 (노치 없는 화면): 직전에 그린 알약이 아직 그 자리 그대로 들어가면 그것.
+    /// 빈 구간이 줄어 그대로 안 들어가면 들어가는 만큼만 줄여 다시 놓는다 (지금 내용 폭보다 좁게는 두지 않음)
     func cardPill(for compact: CompactPlacement) -> CompactPlacement {
         guard case let .menuBarPill(_, freshWidth, items) = compact, case let .menuBarPill(centerX, width, _)? = previousPill,
-              let slot = menuBarPillSlot
+              let range = menuBarPillRange
         else { return compact }
-        if abs(centerX - slot.center) < 0.5, width <= slot.room + 0.5 { return .menuBarPill(centerX: centerX, width: width, items: items) }
-        return .menuBarPill(centerX: slot.center, width: max(freshWidth, min(width, slot.room).rounded(.down)), items: items)
+        if pillStillFits(centerX: centerX, width: width) { return .menuBarPill(centerX: centerX, width: width, items: items) }
+        let kept = max(freshWidth, min(width, range.hi - range.lo).rounded(.down))
+        return .menuBarPill(centerX: pillCenter(width: kept, in: range), width: kept, items: items)
     }
 
     /// 직전 날개가 지금 메뉴바에도 맞는지: 쓸 수 있는 폭 안이고, 아이콘 구멍을 쓰면 끝이 아이콘을 자르지 않는다.

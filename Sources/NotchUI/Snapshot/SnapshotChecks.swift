@@ -227,3 +227,186 @@ enum SnapshotSummaryCheck {
         return (cases, problems)
     }
 }
+
+// MARK: - 메뉴바 알약 제목
+
+/// 노치 없는 화면의 알약이 제목(프로젝트명 · 툴 제목)을 빼고 상태 아이콘만 남기지 않는지, 알약이 빈 곳 안에 있는지.
+/// 손쉬운 사용 권한이 없는 1920pt 외부 모니터 (빈 곳 추정 864…1160, 화면 가운데 960 → 가운데로는 176pt)
+@MainActor
+enum SnapshotPillCheck {
+    static func run() -> (cases: Int, problems: [String]) {
+        var problems: [String] = []
+        var cases = 0
+
+        let geometry = NotchGeometry(
+            screenID: 2, frame: CGRect(x: 1732, y: 982, width: 1920, height: 1080),
+            hasNotch: false, notchSize: .zero, isBuiltIn: false, menuBarHeight: 24
+        )
+        let unmeasured = MenuBarSpace(menuBarVisible: true, menuBarHeight: 24)
+        func engine(_ style: ExternalDisplayStyle, space: MenuBarSpace = unmeasured, geometry: NotchGeometry = geometry) -> IslandLayoutEngine {
+            IslandLayoutEngine(
+                geometry: geometry, space: space, externalStyle: style,
+                notchStyle: .wings, overlapStyle: .belowNotch, notchConflict: false
+            )
+        }
+        let font = IslandFont.bodyNS
+        func metrics(tool: String, project: String = "agent-notch", stat: (Int, Int) = (0, 0), summary: SessionStatusSummary = .empty) -> CompactMetrics {
+            CompactMetrics(
+                project: CompactText.width(project, font: font),
+                shortTool: CompactText.width(String(tool.split(separator: " ").first ?? ""), font: font),
+                fullTool: CompactText.width(tool, font: font),
+                trailing: CompactText.statWidth(added: stat.0, removed: stat.1),
+                summary: CompactText.summaryWidth(summary),
+                isAttention: false
+            )
+        }
+        let tools = ["Claude_Browser · computer", "Claude_Browser · browser_batch", "Bash npm run build -- --filter web-app --verbose", "생각 중"]
+        let summaries: [(String, SessionStatusSummary)] = [("요약 없음", .empty), ("요약", SessionStatusSummary(waiting: 1, done: 2))]
+
+        // 1) 메뉴바 안 알약: 제목이 들어가고, 빈 곳(여백 8pt 안쪽) 안에 있다
+        let inMenuBar = engine(.inMenuBar)
+        guard let gap = inMenuBar.menuBarGap else { return (1, ["추정 빈 곳 없음"]) }
+        for tool in tools {
+            for stat in [(0, 0), (12, 3)] {
+                for (summaryName, summary) in summaries {
+                    cases += 1
+                    let name = "메뉴바 안 · \(tool) · +\(stat.0) −\(stat.1) · \(summaryName)"
+                    let layout = inMenuBar.compactLayout(for: .session(metrics(tool: tool, stat: stat, summary: summary)))
+                    guard case let .pill(items) = layout.compact else {
+                        problems.append("\(name): 알약이 아님")
+                        continue
+                    }
+                    if !items.contains(.tool), !items.contains(.project) { problems.append("\(name): 제목 없이 상태 아이콘만") }
+                    if !summary.isEmpty, !items.contains(.summary) { problems.append("\(name): 요약 빠짐") }
+                    let rect = layout.panelRect
+                    if rect.minX < gap.start + IslandMetrics.menuBarMargin - 0.5 || rect.maxX > gap.end - IslandMetrics.menuBarMargin + 0.5 {
+                        problems.append(String(format: "%@: 알약 %.0f…%.0f 이 빈 곳 밖", name, rect.minX, rect.maxX))
+                    }
+                }
+            }
+        }
+
+        // 2) 짧은 제목은 화면 가운데 그대로 (가운데로 들어가면 옮기지 않는다)
+        cases += 1
+        let short = inMenuBar.compactLayout(for: .session(metrics(tool: "Read", project: "blog")))
+        if abs(short.panelRect.midX - inMenuBar.midX) > 0.5 {
+            problems.append(String(format: "짧은 제목: 알약 가운데 %.1f (화면 가운데 %.0f)", short.panelRect.midX, inMenuBar.midX))
+        }
+
+        // 3) 빈 곳이 좁아도 툴 제목 최소 폭이 들어가면 제목을 넣는다 (빈 곳 약 124pt)
+        cases += 1
+        let tight = engine(.inMenuBar, space: MenuBarSpace(
+            menuBarVisible: true, menuBarHeight: 24, appMenuEnd: 880, appMenuMeasured: true, statusStart: 1020, statusMeasured: true
+        ))
+        if case let .pill(items) = tight.compactLayout(for: .session(metrics(tool: "Claude_Browser · browser_batch"))).compact {
+            if !items.contains(.tool), !items.contains(.project) { problems.append("좁은 빈 곳: 제목 없이 상태 아이콘만") }
+        } else {
+            problems.append("좁은 빈 곳: 알약이 아님")
+        }
+
+        // 3-1) 빈 곳 폭을 80…200pt 로 훑기: 줄인 프로젝트명이라도 들어가면 상태 아이콘만 남기지 않는다.
+        //      요약이 없으면 툴 제목이 먼저이고, 툴 제목이 줄여도 안 들어갈 때만 프로젝트명. 제목을 넣었으면 알약 안에 들어간다
+        for tool in ["Claude_Browser · browser_batch", "Bash npm run build -- --filter web-app --verbose"] {
+            for stat in [(0, 0), (12, 3)] {
+                for (summaryName, summary) in summaries {
+                    cases += 1
+                    let sweptMetrics = metrics(tool: tool, project: "api-server", stat: stat, summary: summary)
+                    let base: CompactItems = summary.isEmpty ? [] : [.summary]
+                    for room in stride(from: CGFloat(80), through: 200, by: 1) {
+                        let swept = engine(.inMenuBar, space: MenuBarSpace(
+                            menuBarVisible: true, menuBarHeight: 24, appMenuEnd: 880, appMenuMeasured: true,
+                            statusStart: 880 + 2 * IslandMetrics.menuBarMargin + room, statusMeasured: true
+                        ))
+                        let name = "빈 곳 \(Int(room))pt · \(tool) · +\(stat.0) −\(stat.1) · \(summaryName)"
+                        let layout = swept.compactLayout(for: .session(sweptMetrics))
+                        guard case let .pill(items) = layout.compact else {
+                            problems.append("\(name): 알약이 아님")
+                            break
+                        }
+                        let width = layout.size.width
+                        let titled = items.contains(.project) || items.contains(.tool)
+                        func fits(_ candidate: CompactItems) -> Bool {
+                            IslandLayoutEngine.pillNeed(sweptMetrics, items: candidate, squeezed: true) <= width
+                        }
+                        if !titled, fits(base.union(.project)) {
+                            problems.append("\(name): 줄인 프로젝트명이 들어가는데 상태 아이콘만")
+                            break
+                        }
+                        if summary.isEmpty, !items.contains(.tool), fits([.tool]) {
+                            problems.append("\(name): 줄인 툴 제목이 들어가는데 뺌")
+                            break
+                        }
+                        if titled, !fits(items) {
+                            problems.append("\(name): 고른 제목이 알약(\(Int(width))pt)에 안 들어감")
+                            break
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4) 메뉴바 아래 알약도 같은 규칙
+        let below = engine(.belowMenuBar)
+        for tool in tools {
+            for (summaryName, summary) in summaries {
+                cases += 1
+                let layout = below.compactLayout(for: .session(metrics(tool: tool, stat: (12, 3), summary: summary)))
+                guard case let .pill(items) = layout.compact else {
+                    problems.append("메뉴바 아래 · \(tool) · \(summaryName): 알약이 아님")
+                    continue
+                }
+                if !items.contains(.tool) { problems.append("메뉴바 아래 · \(tool) · \(summaryName): 툴 제목 빠짐") }
+            }
+        }
+
+        // 5) 펼친 카드 목 알약: 빈 곳 안으로 민 알약을 그대로 이어받는다
+        cases += 1
+        let content = CompactContent.session(metrics(tool: "Claude_Browser · browser_batch"))
+        let compact = inMenuBar.compactPlacement(for: content)
+        var opened = inMenuBar
+        opened.previousPill = compact
+        if opened.cardPill(for: compact) != compact { problems.append("펼친 카드 목 알약이 접힌 알약과 다름") }
+        return (cases, problems)
+    }
+}
+
+// MARK: - 메뉴바 창 찾기
+
+/// 창 목록으로 화면마다 메뉴바 높이를 찾을 때, 위 가장자리 높이가 같은 옆 화면의 메뉴바 창을 가져오지 않는지
+@MainActor
+enum SnapshotMenuBarScanCheck {
+    static func run() -> (cases: Int, problems: [String]) {
+        var problems: [String] = []
+        var cases = 0
+        // 주 화면(노치) 위에 나란히 둔 1920×1080 외부 모니터 두 대 (Cocoa 전역)
+        let left = MenuBarScanner.Screen(id: 2, frame: CGRect(x: -188, y: 982, width: 1920, height: 1080), fallbackMenuBarHeight: 24)
+        let right = MenuBarScanner.Screen(id: 3, frame: CGRect(x: 1732, y: 982, width: 1920, height: 1080), fallbackMenuBarHeight: 24)
+        let builtIn = MenuBarScanner.Screen(id: 1, frame: CGRect(x: 0, y: 0, width: 1512, height: 982), fallbackMenuBarHeight: 33)
+        func menuBar(_ number: Int, on screen: MenuBarScanner.Screen, height: CGFloat) -> WindowSnapshot.Window {
+            WindowSnapshot.Window(
+                number: number, pid: 300, layer: WindowLevels.mainMenu,
+                frame: CGRect(x: screen.frame.minX, y: screen.frame.maxY - height, width: screen.frame.width, height: height),
+                alpha: 1, ownerName: "Window Server"
+            )
+        }
+        let screens = [builtIn, left, right]
+
+        // 오른쪽 화면에만 메뉴바 창 (왼쪽은 메뉴바가 숨음): 왼쪽 화면 높이는 모름
+        cases += 1
+        var result = MenuBarScanner.scan(WindowSnapshot(windows: [menuBar(1, on: right, height: 30)]), screens: screens, ownPID: 100)
+        if result[right.id]?.menuBarHeight != 30 { problems.append("오른쪽 화면 메뉴바 높이를 못 찾음") }
+        if let height = result[left.id]?.menuBarHeight { problems.append(String(format: "왼쪽 화면이 옆 화면 메뉴바(%.0f)를 가져옴", height)) }
+        if result[builtIn.id]?.menuBarHeight != nil { problems.append("주 화면이 외부 모니터 메뉴바를 가져옴") }
+
+        // 화면마다 제 메뉴바 창
+        cases += 1
+        result = MenuBarScanner.scan(
+            WindowSnapshot(windows: [menuBar(2, on: left, height: 24), menuBar(3, on: right, height: 30), menuBar(4, on: builtIn, height: 33)]),
+            screens: screens, ownPID: 100
+        )
+        if result[left.id]?.menuBarHeight != 24 || result[right.id]?.menuBarHeight != 30 || result[builtIn.id]?.menuBarHeight != 33 {
+            problems.append("화면마다 제 메뉴바 높이가 아님")
+        }
+        return (cases, problems)
+    }
+}

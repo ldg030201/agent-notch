@@ -124,6 +124,14 @@ struct SnapshotWorld {
     let clock: SnapshotClock
     let store: SessionStore
     private var toolSeq = 0
+    /// 프로젝트(세션 ID)별 훅 환경변수 (세션을 띄운 앱). 없으면 빈 환경
+    var hostEnvironment: [String: [String: String]] = [:]
+
+    /// Claude 데스크톱 앱에서 돌아가는 세션의 환경변수 (예시 값)
+    static let desktopEnvironment = [
+        "__CFBundleIdentifier": SessionHost.claudeDesktopBundleID,
+        "CLAUDE_CODE_ENTRYPOINT": "claude-desktop",
+    ]
 
     init() {
         let clock = SnapshotClock()
@@ -181,6 +189,14 @@ struct SnapshotWorld {
     /// api-server: 테스트 실행 중 (접힌 상태 · 펼침에 스피너)
     mutating func apiServerRunsTests() {
         start(Self.apiServer, "Bash", at: 614, input: ["command": "npm test", "description": "테스트 실행"])
+        clock.set(842)
+    }
+
+    /// api-server: MCP 브라우저 툴 실행 중 (제목이 긴 툴, 이번 턴 수정 없음)
+    mutating func apiServerUsesBrowser() {
+        let api = Self.apiServer
+        send(api, "UserPromptSubmit", at: 600, ["prompt": "로그인 화면이 제대로 뜨는지 브라우저로 확인해줘"])
+        start(api, "mcp__Claude_Browser__browser_batch", at: 614, input: ["actions": [["name": "navigate"], ["name": "computer"]]])
         clock.set(842)
     }
 
@@ -315,7 +331,7 @@ struct SnapshotWorld {
         store.ingest(HookEnvelope(
             event: event,
             sentAt: clock.now.timeIntervalSince1970,
-            env: [:],
+            env: hostEnvironment[project.id] ?? [:],
             expectsReply: NotchWire.replyEvents.contains(event),
             payload: .object(payload)
         ))
