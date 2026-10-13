@@ -97,7 +97,7 @@ public final class SessionStore {
 
         // 메인 답변이 끝난 뒤 서브에이전트(백그라운드 에이전트)가 쓰는 툴은 타임라인에만 쌓고 세션 단계 · 지금 활동은 그대로 둔다.
         // 그러지 않으면 백그라운드 툴 호출마다 끝난 세션이 "생각 중" 으로 바뀌었다가 다음 Stop 까지 그대로 남는다
-        let backgroundTool = agentID != nil && Self.settledPhases.contains(session.phase)
+        let backgroundTool = agentID != nil && Self.turnHasEnded(session)
             && (event == "PreToolUse" || event == "PostToolUse" || event == "PostToolUseFailure")
         let phaseBefore = session.phase
         let activityBefore = session.currentActivity
@@ -632,8 +632,16 @@ public final class SessionStore {
         return .failed(sessionID: session.id)
     }
 
-    /// 메인 답변이 끝나 쉬는 단계 (이때 오는 서브에이전트 툴 호출은 백그라운드 작업)
-    static let settledPhases: Set<SessionPhase> = [.completed, .idle, .failed]
+    /// 메인 답변이 끝난 걸 본 세션인지 (이때 오는 서브에이전트 툴 호출은 백그라운드 작업).
+    /// 완료 · 실패, 또는 턴을 본 뒤 유휴가 된 세션만. 앱을 새로 띄운 뒤 처음 보는 세션(유휴 · 턴 모름)은 아니다:
+    /// 그 세션의 서브에이전트 툴 호출은 메인이 서브에이전트를 기다리는 중일 수 있어 예전처럼 작업 중으로 보여준다
+    static func turnHasEnded(_ session: AgentSession) -> Bool {
+        switch session.phase {
+        case .completed, .failed: return true
+        case .idle: return session.turnStartedAt != nil
+        default: return false
+        }
+    }
 
     private func handleSubagentStart(_ session: inout AgentSession, payload: HookPayload, now: Date) {
         let agentID = payload.string("agent_id") ?? "unknown:\(UUID().uuidString)"

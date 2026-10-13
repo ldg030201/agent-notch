@@ -103,9 +103,11 @@ Claude Code (CLI · 데스크톱 앱)
     목록이 없으면(작업 목록을 못 읽었거나 payload 를 줄임) 그대로 둔다.
   - 훅 헬퍼는 `background_tasks` 항목마다 `type` · `status` 만 남기고(명령 · 설명은 보내지 않음) `session_crons` 는 뺀다.
     payload 를 4 · 5단계로 줄여도 이 작은 목록은 남긴다.
-  - 메인 답변이 끝난 뒤(`completed` · `idle` · `failed`) 서브에이전트(`agent_id` 있음)의 `PreToolUse` · `PostToolUse` ·
+  - 메인 답변이 끝난 걸 본 뒤(`completed` · `failed`, 또는 턴을 본 뒤의 `idle` — `SessionStore.turnHasEnded`)
+    서브에이전트(`agent_id` 있음)의 `PreToolUse` · `PostToolUse` ·
     `PostToolUseFailure` 는 타임라인에만 쌓고 세션 단계 · 지금 활동은 바꾸지 않는다 (예전엔 끝난 세션이 "생각 중" 으로 남았다).
     질문 · 권한처럼 사용자가 봐야 하는 단계로 바뀌는 건 그대로 반영한다.
+    앱을 새로 띄운 뒤 처음 보는 세션(턴 모름)은 서브에이전트 툴 호출이어도 작업 중으로 보여준다 (메인이 서브에이전트를 기다리는 중일 수 있음).
   - 이런 세션은 상태 문구를 "백그라운드 N개 작업 중" 으로 보여주고, 세션 상태 요약에서 진행 중(초록)으로 센다
     (`SessionStatusSummary.group(for: session)`).
   - 표시: 접힌 상태는 끝 요소(`+N −M` · 상태 문구) 뒤에 배지 "⧉ N"(0 이면 숨김, 폭은 `CompactMetrics.badge`).

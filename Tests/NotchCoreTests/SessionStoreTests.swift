@@ -327,6 +327,10 @@ import NotchShared
         store.ingest(hook("PreToolUse", #"{"agent_id":"bg1","tool_name":"AskUserQuestion","tool_use_id":"q1","tool_input":{"questions":[]}}"#))
         #expect(try #require(store.sessions["s1"]).phase == .waitingInput)
 
+        // 앱을 새로 띄운 뒤 처음 보는 세션: 서브에이전트 툴 호출이어도 작업 중으로 보여준다 (메인이 서브에이전트를 기다리는 중일 수 있음)
+        store.ingest(hook("PreToolUse", session: "s2", #"{"agent_id":"fg1","tool_name":"Grep","tool_use_id":"g1","tool_input":{"pattern":"x"}}"#))
+        #expect(try #require(store.sessions["s2"]).phase == .runningTool)
+
         // 메인 에이전트의 툴은 예전처럼 단계를 바꾼다
         store.ingest(hook("UserPromptSubmit", #"{"prompt":"다음"}"#))
         store.ingest(hook("PreToolUse", #"{"tool_name":"Read","tool_use_id":"r2","tool_input":{"file_path":"/Users/dev/projects/api-server/b.swift"}}"#))
