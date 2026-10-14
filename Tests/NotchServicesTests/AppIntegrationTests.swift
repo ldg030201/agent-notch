@@ -54,6 +54,87 @@ struct TerminalJumperTests {
         let context = TerminalContext(termProgram: "ghostty")
         #expect(TerminalJumper().bundleIdentifier(for: context) == "com.mitchellh.ghostty")
     }
+
+    @Test func iTermScriptHasTimeoutAndOnlyValidatedUUID() throws {
+        let uuid = "9F1C2B3A-1234-4ABC-9DEF-0123456789AB"
+        let script = try #require(TerminalJumper.iTermSelectScript(uuid))
+        // 멈춘 iTerm2 를 끝없이 기다리지 않는다
+        #expect(script.hasPrefix("with timeout of \(TerminalJumper.scriptTimeoutSeconds) seconds"))
+        #expect(script.contains("end timeout"))
+        #expect(script.contains("is \"\(uuid)\""))
+        #expect(TerminalJumper.iTermSelectScript("\" & (do shell script \"id\") & \"") == nil)
+    }
+
+    /// AppleScript 가 멈춰 있어도 `jump` 는 바로 돌아오고, 스크립트는 메인 밖에서 돈다
+    @MainActor
+    @Test func iTermSelectionRunsOffMainThread() async throws {
+        let uuid = "9F1C2B3A-1234-4ABC-9DEF-0123456789AB"
+        let gate = DispatchSemaphore(value: 0)
+        let ranOnMain = LockedValue<Bool?>(nil)
+        var activated: [String] = []
+        let jumper = TerminalJumper(
+            selectITermSession: { selected in
+                ranOnMain.set(pthread_main_np() != 0)
+                gate.wait()
+                return selected == uuid
+            },
+            isRunning: { $0 == TerminalJumper.iTermBundleID },
+            activate: { activated.append($0); return true }
+        )
+
+        #expect(jumper.jump(to: TerminalContext(termProgram: "iTerm.app", itermSessionID: "w0t1p0:\(uuid)")))
+        // 스크립트가 끝나기 전에는 아무것도 활성화하지 않는다
+        #expect(activated.isEmpty)
+        gate.signal()
+        #expect(await waitUntil { activated == [TerminalJumper.iTermBundleID] })
+        #expect(ranOnMain.get() == false)
+    }
+
+    @MainActor
+    @Test func iTermSelectionFailureFallsBackToApp() async throws {
+        let uuid = "9F1C2B3A-1234-4ABC-9DEF-0123456789AB"
+        var activated: [String] = []
+        let jumper = TerminalJumper(
+            selectITermSession: { _ in false },
+            isRunning: { _ in true },
+            activate: { activated.append($0); return true }
+        )
+        // TERM_PROGRAM 이 iTerm2 면 세션을 못 골라도 앱은 앞으로 가져온다
+        #expect(jumper.jump(to: TerminalContext(termProgram: "iTerm.app", itermSessionID: uuid)))
+        #expect(await waitUntil { activated == [TerminalJumper.iTermBundleID] })
+
+        // 어느 앱인지 모르면 세션을 못 골랐을 때 할 일이 없다
+        activated = []
+        #expect(jumper.jump(to: TerminalContext(itermSessionID: uuid)))
+        try await Task.sleep(nanoseconds: 300_000_000)
+        #expect(activated.isEmpty)
+
+        // iTerm2 가 아니면 AppleScript 없이 바로 그 앱을
+        #expect(jumper.jump(to: TerminalContext(termProgram: "ghostty", itermSessionID: uuid)))
+        #expect(activated == ["com.mitchellh.ghostty"])
+    }
+}
+
+/// 여러 스레드에서 쓰는 값 (테스트 기록용)
+private final class LockedValue<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Value
+
+    init(_ value: Value) {
+        self.value = value
+    }
+
+    func get() -> Value {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    func set(_ newValue: Value) {
+        lock.lock()
+        value = newValue
+        lock.unlock()
+    }
 }
 
 @MainActor
@@ -73,6 +154,18 @@ struct FrontmostAppMonitorTests {
 
 @Suite("FileOpener")
 struct FileOpenerTests {
+    /// 텍스트로 열 파일은 기본 앱이 코드 편집기일 때만 그 앱으로 (실행기 · 설치기는 아님)
+    @Test func onlyKnownEditorsOpenTextFiles() {
+        for editor in ["com.microsoft.VSCode", "com.todesktop.230313mzl4w4u92", "com.jetbrains.intellij",
+                       "com.jetbrains.goland", "dev.zed.Zed", "com.apple.dt.Xcode", "com.apple.TextEdit"] {
+            #expect(FileOpener.isKnownEditor(bundleIdentifier: editor), "\(editor)")
+        }
+        for runner in ["com.apple.Terminal", "com.googlecode.iterm2", "com.apple.ScriptEditor2", "com.apple.shortcuts",
+                       "com.apple.installer", "org.python.PythonLauncher", "com.apple.ScreenSharing", "com.jetbrainsx.fake"] {
+            #expect(!FileOpener.isKnownEditor(bundleIdentifier: runner), "\(runner)")
+        }
+    }
+
     @Test func classifiesFilesBeforeOpening() throws {
         let temp = try TempDirectory()
         defer { temp.remove() }
@@ -87,6 +180,10 @@ struct FileOpenerTests {
 
         #expect(FileOpener.disposition(for: try make("notes.md")) == .open)
         #expect(FileOpener.disposition(for: try make("session.swift")) == .open)
+        #expect(FileOpener.disposition(for: try make("Info.term")) == .reveal)
+        #expect(FileOpener.disposition(for: try make("evil.mobileconfig")) == .reveal)
+        #expect(FileOpener.disposition(for: try make("page.html")) == .openAsText)
+        #expect(FileOpener.disposition(for: try make("unknown.xyz")) == .openAsText)
         #expect(FileOpener.disposition(for: try make("build.py")) == .openAsText)
         #expect(FileOpener.disposition(for: try make("deploy.sh")) == .openAsText)
         #expect(FileOpener.disposition(for: try make("run.command")) == .reveal)
@@ -95,6 +192,59 @@ struct FileOpenerTests {
         #expect(FileOpener.disposition(for: temp.url.path) == .reveal)
         #expect(FileOpener.disposition(for: temp.url.appendingPathComponent("missing.txt").path) == .unavailable)
         #expect(FileOpener.disposition(for: "relative/path.txt") == .unavailable)
+    }
+
+    /// 형식이 `public.data` 뿐이거나 XML 을 따르지만 열면 실행 · 설치 · 접속하는 형식은 보여주기만
+    @Test func revealsTypesThatRunOrInstallWhenOpened() {
+        let risky = [
+            "term", "terminal", "command", "tool", "scpt", "applescript", "workflow", "wflow", "shortcut",
+            "configprofile", "provisionprofile", "mobileprovision", "mobileconfig",
+            "vncloc", "afploc", "ftploc", "smbloc", "webloc", "inetloc", "fileloc", "url", "webbookmark",
+            "jnlp", "jar", "pkg", "dmg", "prefpane",
+            // 대문자 확장자도 같다
+            "TERM", "ConfigProfile",
+        ]
+        for ext in risky {
+            #expect(FileOpener.classify(extension: ext) == .reveal, "\(ext)")
+        }
+    }
+
+    /// 허용 목록: 기본 앱으로 열어도 되는 형식
+    @Test func opensSafeTypesWithDefaultApp() {
+        for ext in ["swift", "md", "markdown", "txt", "json", "yaml", "yml", "xml", "plist", "csv", "c", "h", "java",
+                    "png", "jpg", "gif", "heic", "pdf", "mp4", "mov", "mp3"] {
+            #expect(FileOpener.classify(extension: ext) == .open, "\(ext)")
+        }
+    }
+
+    /// 그 밖은 텍스트 편집기로: 스크립트, 브라우저가 스크립트를 돌리는 형식, 시스템이 다르게 아는 소스, 모르는 형식
+    @Test func opensEverythingElseAsText() {
+        let asText = [
+            // 스크립트 (`.js` 는 형식이 실행 파일로도 등록돼 있지만 텍스트로 연다)
+            "sh", "py", "rb", "js", "mjs", "ps1",
+            // HTML · SVG · 웹 아카이브는 기본 앱(브라우저)이 안의 스크립트를 돌린다
+            "html", "htm", "xhtml", "svg", "webarchive",
+            // `.ts` 는 시스템이 MPEG-2 동영상으로 안다
+            "ts", "mts", "cts",
+            // 모르는 형식 · 확장자 없음 · 따로 열리는 앱이 있는 텍스트 형식
+            "xyz", "tsx", "toml", "", "ics", "vcf", "zip",
+        ]
+        for ext in asText {
+            #expect(FileOpener.classify(extension: ext) == .openAsText, "\(ext)")
+        }
+    }
+
+    @Test func xmlSubtypesAreNotTrustedAsPlainXML() throws {
+        // 구성 프로필 · JNLP 는 XML 을 따르지만 기본 앱이 설치 · 실행한다. 정확히 XML 일 때만 기본 앱으로
+        let profile = try #require(UTType(filenameExtension: "configprofile"))
+        #expect(profile.conforms(to: .xml))
+        #expect(!FileOpener.isSafeToOpenWithDefaultApp(profile))
+        let jnlp = try #require(UTType(filenameExtension: "jnlp"))
+        #expect(!FileOpener.isSafeToOpenWithDefaultApp(jnlp))
+        #expect(FileOpener.isSafeToOpenWithDefaultApp(.xml))
+        // 단축어 파일은 속성 목록을 따른다
+        let shortcut = try #require(UTType(filenameExtension: "wflow"))
+        #expect(!FileOpener.isSafeToOpenWithDefaultApp(shortcut))
     }
 
     @Test func symlinksAreJudgedByRealTarget() throws {

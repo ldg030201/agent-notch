@@ -55,8 +55,9 @@ final class SettingsModel {
     var selectedSection: SettingsSection = .general
     /// 업데이트 상태 (없으면 버전 탭 숨김)
     var updateProvider: UpdateProvider?
-    /// "나중에" · "닫기" 로 내린 업그레이드 단계 (단계가 바뀌면 다시 보인다)
-    var dismissedUpgradePhase: UpgradePhase?
+    /// 다 받은 뒤 "나중에" 로 진행 창을 내렸는지 (버전 탭의 "다시 띄워서 마치기" 로 마저 끝낸다).
+    /// 실패 화면 "닫기" 는 여기 적지 않고 업그레이드 단계를 처음으로 돌린다 (`UpdateProvider.dismissUpgrade`)
+    var deferredUpgradeReady = false
     /// 교체 중 강제 종료 확인 단계
     var confirmingForceQuit = false
 
@@ -550,7 +551,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     func show(section: SettingsSection?) {
         model.refresh()
         if let section { model.selectedSection = section }
-        model.dismissedUpgradePhase = nil
+        model.deferredUpgradeReady = false
         model.confirmingForceQuit = false
         let window = self.window ?? makeWindow()
         self.window = window

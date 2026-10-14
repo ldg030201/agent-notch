@@ -30,7 +30,8 @@ final class AppUpdateProvider: UpdateProvider {
             feedURL: Changelog.feedURL,
             isTestBuild: AppInfo.isTestBuild
         )
-        self.init(preferences: preferences, checker: checker, upgrader: Upgrader(isTestBuild: AppInfo.isTestBuild))
+        let upgrader = Upgrader(isTestBuild: AppInfo.isTestBuild, currentVersion: AppInfo.version)
+        self.init(preferences: preferences, checker: checker, upgrader: upgrader)
     }
 
     // MARK: - 시작 · 멈춤
@@ -103,12 +104,17 @@ final class AppUpdateProvider: UpdateProvider {
 
     var upgradeLog: String { upgrader.log }
 
+    /// 받은 번들이 새 버전인지 확인할 때 안내에 쓰도록, 새 버전 확인에서 본 최신 버전을 넘긴다
     func startUpgrade() {
-        upgrader.start()
+        upgrader.start(latestVersion: checker.latestVersion)
     }
 
     func cancelUpgrade() {
         upgrader.cancel()
+    }
+
+    func dismissUpgrade() {
+        upgrader.dismiss()
     }
 
     func relaunchAfterUpgrade() {

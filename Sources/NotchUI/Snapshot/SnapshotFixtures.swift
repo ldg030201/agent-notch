@@ -35,10 +35,15 @@ final class SnapshotClock {
     }
 }
 
-/// 아무것도 하지 않는 동작 (렌더링 전용)
+/// 아무것도 하지 않는 동작 (렌더링 전용). 권한 결정만 검사용으로 받아 볼 수 있다
 @MainActor
 final class SnapshotActions: IslandActions {
-    func resolvePermission(id: UUID, decision: PermissionDecision) {}
+    /// 전달된 권한 결정 (승인 대기 검사 `SnapshotDecisionCheck`)
+    var onResolvePermission: ((UUID, PermissionDecision) -> Void)?
+
+    func resolvePermission(id: UUID, decision: PermissionDecision) {
+        onResolvePermission?(id, decision)
+    }
     func handOff(requestID: UUID) {}
     func jumpToTerminal(sessionID: String) {}
     func openFile(path: String, line: Int?) {}
@@ -103,6 +108,7 @@ final class SnapshotUpdateProvider: UpdateProvider {
     func checkNow() {}
     func startUpgrade() {}
     func cancelUpgrade() {}
+    func dismissUpgrade() {}
     func relaunchAfterUpgrade() {}
     func forceQuit() {}
 }

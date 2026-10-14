@@ -3,7 +3,7 @@ import Foundation
 /// 설정 "버전" 탭과 펼친 아일랜드 헤더가 쓰는 업데이트 상태와 동작.
 /// App 이 구현해 `NotchUIController.updateProvider` 로 주입한다 (구현 객체는 `@Observable` 이어야 화면이 갱신된다).
 ///
-/// NOTE: 공개 시그니처는 App 과 NotchUI 가 함께 의존하는 계약이므로 변경하지 않는다.
+/// NOTE: 공개 시그니처는 App 과 NotchUI 가 함께 의존하는 계약이다. 바꿀 때는 App 구현(`AppUpdateProvider`)과 스냅숏 대역(`SnapshotUpdateProvider`)을 함께 고친다.
 @MainActor
 public protocol UpdateProvider: AnyObject {
     /// 지금 실행 중인 버전 (예: "0.1.0")
@@ -28,6 +28,8 @@ public protocol UpdateProvider: AnyObject {
     var upgradeLog: String { get }
     func startUpgrade()
     func cancelUpgrade()
+    /// 실패 화면 "닫기": 단계를 처음(`.idle`)으로 돌린다. 다음 실행이 같은 이유로 실패해도 다시 보인다
+    func dismissUpgrade()
     /// 업그레이드가 끝난 뒤 앱을 교체하고 다시 띄운다
     func relaunchAfterUpgrade()
     /// 교체가 멈췄을 때 강제 종료

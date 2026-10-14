@@ -377,7 +377,7 @@ public final class HookInstaller {
             return SettingsFile(data: data, value: .object([:]), permissions: permissions)
         }
         do {
-            return SettingsFile(data: data, value: try JSONValue.parse(data), permissions: permissions)
+            return SettingsFile(data: data, value: try JSONValue.parse(data, repairingLoneSurrogates: false), permissions: permissions)
         } catch {
             throw HookInstallerError.invalidSettings("JSON 해석 실패")
         }

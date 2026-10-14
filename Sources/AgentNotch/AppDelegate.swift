@@ -82,8 +82,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
         if options.demo {
             demo.start()
         } else {
-            // 아일랜드가 먼저 자리잡은 뒤에 묻는다
-            DispatchQueue.main.async { [weak self] in self?.offerHookInstallIfNeeded() }
+            // 아일랜드가 먼저 자리잡은 뒤에 묻는다 (모달이라 GCD 메인 큐가 아닌 런루프에서 띄운다: `presentModal`)
+            Self.presentModal { [weak self] in self?.offerHookInstallIfNeeded() }
         }
     }
 
@@ -312,6 +312,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
 
     // MARK: - 알림 창
 
+    /// 모달 창(`runModal`)을 띄울 코드를 런루프 블록으로 미뤄 실행한다.
+    ///
+    /// `DispatchQueue.main.async` · `Task { @MainActor in }` 안에서 `runModal()` 을 부르면, 모달 런루프가 도는 동안
+    /// GCD 메인 큐가 비워지지 않는다(이미 그 큐의 블록 안이라). 그러면 소켓 서버의 `DispatchQueue.main.async` 전달 ·
+    /// `@MainActor` Task · 종료 신호(SIGTERM) 처리가 창이 닫힐 때까지 멈추고, 권한 훅은 응답 없이 시간 제한까지 기다린다.
+    /// 런루프 블록(`RunLoop.perform`)이나 메뉴 동작 · `applicationDidFinishLaunching` 에서 띄운 모달은 메인 큐를 계속 비운다.
+    static func presentModal(_ body: @escaping @MainActor () -> Void) {
+        RunLoop.main.perform {
+            MainActor.assumeIsolated { body() }
+        }
+    }
+
+    /// 모달 경고창. GCD 메인 큐 블록 · `@MainActor` Task 에서 바로 부르지 말 것 (`presentModal` 참고)
     private func showAlert(title: String, message: String) {
         let alert = NSAlert()
         alert.messageText = title

@@ -66,6 +66,7 @@ struct VersionSettingsView: View {
                 .buttonStyle(SettingsButtonStyle(prominent: true))
             } else if provider.hasUpdate {
                 Button("업데이트") {
+                    model.deferredUpgradeReady = false
                     provider.startUpgrade()
                 }
                 .buttonStyle(SettingsButtonStyle(prominent: true))
@@ -206,7 +207,7 @@ struct UpgradeOverlay: View {
 
     var body: some View {
         let phase = provider.upgradePhase
-        if phase != .idle, model.dismissedUpgradePhase != phase {
+        if Self.isVisible(phase, deferredReady: model.deferredUpgradeReady) {
             let palette = SettingsPalette.resolve(colorScheme)
             ZStack {
                 palette.overlayDim
@@ -221,6 +222,15 @@ struct UpgradeOverlay: View {
                     .shadow(color: .black.opacity(0.2), radius: 18, y: 6)
             }
             .accessibilityAddTraits(.isModal)
+        }
+    }
+
+    /// 처음 단계면 숨기고, 다 받은 단계는 "나중에" 를 눌렀으면 숨긴다 (교체 · 실패로 넘어가면 다시 보인다)
+    static func isVisible(_ phase: UpgradePhase, deferredReady: Bool) -> Bool {
+        switch phase {
+        case .idle: return false
+        case .ready: return !deferredReady
+        case .running, .swapping, .failed: return true
         }
     }
 
@@ -251,7 +261,7 @@ struct UpgradeOverlay: View {
                     .foregroundStyle(.secondary)
                 HStack {
                     Spacer()
-                    Button("나중에") { model.dismissedUpgradePhase = phase }
+                    Button("나중에") { model.deferredUpgradeReady = true }
                         .buttonStyle(SettingsButtonStyle())
                     Button("지금 다시 띄우기") { provider.relaunchAfterUpgrade() }
                         .buttonStyle(SettingsButtonStyle(prominent: true))
@@ -296,8 +306,12 @@ struct UpgradeOverlay: View {
                 if !provider.upgradeLog.isEmpty { log(palette) }
                 HStack {
                     Spacer()
-                    Button("닫기") { model.dismissedUpgradePhase = phase }
-                        .buttonStyle(SettingsButtonStyle())
+                    Button("닫기") {
+                        // 단계를 처음으로 돌려야 다음 실행이 같은 이유로 실패해도 다시 보인다
+                        model.deferredUpgradeReady = false
+                        provider.dismissUpgrade()
+                    }
+                    .buttonStyle(SettingsButtonStyle())
                 }
 
             case .idle:

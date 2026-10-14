@@ -140,15 +140,16 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     // MARK: - 표시 문자열
 
+    /// 쉬는 중이어도 백그라운드 작업이 돌면 아일랜드와 같이 "백그라운드 N개 작업 중" (`AgentSession.backgroundStatusText`)
     static func statusText(for session: AgentSession) -> String {
         switch session.phase {
-        case .idle: return "대기 중"
+        case .idle: return session.backgroundStatusText ?? "대기 중"
         case .thinking: return "생각 중"
         case .runningTool: return session.currentActivity?.title ?? "작업 중"
         case .waitingPermission: return "승인 대기"
         case .waitingInput: return "입력 대기"
         case .compacting: return "압축 중"
-        case .completed: return "완료"
+        case .completed: return session.backgroundStatusText ?? "완료"
         case .failed: return "실패"
         case .ended: return "종료"
         }
