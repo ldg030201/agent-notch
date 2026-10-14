@@ -47,9 +47,13 @@ public final class SessionStore {
     @ObservationIgnored private var phaseBeforeCompact: [String: SessionPhase] = [:]
     /// Claude 앱 확인 카드를 띄울 수 있어 지켜보는 실행 중인 툴 (세션 ID → tool_use_id → 상태)
     @ObservationIgnored private var consentWatches: [String: [String: ConsentWatch]] = [:]
-    /// 세션별로 시작을 본(SubagentStart) 서브에이전트 `agent_id`. 턴 끝 목록에서만 아는 작업은 "task:<id>".
-    /// `activeSubagents` 는 이 집합의 크기다
+    /// 세션별로 도는 것을 본 서브에이전트 `agent_id` (SubagentStart, 시작을 놓쳤으면 그 서브에이전트의 다른 이벤트).
+    /// 턴 끝 목록에서만 아는 작업은 "task:<id>". `activeSubagents` 는 이 집합의 크기다
     @ObservationIgnored private var runningSubagents: [String: Set<String>] = [:]
+    /// 훅 대기 요청 없이 세션 앱(터미널 · Claude 앱) 다이얼로그를 기다리는 승인 · 입력 대기 (세션 ID → 대기 목록).
+    /// 노치에서 넘긴 · 시간이 지난 요청, permission_prompt 알림, 노치에서 답하지 못하는 질문 등.
+    /// 누가(어느 에이전트의 어느 호출이) 기다리는지 기억해서 병렬로 도는 다른 에이전트의 툴 진행으로 대기가 지워지지 않게 한다
+    @ObservationIgnored private var terminalWaits: [String: [TerminalWait]] = [:]
     @ObservationIgnored private var signalSeq = 0
 
     private static let logger = Logger(subsystem: "com.ldg.agent-notch", category: "SessionStore")
@@ -90,15 +94,20 @@ public final class SessionStore {
 
         // 다른 경로(터미널)에서 이미 답한 권한 요청 정리
         let released = dropStalePendings(event: event, sessionID: sessionID, agentID: agentID, payload: payload)
+        // 끝난 세션 앱 다이얼로그 대기 정리 (기다리던 에이전트가 움직였거나 턴 · 프롬프트가 바뀜)
+        let releasedWaits = releaseTerminalWaits(event: event, sessionID: sessionID, agentID: agentID, payload: payload)
 
         let isNew = sessions[sessionID] == nil
         var session = sessions[sessionID] ?? makeSession(id: sessionID, payload: payload, now: now)
         applyCommonFields(&session, payload: payload, environment: envelope.env, now: now)
+        // 시작을 못 본 서브에이전트(앱을 새로 띄움 등)도 이벤트가 오면 도는 중으로 센다.
+        // SubagentStop 은 빼고: Claude 앱이 턴 끝마다 시작 없이 보내는 종료는 무시해야 한다
+        if let agentID, event != "SubagentStart", event != "SubagentStop" {
+            noteRunningSubagent(&session, agentID: agentID)
+        }
+        // 메인 에이전트가 툴을 쓰면 턴이 진행 중이다 (Stop 훅이 막아 이어진 턴, 되살린 뒤 놓친 프롬프트 등)
+        if agentID == nil, Self.toolEvents.contains(event) { session.mainTurnEnded = false }
 
-        // 메인 답변이 끝난 뒤 서브에이전트(백그라운드 에이전트)가 쓰는 툴은 타임라인에만 쌓고 세션 단계 · 지금 활동은 그대로 둔다.
-        // 그러지 않으면 백그라운드 툴 호출마다 끝난 세션이 "생각 중" 으로 바뀌었다가 다음 Stop 까지 그대로 남는다
-        let backgroundTool = agentID != nil && Self.turnHasEnded(session)
-            && (event == "PreToolUse" || event == "PostToolUse" || event == "PostToolUseFailure")
         let phaseBefore = session.phase
         let activityBefore = session.currentActivity
 
@@ -110,20 +119,24 @@ public final class SessionStore {
         case "UserPromptSubmit":
             handleUserPromptSubmit(&session, payload: payload, now: now)
         case "PreToolUse":
-            signal = handlePreToolUse(&session, payload: payload, now: now)
+            signal = handlePreToolUse(&session, payload: payload, agentID: agentID, now: now)
             // 헬퍼가 답을 기다리는 질문 · 계획 승인이면 노치에서 답하도록 대기열에 넣는다 (예전 설정의 fire-and-forget 이면 입력 대기 카드만)
             if envelope.expectsReply {
                 requestID = queueInteraction(&session, payload: payload, agentID: agentID, now: now)?.id
             }
+            // 노치에서 답하지 않는 질문 · 계획 승인(예전 훅 설정 · 줄인 payload · 답할 수 없는 모양)은 세션 앱 다이얼로그에서 답한다
+            if requestID == nil, let toolName = payload.string("tool_name"), Self.userInteractionTools.contains(toolName) {
+                addTerminalWait(sessionID, agentID: agentID, toolUseID: payload.string("tool_use_id"), phase: .waitingInput)
+            }
         case "PostToolUse":
-            signal = handlePostToolUse(&session, payload: payload, now: now)
+            signal = handlePostToolUse(&session, payload: payload, agentID: agentID, now: now)
         case "PostToolUseFailure":
-            handlePostToolUseFailure(&session, payload: payload, now: now)
+            handlePostToolUseFailure(&session, payload: payload, agentID: agentID, now: now)
         case "PermissionRequest":
             if let toolName = payload.string("tool_name"), Self.userInteractionTools.contains(toolName) {
                 // 답 · 계획 승인은 Claude Code 다이얼로그에서만 할 수 있다 (updatedInput 없는 allow 는 무시됨).
                 // 대기열에 넣지 않고 nil → 훅에 바로 "결정 없음" 응답, 카드는 입력 대기로 보여준다.
-                signal = handleUserInteractionRequest(&session, toolName: toolName, payload: payload)
+                signal = handleUserInteractionRequest(&session, toolName: toolName, payload: payload, agentID: agentID)
             } else {
                 let info = handlePermissionRequest(&session, payload: payload, agentID: agentID, now: now)
                 requestID = info.id
@@ -132,7 +145,7 @@ public final class SessionStore {
                 restartConsentClocks(sessionID, at: now)
             }
         case "Notification":
-            signal = handleNotification(&session, payload: payload, now: now)
+            signal = handleNotification(&session, payload: payload, agentID: agentID, now: now)
         case "MessageDisplay":
             handleMessageDisplay(&session, payload: payload)
         case "Stop":
@@ -151,10 +164,21 @@ public final class SessionStore {
             // 알 수 없는 이벤트: 공통 필드(lastEventAt 등)만 갱신
             break
         }
-        // 질문 · 권한처럼 사용자가 봐야 하는 단계로 바뀐 경우는 그대로 둔다
-        if backgroundTool, session.phase == .runningTool || session.phase == .thinking {
-            session.phase = phaseBefore
-            session.currentActivity = activityBefore
+        // 새 입력 요청이 왔는지 (넘긴 질문의 카드 억제를 풀지 정할 때 쓴다. 승인 알림은 새 입력 요청이 아니다)
+        var asksAgain = false
+        if case .needsInput? = signal, session.phase == .waitingInput { asksAgain = true }
+
+        // 기다리던 서브에이전트가 끝나 그 대기가 풀렸으면 대기에서 나온다 (남은 대기는 아래에서 다시 표시)
+        if event == "SubagentStop", !released.isEmpty || releasedWaits,
+           session.phase == .waitingPermission || session.phase == .waitingInput {
+            settleAfterTool(&session)
+        }
+        // 메인 답변이 끝난 뒤의 서브에이전트(백그라운드 에이전트) 이벤트는 타임라인에만 쌓고 세션은 끝난 단계로 둔다.
+        // 그러지 않으면 백그라운드 툴 호출마다 끝난 세션이 "생각 중" 으로 바뀌었다가 다음 Stop 까지 그대로 남는다.
+        // 백그라운드 서브에이전트의 질문 · 승인이 풀린 경우도 같다 (다시 작업 중이 아니라 끝난 단계로)
+        if session.mainTurnEnded, Self.isTurnWork(session.phase) {
+            session.phase = Self.isSettled(phaseBefore) ? phaseBefore : Self.settledPhase(session)
+            if agentID != nil { session.currentActivity = Self.stillRunning(activityBefore, in: session) }
         }
 
         // 끝난 툴은 지켜보기에서 빼고, 이미 확인 대기로 알린 툴이 아직 실행 중이면 입력 대기 유지 (새 신호는 checkStalledTools 에서만).
@@ -164,15 +188,13 @@ public final class SessionStore {
         pruneConsentWatches(session)
         _ = applyConsentWait(&session, now: now, allowSignal: false)
 
-        // 다른 에이전트(서브에이전트)의 권한 요청 · 질문이 아직 남아 있으면 승인 · 입력 대기로 표시
-        if let waiting = pendingPhase(sessionID), session.phase == .thinking || session.phase == .runningTool {
-            session.phase = waiting
-        }
-        // 넘긴 다이얼로그가 끝났거나(입력 대기가 아님) 새 입력 요청이 왔으면 다시 카드로 알린다
+        // 다른 에이전트(서브에이전트)의 권한 요청 · 질문이나 세션 앱 다이얼로그가 아직 남아 있으면 승인 · 입력 대기로 표시
+        applyHeldPhase(&session)
+        // 넘긴 다이얼로그가 끝났거나 새 입력 요청이 왔으면 다시 카드로 알린다.
+        // 다른 에이전트의 툴 진행 · 권한 요청으로는 풀지 않는다 (넘긴 질문의 대기가 남아 있는 동안)
         if handedOffInputs[sessionID] != nil {
-            var asksAgain = false
-            if case .needsInput? = signal { asksAgain = true }
-            if session.phase != .waitingInput || asksAgain { handedOffInputs[sessionID] = nil }
+            let stillWaiting = session.phase == .waitingInput || holdsTerminalWait(sessionID, phase: .waitingInput)
+            if !stillWaiting || asksAgain { handedOffInputs[sessionID] = nil }
         }
         trimActivities(&session)
         sessions[sessionID] = session
@@ -197,9 +219,7 @@ public final class SessionStore {
                 projectName: TextUtils.projectName(forCwd: item.cwd),
                 gitBranch: item.gitBranch ?? Self.lookupBranch(cwd: item.cwd, transcriptPath: nil),
                 startedAt: item.lastEventAt,
-                lastEventAt: item.lastEventAt,
-                // 턴을 본 세션으로 둔다 (끝난 세션이면 백그라운드 서브에이전트 규칙이 적용되게)
-                turnStartedAt: item.lastEventAt
+                lastEventAt: item.lastEventAt
             )
             session.terminal = TerminalContext(entrypoint: item.entrypoint)
             switch item.state {
@@ -218,11 +238,23 @@ public final class SessionStore {
                 )
                 appendActivity(&session, activity)
                 session.currentActivity = activity
-                session.phase = Self.userInteractionTools.contains(name) ? .waitingInput : .runningTool
+                session.turnStartedAt = item.lastEventAt
+                if Self.userInteractionTools.contains(name) {
+                    // 세션 앱 다이얼로그에서 답하는 질문 (기록은 메인 대화 줄만 본다)
+                    session.phase = .waitingInput
+                    addTerminalWait(item.id, agentID: nil, toolUseID: activity.id, phase: .waitingInput)
+                } else {
+                    session.phase = .runningTool
+                }
             case .thinking:
+                session.turnStartedAt = item.lastEventAt
                 session.phase = .thinking
             case .finished:
+                // 메인 턴이 끝난 세션 (이후 서브에이전트 이벤트는 백그라운드 작업). 턴이 언제 시작했는지는 모르므로
+                // 소요 시간을 지어내지 않고(`turnStartedAt` 없음) 끝난 시각만 기록의 마지막 시각으로 둔다
                 session.phase = .completed
+                session.mainTurnEnded = true
+                session.turn.endedAt = item.lastEventAt
             }
             sessions[item.id] = session
             count += 1
@@ -241,7 +273,7 @@ public final class SessionStore {
         guard let index = pendingPermissions.firstIndex(where: { $0.id == id }) else { return }
         let info = pendingPermissions.remove(at: index)
         let decision = PermissionReplyBuilder.effectiveDecision(for: info, decision: decision)
-        pendingAgentIDs[id] = nil
+        let agentID = pendingAgentIDs.removeValue(forKey: id)
         // 거부하면 툴이 실행되지 않아 PostToolUse 가 오지 않을 수 있고, 터미널로 넘기면 결과를 모른다 → 그 호출은 지켜보지 않는다.
         // 허용이면 승인 대기 동안 툴이 실행되지 않았으니 앱 확인 카드 지연은 지금부터 잰다
         switch decision {
@@ -252,17 +284,25 @@ public final class SessionStore {
 
         // 권한 요청은 승인 대기, 질문 · 계획 승인은 입력 대기에서 풀린다
         let waiting: SessionPhase = info.isInteraction ? .waitingInput : .waitingPermission
-        if var session = sessions[info.sessionID], session.phase == waiting, !hasPending(info.sessionID) {
+        if var session = sessions[info.sessionID] {
+            let leaves = session.phase == waiting && !hasPending(info.sessionID)
             switch decision {
             case .allow, .allowAlways, .answer:
-                session.phase = .runningTool
+                if leaves { session.phase = .runningTool }
             case .deny:
-                session.phase = .thinking
+                if leaves { session.phase = .thinking }
             case .passthrough:
-                // 터미널(세션 앱)에서 직접 답해야 하므로 대기 유지
-                break
+                // 세션 앱(터미널 · Claude 앱)에서 직접 답해야 하므로 대기 유지.
+                // 다른 에이전트의 툴 진행으로 지워지지 않게 누가(어느 호출이) 기다리는지 기억한다
+                let toolUseID = info.toolUseID
+                    ?? Self.waitingToolUseID(in: session, agentID: agentID, toolName: info.toolName)
+                addTerminalWait(info.sessionID, agentID: agentID, toolUseID: toolUseID, phase: waiting)
             }
-            sessions[info.sessionID] = session
+            // 메인 답변이 끝난 뒤(백그라운드 서브에이전트의 질문 · 승인)면 다시 작업 중이 되지 않고 끝난 단계로 돌아간다.
+            // 다른 대기가 남아 있으면 그 대기로
+            if session.mainTurnEnded, Self.isTurnWork(session.phase) { session.phase = Self.settledPhase(session) }
+            applyHeldPhase(&session)
+            if session != sessions[info.sessionID] { sessions[info.sessionID] = session }
         }
         recomputeFocus()
         onPermissionResolved?(info, decision)
@@ -283,31 +323,71 @@ public final class SessionStore {
     }
 
     /// 훅 연결이 응답 전에 끊김 → 대기열에서만 제거 (`onPermissionResolved` 호출 안 함).
-    /// 질문 · 계획 승인이면 Claude Code 가 기다리던 훅을 끊은 것(Esc · 중단 · 종료)이라 다이얼로그도 뜨지 않는다 →
-    /// 입력 대기를 풀고(쉬는 중) 그 툴을 실패로 닫는다 (카드도, 이어지는 입력 대기 카드도 남지 않게)
+    /// 앱의 기다리는 시간(최대 585초)이 훅 시간 제한(600초)보다 먼저 끝나므로 끊김은 시간 초과가 아니다:
+    /// - 질문 · 계획 승인: Claude Code 가 기다리던 훅을 끊은 것(Esc · 중단 · 종료)이라 다이얼로그도 뜨지 않는다 →
+    ///   입력 대기를 풀고(쉬는 중) 그 툴을 실패로 닫는다 (카드도, 이어지는 입력 대기 카드도 남지 않게)
+    /// - 권한 요청: Esc · 중단이거나 Claude 앱 자체 다이얼로그에서 답했다 → 승인 대기를 푼다 (`leavePermissionWait`).
+    ///   그대로 두면 idle_prompt 가 올 때까지 "터미널에서 · Claude 앱에서 승인 필요" 카드가 남는다
+    /// 다른 요청 · 세션 앱 다이얼로그 대기가 남아 있으면 그 대기로 보여준다
     public func cancelPermission(id: UUID) {
         guard let info = takePending(id) else { return }
-        if info.isInteraction, var session = sessions[info.sessionID], session.phase == .waitingInput, !hasPending(info.sessionID) {
-            let now = clock()
-            if let toolUseID = info.toolUseID {
-                for index in session.activities.indices
-                where session.activities[index].id == toolUseID && session.activities[index].status == .running {
-                    session.activities[index].status = .failed
-                    session.activities[index].endedAt = now
+        if var session = sessions[info.sessionID], !hasPending(info.sessionID) {
+            // 다른 에이전트의 세션 앱 다이얼로그가 아직 기다리면 턴이 끝났다고 보지 않는다 (그 대기로 보여준다)
+            let othersWaiting = heldPhase(info.sessionID) != nil
+            if info.isInteraction, session.phase == .waitingInput {
+                let now = clock()
+                if let toolUseID = info.toolUseID {
+                    for index in session.activities.indices
+                    where session.activities[index].id == toolUseID && session.activities[index].status == .running {
+                        session.activities[index].status = .failed
+                        session.activities[index].endedAt = now
+                    }
+                    if session.currentActivity?.id == toolUseID { session.currentActivity = nil }
                 }
-                if session.currentActivity?.id == toolUseID { session.currentActivity = nil }
+                session.phase = .idle
+                if !othersWaiting { session.mainTurnEnded = true }
+            } else if !info.isInteraction, session.phase == .waitingPermission, !othersWaiting {
+                leavePermissionWait(&session)
             }
-            session.phase = .idle
-            sessions[info.sessionID] = session
+            applyHeldPhase(&session)
+            if session != sessions[info.sessionID] { sessions[info.sessionID] = session }
         }
         recomputeFocus()
     }
 
+    /// 훅 연결이 끊긴 권한 요청의 승인 대기에서 나온다 (`cancelPermission`). 끊긴 이유는 알 수 없어 세션 앱으로 추정한다:
+    /// - 메인 답변이 이미 끝났으면(백그라운드 서브에이전트의 요청) 끝난 단계로
+    /// - Claude 앱 세션: 앱 자체 다이얼로그에서 답했을 가능성이 크다 → 허용이면 툴 실행 중, 거부면 응답을 이어 간다
+    ///   (`settleAfterTool`: 요청한 툴이 실행 중으로 남아 있으면 툴 실행, 아니면 생각 중. 이어지는 툴 이벤트가 바로잡는다)
+    /// - 터미널(CLI): 승인을 기다리던 훅은 Esc · 중단으로만 끊긴다 → 쉬는 중 (이어서 오는 이벤트가 없다)
+    private func leavePermissionWait(_ session: inout AgentSession) {
+        if session.mainTurnEnded {
+            session.phase = Self.settledPhase(session)
+        } else if session.terminal.isClaudeDesktopApp {
+            settleAfterTool(&session)
+        } else {
+            session.phase = .idle
+            session.currentActivity = nil
+            session.mainTurnEnded = true
+        }
+    }
+
     /// 노치에서 기다리는 시간(`permissionTimeout`)이 지나 결정 없이 풀어 줌 (SocketServer 가 이미 "결정 없음" 으로 응답함).
-    /// 권한 요청은 `cancelPermission` 과 같다. 질문 · 계획 승인은 이어서 Claude Code 다이얼로그가 뜨므로 입력 대기를 그대로 둔다
-    /// (그 다이얼로그로 안내하는 입력 대기 카드)
+    /// 이어서 Claude Code 다이얼로그가 뜨므로 승인 · 입력 대기를 그대로 두고(그 다이얼로그로 안내하는 카드),
+    /// 다른 에이전트의 툴 진행으로 지워지지 않게 누가 기다리는지 기억한다
     public func expirePermission(id: UUID) {
-        guard takePending(id) != nil else { return }
+        let agentID = pendingAgentIDs[id]
+        guard let info = takePending(id) else { return }
+        if var session = sessions[info.sessionID] {
+            let toolUseID = info.toolUseID
+                ?? Self.waitingToolUseID(in: session, agentID: agentID, toolName: info.toolName)
+            addTerminalWait(
+                info.sessionID, agentID: agentID, toolUseID: toolUseID,
+                phase: info.isInteraction ? .waitingInput : .waitingPermission
+            )
+            applyHeldPhase(&session)
+            if session != sessions[info.sessionID] { sessions[info.sessionID] = session }
+        }
         recomputeFocus()
     }
 
@@ -410,6 +490,7 @@ public final class SessionStore {
             refreshBranch(&session)
         }
         session.phase = .idle
+        session.mainTurnEnded = false
         session.currentActivity = nil
         phaseBeforeCompact[session.id] = nil
         return .sessionStarted(sessionID: session.id)
@@ -417,13 +498,16 @@ public final class SessionStore {
 
     private func handleUserPromptSubmit(_ session: inout AgentSession, payload: HookPayload, now: Date) {
         let prompt = payload["prompt"]?.stringValue.map(TextUtils.cleanPrompt)
-        // 이전 턴에서 끝나지 않은 활동(인터럽트 등)은 실패로 닫는다
+        // 이전 턴에서 끝나지 않은 활동(인터럽트 등)은 실패로 닫는다 (아직 도는 백그라운드 서브에이전트의 활동은 빼고)
         closeRunningActivities(&session, status: .failed, at: now)
         session.phase = .thinking
+        session.mainTurnEnded = false
         session.turnStartedAt = now
         session.turn = TurnSummary(startedAt: now)
         session.lastPrompt = TextUtils.nonEmpty(prompt)
+        // 새 턴에 이전 턴의 마지막 답변이 보이지 않게 (`latestTextLine` 은 스트리밍이 비면 이 값을 쓴다)
         session.streamingText = ""
+        session.lastAssistantMessage = nil
         session.hasUnseenCompletion = false
         session.errorMessage = nil
         session.currentActivity = nil
@@ -445,7 +529,12 @@ public final class SessionStore {
         }
     }
 
-    private func handlePreToolUse(_ session: inout AgentSession, payload: HookPayload, now: Date) -> IslandSignal? {
+    private func handlePreToolUse(
+        _ session: inout AgentSession,
+        payload: HookPayload,
+        agentID: String?,
+        now: Date
+    ) -> IslandSignal? {
         let toolName = payload.string("tool_name") ?? "Tool"
         let toolInput = payload["tool_input"]
         let summary = ToolSummarizer.summarize(toolName: toolName, toolInput: toolInput, cwd: session.cwd)
@@ -458,7 +547,8 @@ public final class SessionStore {
             symbolName: summary.symbolName,
             label: summary.label,
             status: .running,
-            startedAt: now
+            startedAt: now,
+            agentID: agentID
         )
         if appendActivity(&session, item) {
             session.turn.toolCount += 1
@@ -522,25 +612,41 @@ public final class SessionStore {
         return ToolSummarizer.firstQuestion(in: toolInput) ?? "질문에 답변 필요"
     }
 
-    /// AskUserQuestion · ExitPlanMode 의 PermissionRequest: 입력 대기로만 표시 (PreToolUse 를 놓쳤을 때만 신호)
+    /// AskUserQuestion · ExitPlanMode 의 PermissionRequest: 입력 대기로만 표시 (PreToolUse 를 놓쳤을 때만 신호).
+    /// 세션 앱 다이얼로그에서 답하므로 누가 기다리는지 기억한다 (넘긴 질문이면 이미 있는 대기와 합친다)
     private func handleUserInteractionRequest(
         _ session: inout AgentSession,
         toolName: String,
-        payload: HookPayload
+        payload: HookPayload,
+        agentID: String?
     ) -> IslandSignal? {
+        let toolUseID = Self.waitingToolUseID(in: session, agentID: agentID, toolName: toolName)
+        addTerminalWait(session.id, agentID: agentID, toolUseID: toolUseID, phase: .waitingInput)
+        // 노치에서 넘긴 그 질문이면 사용자는 이미 다이얼로그로 갔다 (다른 에이전트의 승인 대기가 보이는 중이어도 새로 알리지 않는다)
+        if let handed = handedOffInputs[session.id], handed.isEmpty || toolUseID == nil || toolUseID == handed { return nil }
         guard session.phase != .waitingInput else { return nil }
         session.phase = .waitingInput
         return .needsInput(sessionID: session.id, message: Self.inputMessage(toolName: toolName, toolInput: payload["tool_input"]))
     }
 
-    private func handlePostToolUse(_ session: inout AgentSession, payload: HookPayload, now: Date) -> IslandSignal? {
+    private func handlePostToolUse(
+        _ session: inout AgentSession,
+        payload: HookPayload,
+        agentID: String?,
+        now: Date
+    ) -> IslandSignal? {
         let toolName = payload.string("tool_name") ?? "Tool"
-        let outcome = DiffEngine.outcome(
+        var outcome = DiffEngine.outcome(
             toolName: toolName,
             toolInput: payload["tool_input"],
             toolResponse: payload["tool_response"]
         )
-        let index = toolActivityIndex(&session, payload: payload, toolName: toolName, now: now)
+        // 헬퍼가 payload 를 줄였는데 hunk(structuredPatch · bashEditDiff)가 없으면 입력이 64KB 로 잘렸거나 원본(originalFile)이 빠져
+        // 직접 센 줄 수를 믿을 수 없다 (예: 큰 파일 덮어쓰기가 "+50000 −50000" 대신 "+1307 −0"). 바뀐 파일만 센다
+        if let counted = outcome, Self.isShrunk(payload), !Self.hasReportedDiff(payload["tool_response"]) {
+            outcome = DiffOutcome(snippet: nil, changedFiles: counted.changedFiles, added: 0, removed: 0)
+        }
+        let index = toolActivityIndex(&session, payload: payload, toolName: toolName, agentID: agentID, now: now)
         session.activities[index].status = .succeeded
         session.activities[index].endedAt = now
         session.activities[index].diff = outcome?.snippet
@@ -562,17 +668,23 @@ public final class SessionStore {
         return signal
     }
 
-    private func handlePostToolUseFailure(_ session: inout AgentSession, payload: HookPayload, now: Date) {
+    private func handlePostToolUseFailure(
+        _ session: inout AgentSession,
+        payload: HookPayload,
+        agentID: String?,
+        now: Date
+    ) {
         let toolName = payload.string("tool_name") ?? "Tool"
-        let index = toolActivityIndex(&session, payload: payload, toolName: toolName, now: now)
+        let index = toolActivityIndex(&session, payload: payload, toolName: toolName, agentID: agentID, now: now)
         session.activities[index].status = .failed
         session.activities[index].endedAt = now
 
         if payload.bool("is_interrupt") == true {
-            // 사용자 인터럽트: 에러가 아니라 턴 중단 (Stop 이벤트가 오지 않음)
-            closeRunningActivities(&session, status: .failed, at: now)
+            // 사용자 인터럽트: 에러가 아니라 턴 중단 (Stop 이벤트가 오지 않음). 예전처럼 실행 중인 활동을 모두 닫는다
+            closeRunningActivities(&session, status: .failed, at: now, keepingRunningSubagents: false)
             session.currentActivity = nil
             session.phase = .idle
+            session.mainTurnEnded = true
         } else {
             settleAfterTool(&session)
         }
@@ -605,20 +717,37 @@ public final class SessionStore {
         return info
     }
 
-    private func handleNotification(_ session: inout AgentSession, payload: HookPayload, now: Date) -> IslandSignal? {
+    private func handleNotification(
+        _ session: inout AgentSession,
+        payload: HookPayload,
+        agentID: String?,
+        now: Date
+    ) -> IslandSignal? {
         let message = payload.string("message")
         if let message { session.lastNotification = message }
 
         switch payload.string("notification_type") {
         case "elicitation_dialog", "elicitation_url_dialog", "agent_needs_input":
             session.phase = .waitingInput
+            addTerminalWait(
+                session.id, agentID: agentID,
+                toolUseID: Self.waitingToolUseID(in: session, agentID: agentID, toolName: nil), phase: .waitingInput
+            )
             return .needsInput(sessionID: session.id, message: message ?? "입력 필요")
         case "permission_prompt":
             // 훅 대기 요청이 있으면 PermissionRequest 로 이미 표시 중
             guard !hasPending(session.id) else { return nil }
             // 노치에서 "터미널로" 넘긴 질문 · 계획 승인 다이얼로그 알림: 사용자는 이미 그쪽으로 갔다
-            if session.phase == .waitingInput, handedOffInputs[session.id] != nil { return nil }
+            if handedOffInputs[session.id] != nil,
+               session.phase == .waitingInput || holdsTerminalWait(session.id, phase: .waitingInput) {
+                return nil
+            }
             session.phase = .waitingPermission
+            // 알림에는 툴 정보가 없다: 그 에이전트(agent_id, 없으면 메인)가 실행 중인 툴이 하나뿐이면 그 호출로 본다
+            addTerminalWait(
+                session.id, agentID: agentID,
+                toolUseID: Self.waitingToolUseID(in: session, agentID: agentID, toolName: nil), phase: .waitingPermission
+            )
             return .needsInput(sessionID: session.id, message: message ?? "승인 필요")
         case "elicitation_complete", "elicitation_response":
             if session.phase == .waitingInput { session.phase = .thinking }
@@ -627,10 +756,15 @@ public final class SessionStore {
             // 프롬프트 입력 대기 알림 = 턴이 끝났고 열린 다이얼로그도 없다.
             // - 아직 작업 중으로 보이면 종료 이벤트를 놓친 것 (인터럽트 등)
             // - 훅 대기 없는 승인 대기 · 입력 대기는 터미널에서 거부/Esc 로 끝난 것 (그때는 아무 이벤트도 오지 않는다)
-            let endedWait = (session.phase == .waitingPermission || session.phase == .waitingInput) && !hasPending(session.id)
+            // 훅이 아직 노치 결정을 기다리면 그대로 둔다 (그 요청이 풀릴 때 단계를 정한다)
+            guard !hasPending(session.id) else { return nil }
+            session.mainTurnEnded = true
+            let endedWait = session.phase == .waitingPermission || session.phase == .waitingInput
             if session.phase.isWorking || endedWait {
+                // 아직 도는 백그라운드 서브에이전트의 툴은 그대로 둔다
                 for index in session.activities.indices
-                where session.activities[index].kind == .tool && session.activities[index].status == .running {
+                where session.activities[index].kind == .tool && session.activities[index].status == .running
+                    && !isRunningSubagent(session.activities[index].agentID, in: session.id) {
                     session.activities[index].status = .failed
                     session.activities[index].endedAt = now
                 }
@@ -661,10 +795,13 @@ public final class SessionStore {
         if let message = payload.string("last_assistant_message") {
             session.lastAssistantMessage = String(message.suffix(Self.maxAssistantMessageCharacters))
         }
-        closeRunningActivities(&session, status: .succeeded, at: now)
+        // 작업 목록으로 아직 도는 서브에이전트를 먼저 맞추고, 그 서브에이전트의 활동은 닫지 않는다
         reconcileBackgroundTasks(&session, payload: payload, includesSubagents: true)
+        closeRunningActivities(&session, status: .succeeded, at: now)
         session.currentActivity = nil
         session.phase = .completed
+        session.mainTurnEnded = true
+        session.turn.endedAt = now
         session.hasUnseenCompletion = true
         phaseBeforeCompact[session.id] = nil
         return .completed(sessionID: session.id)
@@ -677,52 +814,76 @@ public final class SessionStore {
         closeRunningActivities(&session, status: .failed, at: now)
         session.currentActivity = nil
         session.phase = .failed
+        session.mainTurnEnded = true
+        session.turn.endedAt = now
         session.hasUnseenCompletion = true
         phaseBeforeCompact[session.id] = nil
         return .failed(sessionID: session.id)
     }
 
-    /// 메인 답변이 끝난 걸 본 세션인지 (이때 오는 서브에이전트 툴 호출은 백그라운드 작업).
-    /// 완료 · 실패, 또는 턴을 본 뒤 유휴가 된 세션만. 앱을 새로 띄운 뒤 처음 보는 세션(유휴 · 턴 모름)은 아니다:
-    /// 그 세션의 서브에이전트 툴 호출은 메인이 서브에이전트를 기다리는 중일 수 있어 예전처럼 작업 중으로 보여준다
-    static func turnHasEnded(_ session: AgentSession) -> Bool {
-        switch session.phase {
-        case .completed, .failed: return true
-        case .idle: return session.turnStartedAt != nil
-        default: return false
-        }
-    }
-
     private func handleSubagentStart(_ session: inout AgentSession, payload: HookPayload, now: Date) {
         let agentID = payload.string("agent_id") ?? "unknown:\(UUID().uuidString)"
-        runningSubagents[session.id, default: []].insert(agentID)
-        session.activeSubagents = runningSubagents[session.id]?.count ?? 0
+        var running = runningSubagents[session.id] ?? []
+        running.remove("task:\(agentID)")
+        running.insert(agentID)
+        runningSubagents[session.id] = running
+        session.activeSubagents = running.count
         appendActivity(&session, ActivityItem(
             id: Self.subagentActivityID(payload.string("agent_id")),
             kind: .subagent,
             title: Self.subagentTitle(payload.string("agent_type")),
             symbolName: "person.2",
             status: .running,
-            startedAt: now
+            startedAt: now,
+            agentID: payload.string("agent_id")
         ))
     }
 
-    /// 시작을 본 서브에이전트만 끝낸다. 시작 없이 오는 종료(Claude 앱이 턴이 끝날 때마다 내부에서 돌리는 보조 작업 등)는 무시한다:
+    /// 도는 것을 본 서브에이전트만 끝낸다 (시작 · 다른 이벤트를 봤거나 턴 끝 목록의 "task:<id>").
+    /// 그 밖의 종료(Claude 앱이 턴이 끝날 때마다 시작 없이 보내는 내부 보조 작업 등)는 무시한다:
     /// 세면 실제로 도는 서브에이전트 수가 줄고, 타임라인에 가짜 "Agent" 가 붙고, 그 이벤트의 작업 목록으로 셸 수까지 지워진다
     private func handleSubagentStop(_ session: inout AgentSession, payload: HookPayload, now: Date) {
-        guard let agentID = payload.string("agent_id"), runningSubagents[session.id]?.remove(agentID) != nil else {
+        guard let agentID = payload.string("agent_id"),
+              runningSubagents[session.id]?.remove(agentID) != nil
+                || runningSubagents[session.id]?.remove("task:\(agentID)") != nil
+        else {
             Self.logger.debug("시작을 못 본 SubagentStop 무시")
             return
         }
         if runningSubagents[session.id]?.isEmpty == true { runningSubagents[session.id] = nil }
         session.activeSubagents = runningSubagents[session.id]?.count ?? 0
-        let id = Self.subagentActivityID(agentID)
-        if let index = session.activities.lastIndex(where: { $0.id == id }) {
+        // 그 서브에이전트 항목과, 결과가 오지 않은 채 남은 그 서브에이전트의 툴을 닫는다
+        for index in session.activities.indices
+        where session.activities[index].agentID == agentID && session.activities[index].status == .running {
             session.activities[index].status = .succeeded
             session.activities[index].endedAt = now
         }
-        if session.currentActivity?.id == id { session.currentActivity = nil }
+        if let current = session.currentActivity,
+           current.agentID == agentID || current.id == Self.subagentActivityID(agentID) {
+            if session.phase == .runningTool {
+                settleAfterTool(&session)
+            } else {
+                session.currentActivity = nil
+            }
+        }
         reconcileBackgroundTasks(&session, payload: payload, includesSubagents: false)
+    }
+
+    /// 시작(SubagentStart)을 못 본 서브에이전트의 이벤트: 도는 중으로 센다 (앱을 새로 띄우기 전에 시작한 서브에이전트 등).
+    /// 턴 끝 목록에서만 알던 "task:<id>" 는 그 ID 로 바꾼다 (이후 SubagentStop 으로 끝낼 수 있게)
+    private func noteRunningSubagent(_ session: inout AgentSession, agentID: String) {
+        var running = runningSubagents[session.id] ?? []
+        guard !running.contains(agentID) else { return }
+        running.remove("task:\(agentID)")
+        running.insert(agentID)
+        runningSubagents[session.id] = running
+        session.activeSubagents = running.count
+    }
+
+    /// 아직 도는 서브에이전트의 ID 인지 (메인 에이전트(nil)는 아님)
+    private func isRunningSubagent(_ agentID: String?, in sessionID: String) -> Bool {
+        guard let agentID, let running = runningSubagents[sessionID] else { return false }
+        return running.contains(agentID) || running.contains("task:\(agentID)")
     }
 
     // MARK: - 백그라운드 작업
@@ -828,23 +989,41 @@ public final class SessionStore {
 
     /// 세션 브랜치를 다시 찾는다. 보호 폴더 프로젝트에서 대화 기록에 아직 브랜치가 없으면 알던 값을 그대로 둔다
     private func refreshBranch(_ session: inout AgentSession) {
-        let branch = Self.lookupBranch(cwd: session.cwd, transcriptPath: session.transcriptPath)
-        if branch != nil || !ProtectedLocations.contains(session.cwd) {
-            session.gitBranch = branch
-        }
+        let lookup = Self.branchLookup(cwd: session.cwd, transcriptPath: session.transcriptPath)
+        if !lookup.isUnknown { session.gitBranch = lookup.branch }
     }
 
     /// 작업 폴더의 git 브랜치.
     /// - 보통은 `.git` 을 직접 읽는다 (`GitInfo`, 정확하고 빠름).
     /// - 작업 폴더가 macOS 보호 폴더(문서 · 데스크탑 · 다운로드 · iCloud 등, `ProtectedLocations`)면 읽지 않는다:
     ///   읽기만 해도 "AgentNotch 가 '문서' 폴더에 접근하려고 합니다" 창이 뜨고, ad-hoc 서명이라 빌드 · 업데이트마다 다시 묻는다.
-    ///   대신 Claude Code 대화 기록(`~/.claude`) 끝부분에 적힌 `gitBranch` 를 쓴다
+    ///   작업 폴더는 보호 폴더 밖이어도 워크트리 `gitdir:` · `.git` 심볼릭 링크가 보호 폴더를 가리키면 `GitInfo` 가 따라가지 않는다.
+    ///   이럴 때는 Claude Code 대화 기록(`~/.claude`) 끝부분에 적힌 `gitBranch` 를 쓴다
     static func lookupBranch(cwd: String, transcriptPath: String?, home: String? = nil) -> String? {
-        guard !cwd.isEmpty else { return nil }
+        branchLookup(cwd: cwd, transcriptPath: transcriptPath, home: home).branch
+    }
+
+    /// `lookupBranch` 와 같고, 브랜치가 없을 때 보호 폴더라 확인하지 못한 것(모름)인지도 알려준다.
+    /// 모르는 경우는 알던 값을 그대로 둔다 (`refreshBranch`. 새 세션은 대화 기록에 아직 브랜치가 없다)
+    static func branchLookup(cwd: String, transcriptPath: String?, home: String? = nil) -> (branch: String?, isUnknown: Bool) {
+        guard !cwd.isEmpty else { return (nil, false) }
         let home = home ?? FileManager.default.homeDirectoryForCurrentUser.path
-        guard ProtectedLocations.contains(cwd, home: home) else { return GitInfo.branch(forDirectory: cwd) }
-        guard let transcriptPath, !ProtectedLocations.contains(transcriptPath, home: home) else { return nil }
-        return TranscriptTail.lastGitBranch(atPath: transcriptPath)
+        var blocked = ProtectedLocations.contains(cwd, home: home)
+        if !blocked {
+            // `GitInfo.branch(forDirectory:home:)` 와 같은 판정. 가는 길에 보호 폴더가 걸렸는지 기록한다
+            let branch = GitInfo.branch(forDirectory: cwd, isProtected: { path in
+                let isProtected = ProtectedLocations.contains(path, home: home)
+                if isProtected { blocked = true }
+                return isProtected
+            })
+            if let branch { return (branch, false) }
+            // git 저장소가 아님 (보호 폴더 때문에 못 읽은 게 아니다)
+            guard blocked else { return (nil, false) }
+        }
+        guard let transcriptPath, !ProtectedLocations.contains(transcriptPath, home: home),
+              let branch = TranscriptTail.lastGitBranch(atPath: transcriptPath)
+        else { return (nil, true) }
+        return (branch, false)
     }
 
     private func makeSession(id: String, payload: HookPayload, now: Date) -> AgentSession {
@@ -902,6 +1081,7 @@ public final class SessionStore {
         _ session: inout AgentSession,
         payload: HookPayload,
         toolName: String,
+        agentID: String?,
         now: Date
     ) -> Int {
         let toolUseID = payload.string("tool_use_id")
@@ -918,7 +1098,8 @@ public final class SessionStore {
             symbolName: summary.symbolName,
             label: summary.label,
             status: .running,
-            startedAt: now
+            startedAt: now,
+            agentID: agentID
         ))
         session.turn.toolCount += 1
         return session.activities.count - 1
@@ -938,8 +1119,16 @@ public final class SessionStore {
         }
     }
 
-    private func closeRunningActivities(_ session: inout AgentSession, status: ActivityStatus, at date: Date) {
+    /// 실행 중으로 남은 활동을 닫는다. 메인 턴이 끝나도 계속 도는 서브에이전트(백그라운드 에이전트)의 활동은 그대로 둔다
+    /// (`keepingRunningSubagents`, 그 서브에이전트가 끝날 때 SubagentStop 에서 닫는다)
+    private func closeRunningActivities(
+        _ session: inout AgentSession,
+        status: ActivityStatus,
+        at date: Date,
+        keepingRunningSubagents: Bool = true
+    ) {
         for index in session.activities.indices where session.activities[index].status == .running {
+            if keepingRunningSubagents, isRunningSubagent(session.activities[index].agentID, in: session.id) { continue }
             session.activities[index].status = status
             session.activities[index].endedAt = date
         }
@@ -957,6 +1146,7 @@ public final class SessionStore {
         if handedOffInputs[sessionID] != nil { handedOffInputs[sessionID] = nil }
         consentWatches[sessionID] = nil
         runningSubagents[sessionID] = nil
+        terminalWaits[sessionID] = nil
         if manualFocusID == sessionID { manualFocusID = nil }
         if pinnedSessionID == sessionID { pinnedSessionID = nil }
         return takePendings { request, _ in request.sessionID == sessionID }
@@ -1073,15 +1263,124 @@ public final class SessionStore {
         pendingPermissions.contains { $0.sessionID == sessionID }
     }
 
-    /// 훅 대기 요청이 남은 세션의 대기 상태: 권한 요청이 하나라도 있으면 승인 대기, 질문 · 계획 승인만 있으면 입력 대기
-    private func pendingPhase(_ sessionID: String) -> SessionPhase? {
+    /// 아직 남은 대기(훅 대기 요청 · 세션 앱 다이얼로그)의 단계: 승인 대기가 하나라도 있으면 승인 대기, 입력 대기만 있으면 입력 대기
+    private func heldPhase(_ sessionID: String) -> SessionPhase? {
         var phase: SessionPhase?
         for request in pendingPermissions where request.sessionID == sessionID {
             if !request.isInteraction { return .waitingPermission }
             phase = .waitingInput
         }
+        for wait in terminalWaits[sessionID] ?? [] {
+            if wait.phase == .waitingPermission { return .waitingPermission }
+            phase = .waitingInput
+        }
         return phase
     }
+
+    /// 대기가 남은 세션은 그 대기로 보여준다. 일하는 단계 · 끝난 단계만 바꾼다 (다른 대기 · 압축 중은 그대로).
+    /// 끝난 단계도 바꾸는 건 메인 턴이 끝나도 백그라운드 서브에이전트의 질문 · 승인은 계속 기다리기 때문이다
+    private func applyHeldPhase(_ session: inout AgentSession) {
+        guard let held = heldPhase(session.id) else { return }
+        switch session.phase {
+        case .thinking, .runningTool, .completed, .failed, .idle:
+            session.phase = held
+        case .waitingPermission, .waitingInput, .compacting, .ended:
+            break
+        }
+    }
+
+    // MARK: - 세션 앱 다이얼로그 대기
+
+    /// 훅 대기 요청 없이 세션 앱 다이얼로그를 기다리는 대기 한 건 (`terminalWaits`)
+    private struct TerminalWait: Equatable {
+        /// 기다리는 서브에이전트 `agent_id` (메인 에이전트면 nil)
+        var agentID: String?
+        /// 기다리는 툴 호출 (알 때만. 모르면 그 에이전트의 다음 툴 결과로 끝난 것으로 본다)
+        var toolUseID: String?
+        /// 승인 대기 또는 입력 대기
+        var phase: SessionPhase
+    }
+
+    /// 세션 앱 다이얼로그 대기를 기억한다. 같은 에이전트의 같은 호출(한쪽이 호출을 모르는 경우 포함) 대기가 이미 있으면
+    /// 합친다 (예: 넘긴 질문의 PermissionRequest · 같은 다이얼로그의 알림). 단계는 나중 것을 따른다
+    private func addTerminalWait(_ sessionID: String, agentID: String?, toolUseID: String?, phase: SessionPhase) {
+        var waits = terminalWaits[sessionID] ?? []
+        if let index = waits.firstIndex(where: { wait in
+            wait.agentID == agentID && (wait.toolUseID == nil || toolUseID == nil || wait.toolUseID == toolUseID)
+        }) {
+            waits[index].phase = phase
+            if waits[index].toolUseID == nil { waits[index].toolUseID = toolUseID }
+        } else {
+            waits.append(TerminalWait(agentID: agentID, toolUseID: toolUseID, phase: phase))
+        }
+        terminalWaits[sessionID] = waits
+    }
+
+    private func holdsTerminalWait(_ sessionID: String, phase: SessionPhase) -> Bool {
+        terminalWaits[sessionID]?.contains { $0.phase == phase } == true
+    }
+
+    /// 이벤트로 끝난 것으로 볼 수 있는 세션 앱 다이얼로그 대기를 지운다 (지운 게 있으면 true).
+    /// - 새 프롬프트 · 새 대화(SessionStart) · 인터럽트 · idle_prompt: 열린 다이얼로그가 없다 → 모두
+    /// - Stop · StopFailure: 메인 에이전트의 대기만 (백그라운드 서브에이전트는 메인 턴이 끝나도 계속 돌며 기다린다)
+    /// - 기다리던 에이전트의 다음 툴 호출, 기다리던 호출의 결과 (호출을 모르면 그 에이전트의 툴 결과), 그 서브에이전트의 종료
+    /// - MCP 입력 요청이 끝남: 그 에이전트의 입력 대기
+    /// 다른 에이전트(병렬로 도는 서브에이전트 · 메인)의 이벤트로는 지우지 않는다
+    private func releaseTerminalWaits(event: String, sessionID: String, agentID: String?, payload: HookPayload) -> Bool {
+        guard let waits = terminalWaits[sessionID] else { return false }
+        let kept: [TerminalWait]
+        switch event {
+        case "UserPromptSubmit":
+            kept = []
+        case "SessionStart":
+            kept = payload.string("source") == "compact" ? waits : []
+        case "Stop", "StopFailure":
+            kept = waits.filter { $0.agentID != nil }
+        case "PreToolUse":
+            kept = waits.filter { $0.agentID != agentID }
+        case "PostToolUse", "PostToolUseFailure":
+            if payload.bool("is_interrupt") == true {
+                kept = []
+            } else {
+                let toolUseID = payload.string("tool_use_id")
+                kept = waits.filter { wait in
+                    guard wait.agentID == agentID, let waited = wait.toolUseID, let toolUseID else { return wait.agentID != agentID }
+                    // 같은 에이전트가 병렬로 부른 다른 호출의 결과는 기다리던 호출과 무관
+                    return waited != toolUseID
+                }
+            }
+        case "SubagentStop":
+            kept = agentID.map { id in waits.filter { $0.agentID != id } } ?? waits
+        case "Notification":
+            switch payload.string("notification_type") {
+            case "idle_prompt":
+                kept = []
+            case "elicitation_complete", "elicitation_response":
+                kept = waits.filter { $0.agentID != agentID || $0.phase != .waitingInput }
+            default:
+                kept = waits
+            }
+        default:
+            kept = waits
+        }
+        guard kept.count != waits.count else { return false }
+        terminalWaits[sessionID] = kept.isEmpty ? nil : kept
+        return true
+    }
+
+    /// 대기를 일으킨 툴 호출 추정: 그 에이전트가 실행 중인 툴(이름을 알면 같은 이름) 중 하나뿐이면 그 호출.
+    /// 이름을 모르면(알림) 서브에이전트를 띄운 툴(Agent · Task)은 뺀다 (서브에이전트를 기다리는 중이지 묻는 게 아니다)
+    private static func waitingToolUseID(in session: AgentSession, agentID: String?, toolName: String?) -> String? {
+        let candidates = session.activities.filter { item in
+            guard item.kind == .tool, item.status == .running, item.agentID == agentID else { return false }
+            if let toolName { return item.toolName == toolName }
+            return !subagentLauncherTools.contains(item.toolName ?? "")
+        }
+        return candidates.count == 1 ? candidates[0].id : nil
+    }
+
+    /// 서브에이전트를 띄우는 툴
+    static let subagentLauncherTools: Set<String> = ["Agent", "Task"]
 
     /// 조건에 맞는 권한 요청을 대기열에서 꺼낸다 (agentID: 요청이 발생한 서브에이전트, 메인이면 nil)
     private func takePendings(where predicate: (PermissionRequestInfo, String?) -> Bool) -> [PermissionRequestInfo] {
@@ -1109,7 +1408,9 @@ public final class SessionStore {
     ) -> [PermissionRequestInfo] {
         switch event {
         case "UserPromptSubmit", "Stop", "StopFailure":
-            return takePendings { request, _ in request.sessionID == sessionID }
+            // 메인 에이전트의 요청만. 서브에이전트(백그라운드 에이전트)는 메인 턴이 끝나도 계속 돌며 답을 기다린다
+            // (그 요청은 그 서브에이전트의 SubagentStop · 훅 연결 끊김 · 시간 초과로 정리)
+            return takePendings { request, requestAgentID in request.sessionID == sessionID && requestAgentID == nil }
         case "PostToolUse", "PostToolUseFailure":
             // 같은 호출이 터미널에서 승인돼 실행(또는 실패)된 경우에만 정리.
             // PermissionRequest 에는 tool_use_id 가 없어 같은 에이전트 · 툴 이름 · 입력으로 같은 호출인지 본다.
@@ -1166,6 +1467,39 @@ public final class SessionStore {
 
     private static func isShrunk(_ payload: HookPayload) -> Bool {
         payload.bool(shrunkMarkerKey) == true
+    }
+
+    /// 툴 응답에 Claude Code 가 계산한 diff(비어 있지 않은 structuredPatch · bashEditDiff)가 있는지.
+    /// 줄인 payload 에서는 이것만 믿을 수 있다 (헬퍼는 1단계에서 이 둘만 남기고, 2단계부터 버린다)
+    private static func hasReportedDiff(_ toolResponse: JSONValue?) -> Bool {
+        toolResponse?["structuredPatch"]?.arrayValue?.isEmpty == false || toolResponse?["bashEditDiff"] != nil
+    }
+
+    // MARK: - 단계 헬퍼
+
+    /// 툴 진행 이벤트
+    private static let toolEvents: Set<String> = ["PreToolUse", "PostToolUse", "PostToolUseFailure"]
+
+    /// 턴이 진행 중인 단계 (생각 중 · 툴 실행)
+    private static func isTurnWork(_ phase: SessionPhase) -> Bool {
+        phase == .thinking || phase == .runningTool
+    }
+
+    /// 메인 턴이 끝난 뒤의 단계 (완료 · 실패 · 유휴)
+    private static func isSettled(_ phase: SessionPhase) -> Bool {
+        phase == .completed || phase == .failed || phase == .idle
+    }
+
+    /// 메인 턴이 끝난 세션이 대기에서 풀리면 돌아갈 단계: 아직 확인하지 않은 완료 · 실패면 그 단계, 확인했으면 유휴
+    static func settledPhase(_ session: AgentSession) -> SessionPhase {
+        guard session.hasUnseenCompletion else { return .idle }
+        return session.errorMessage == nil ? .completed : .failed
+    }
+
+    /// 그 활동이 아직 실행 중이면 지금 상태로, 끝났으면 nil
+    private static func stillRunning(_ item: ActivityItem?, in session: AgentSession) -> ActivityItem? {
+        guard let item else { return nil }
+        return session.activities.last { $0.id == item.id && $0.status == .running }
     }
 
     // MARK: - 표시 문자열

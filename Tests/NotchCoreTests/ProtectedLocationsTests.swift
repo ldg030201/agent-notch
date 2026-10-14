@@ -20,6 +20,22 @@ import Testing
         #expect(!ProtectedLocations.contains("/Users/dev/Documentsx/p", home: home))
         #expect(!ProtectedLocations.contains("/Users/dev/.claude/projects/p/s.jsonl", home: home))
         #expect(!ProtectedLocations.contains("", home: home))
+        // 데이터 볼륨 실제 경로도 같은 곳
+        #expect(ProtectedLocations.contains("/System/Volumes/Data/Users/dev/Documents/p", home: home))
+        #expect(!ProtectedLocations.contains("/System/Volumes/Data/Users/dev/code/p", home: home))
+        // 상대 gitdir 을 붙인 경로: 글자로만 정리해서 판단
+        #expect(ProtectedLocations.contains("/Users/dev/code/wt/../../Documents/repo/.git/worktrees/wt", home: home))
+        #expect(!ProtectedLocations.contains("/Users/dev/Documents/../code/repo", home: home))
+    }
+
+    /// 파일 시스템을 보지 않고 글자로만 정리한다
+    @Test func lexicalNormalization() {
+        #expect(ProtectedLocations.lexicallyNormalized("/a//b/./c/../d/") == "/a/b/d")
+        #expect(ProtectedLocations.lexicallyNormalized("/../a") == "/a")
+        #expect(ProtectedLocations.lexicallyNormalized("/") == "/")
+        #expect(ProtectedLocations.lexicallyNormalized("a/../../b") == "../b")
+        #expect(ProtectedLocations.lexicallyNormalized("~/x").hasSuffix("/x"))
+        #expect(!ProtectedLocations.lexicallyNormalized("~/x").hasPrefix("~"))
     }
 
     @Test func protectedProjectBranchComesFromTranscript() throws {
@@ -55,5 +71,39 @@ import Testing
         let protectedTranscript = root.appendingPathComponent("Documents/t.jsonl")
         try "{\"gitBranch\":\"x\"}\n".write(to: protectedTranscript, atomically: true, encoding: .utf8)
         #expect(SessionStore.lookupBranch(cwd: protected.path, transcriptPath: protectedTranscript.path, home: home) == nil)
+    }
+
+    /// 작업 폴더는 보호 폴더 밖이지만 워크트리 `gitdir:` 이 보호 폴더 안 저장소를 가리키면 `GitInfo` 가 읽지 않는다 →
+    /// 대화 기록의 브랜치를 쓰고, 그것도 없으면 "모름" (알던 값을 지우지 않게). 그냥 git 저장소가 아니면 모름이 아니다
+    @Test func worktreeIntoProtectedFolderFallsBackToTranscript() throws {
+        let fileManager = FileManager.default
+        let made = fileManager.temporaryDirectory.appendingPathComponent("agentnotch-wt-\(UUID().uuidString)")
+        try fileManager.createDirectory(at: made, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: made) }
+        // 링크를 푼 실제 경로 기준 (GitInfo 는 실제 경로로 보호 폴더를 판단한다)
+        let root = try #require(realpath(made.path, nil).map { pointer in
+            defer { free(pointer) }
+            return String(cString: pointer)
+        })
+        let home = "\(root)/home"
+        func write(_ text: String, to path: String) throws {
+            try fileManager.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+            try text.write(toFile: path, atomically: true, encoding: .utf8)
+        }
+        try write("ref: refs/heads/wt-branch\n", to: "\(home)/Documents/repo/.git/worktrees/wt/HEAD")
+        try write("gitdir: \(home)/Documents/repo/.git/worktrees/wt\n", to: "\(home)/code/wt/.git")
+        try fileManager.createDirectory(atPath: "\(home)/code/plain", withIntermediateDirectories: true)
+        let transcript = "\(home)/.claude/projects/p/s.jsonl"
+        try write(#"{"type":"assistant","gitBranch":"wt-branch","sessionId":"s"}"# + "\n", to: transcript)
+
+        let worktree = "\(home)/code/wt"
+        #expect(SessionStore.lookupBranch(cwd: worktree, transcriptPath: transcript, home: home) == "wt-branch")
+        let unknown = SessionStore.branchLookup(cwd: worktree, transcriptPath: nil, home: home)
+        #expect(unknown.branch == nil)
+        #expect(unknown.isUnknown)
+        // git 저장소가 아닌 폴더: 대화 기록을 보지 않고 "브랜치 없음"
+        let plain = SessionStore.branchLookup(cwd: "\(home)/code/plain", transcriptPath: transcript, home: home)
+        #expect(plain.branch == nil)
+        #expect(!plain.isUnknown)
     }
 }

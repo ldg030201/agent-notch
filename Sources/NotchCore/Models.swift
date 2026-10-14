@@ -169,6 +169,9 @@ public struct ActivityItem: Identifiable, Hashable, Sendable {
     public var startedAt: Date
     public var endedAt: Date?
     public var diff: DiffSnippet?
+    /// 이 활동을 한 서브에이전트 `agent_id` (메인 에이전트면 nil). 서브에이전트 항목(`agent:<id>`)은 그 서브에이전트 자신.
+    /// 메인 턴이 끝나도 계속 도는 서브에이전트의 활동은 턴 끝에서 닫지 않는다
+    public var agentID: String?
 
     public init(
         id: String,
@@ -181,7 +184,8 @@ public struct ActivityItem: Identifiable, Hashable, Sendable {
         status: ActivityStatus,
         startedAt: Date,
         endedAt: Date? = nil,
-        diff: DiffSnippet? = nil
+        diff: DiffSnippet? = nil,
+        agentID: String? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -194,6 +198,7 @@ public struct ActivityItem: Identifiable, Hashable, Sendable {
         self.startedAt = startedAt
         self.endedAt = endedAt
         self.diff = diff
+        self.agentID = agentID
     }
 
     /// 접힌 상태용 짧은 이름: `label`, 없으면 제목 첫 단어 (예: "Agent Explore" → "Agent")
@@ -211,13 +216,23 @@ public struct TurnSummary: Hashable, Sendable {
     public var removed: Int
     public var toolCount: Int
     public var startedAt: Date?
+    /// 턴이 끝난 시각 (Stop · StopFailure). 그 뒤에 오는 이벤트(idle_prompt · 백그라운드 작업 등)로 소요 시간이 늘지 않게 따로 둔다
+    public var endedAt: Date?
 
-    public init(changedFiles: [String] = [], added: Int = 0, removed: Int = 0, toolCount: Int = 0, startedAt: Date? = nil) {
+    public init(
+        changedFiles: [String] = [],
+        added: Int = 0,
+        removed: Int = 0,
+        toolCount: Int = 0,
+        startedAt: Date? = nil,
+        endedAt: Date? = nil
+    ) {
         self.changedFiles = changedFiles
         self.added = added
         self.removed = removed
         self.toolCount = toolCount
         self.startedAt = startedAt
+        self.endedAt = endedAt
     }
 }
 
@@ -307,6 +322,11 @@ public struct AgentSession: Identifiable, Hashable, Sendable {
     public var startedAt: Date
     public var lastEventAt: Date
     public var turnStartedAt: Date?
+    /// 메인 에이전트의 턴이 끝났는지 (Stop · StopFailure · 인터럽트 · idle_prompt, 끝난 채로 되살린 세션).
+    /// 새 프롬프트 · SessionStart · 메인 에이전트의 툴 진행이 오면 false.
+    /// 이때 오는 서브에이전트 이벤트는 백그라운드 작업이라 세션을 다시 작업 중으로 바꾸지 않는다 (단계로 추정하지 않고 따로 기억한다:
+    /// 백그라운드 서브에이전트의 질문 · 승인에 답하면 단계가 바뀌어 "끝났다" 는 사실을 잃는다)
+    public var mainTurnEnded: Bool
 
     public var lastPrompt: String?
     public var currentActivity: ActivityItem?
@@ -343,6 +363,7 @@ public struct AgentSession: Identifiable, Hashable, Sendable {
         startedAt: Date,
         lastEventAt: Date,
         turnStartedAt: Date? = nil,
+        mainTurnEnded: Bool = false,
         lastPrompt: String? = nil,
         currentActivity: ActivityItem? = nil,
         activities: [ActivityItem] = [],
@@ -369,6 +390,7 @@ public struct AgentSession: Identifiable, Hashable, Sendable {
         self.startedAt = startedAt
         self.lastEventAt = lastEventAt
         self.turnStartedAt = turnStartedAt
+        self.mainTurnEnded = mainTurnEnded
         self.lastPrompt = lastPrompt
         self.currentActivity = currentActivity
         self.activities = activities
@@ -390,6 +412,12 @@ extension AgentSession {
     /// 메인 대화와 따로 도는 작업 수: 서브에이전트 + 백그라운드 셸 + 그 밖의 작업
     public var backgroundTaskCount: Int {
         activeSubagents + backgroundShells + backgroundOthers
+    }
+
+    /// 이번(또는 직전) 턴 소요 시간: 턴 시작 → 끝난 시각(`turn.endedAt`). 끝난 시각을 모르면 마지막 이벤트까지, 시작을 모르면 nil
+    public var turnDuration: TimeInterval? {
+        guard let start = turn.startedAt ?? turnStartedAt else { return nil }
+        return (turn.endedAt ?? lastEventAt).timeIntervalSince(start)
     }
 
     /// 아일랜드에 한 줄로 보여줄 최근 응답 텍스트.

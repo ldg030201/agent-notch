@@ -592,10 +592,9 @@ enum IslandFormat {
         return parts.map { "\($0.0) \($0.1)" }.joined(separator: " · ")
     }
 
-    /// 이번 턴 소요 시간 (완료 시점 기준)
+    /// 이번 턴 소요 시간 (턴이 끝난 시각 기준. 그 뒤 이벤트로 늘지 않는다, `AgentSession.turnDuration`)
     static func turnDuration(_ session: AgentSession) -> TimeInterval? {
-        guard let start = session.turn.startedAt ?? session.turnStartedAt else { return nil }
-        return session.lastEventAt.timeIntervalSince(start)
+        session.turnDuration
     }
 
     /// 한 줄로 보여줄 텍스트 (줄바꿈 제거)

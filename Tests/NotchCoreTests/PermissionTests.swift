@@ -209,7 +209,10 @@ import NotchShared
         store.cancelPermission(id: id)
         #expect(store.pendingPermissions.isEmpty)
         #expect(recorder.calls.isEmpty)
-        #expect(store.sessions["s1"]?.phase == .waitingPermission)
+        // 예전에는 승인 대기를 그대로 둬서 idle_prompt 가 올 때까지 "터미널에서 승인 필요" 카드가 남았다.
+        // 앱의 기다리는 시간(최대 585초)이 훅 시간 제한(600초)보다 먼저라 끊김은 시간 초과가 아니라
+        // Esc · 중단(터미널) 또는 Claude 앱 자체 다이얼로그에서 답한 것 → 승인 대기에서 나온다 (터미널 세션은 쉬는 중)
+        #expect(store.sessions["s1"]?.phase == .idle)
         // 모르는 ID 는 무시
         store.cancelPermission(id: UUID())
         store.resolvePermission(id: UUID(), decision: .allow)
