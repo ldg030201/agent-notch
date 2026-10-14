@@ -9,6 +9,11 @@ func printToStandardError(_ message: String) {
     FileHandle.standardError.write(Data((message + "\n").utf8))
 }
 
+if options.printHelp {
+    print(LaunchOptions.usage)
+    exit(0)
+}
+
 if options.printVersion {
     print("agent-notch \(AppInfo.version)")
     exit(0)
