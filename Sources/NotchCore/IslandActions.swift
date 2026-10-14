@@ -18,6 +18,4 @@ public protocol IslandActions: AnyObject {
     func focus(sessionID: String)
     /// 세션 목록에서 제거
     func dismiss(sessionID: String)
-    /// 설정 창 열기
-    func openSettings()
 }

@@ -1,7 +1,6 @@
 import Foundation
 import NotchCore
 import NotchServices
-import NotchUI
 
 /// 아일랜드 UI 동작 구현 (NotchUI → Services 연결)
 @MainActor
@@ -9,8 +8,6 @@ final class AppActions: IslandActions {
     private let store: SessionStore
     private let terminalJumper: TerminalJumper
     private let fileOpener: FileOpener
-    /// 설정 창은 UI 컨트롤러가 띄운다 (생성 순서상 나중에 연결)
-    weak var uiController: NotchUIController?
 
     init(store: SessionStore, terminalJumper: TerminalJumper, fileOpener: FileOpener) {
         self.store = store
@@ -47,9 +44,5 @@ final class AppActions: IslandActions {
 
     func dismiss(sessionID: String) {
         store.dismiss(sessionID: sessionID)
-    }
-
-    func openSettings() {
-        uiController?.showSettings()
     }
 }

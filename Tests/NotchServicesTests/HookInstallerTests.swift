@@ -497,8 +497,6 @@ struct HookInstallerTests {
         let path = fixture.helperInstallURL.path
         let escaped = path.replacingOccurrences(of: "'", with: "'\\''")
         #expect(installer.command(for: "SessionStart") == "'\(escaped)' SessionStart")
-        #expect(HookInstaller.shellQuoted("a b") == "'a b'")
-        #expect(HookInstaller.shellQuoted("it's") == "'it'\\''s'")
 
         // settings.json 에 저장된 명령을 실제 셸로 실행해 인자가 그대로 전달되는지 확인
         let settings = try fixture.settings()
@@ -583,6 +581,34 @@ struct HookInstallerTests {
         try installer.uninstall()
         try installer.removeHelper()
         #expect(try installer.refreshHelperIfInstalled(helperSource: fixture.helperSource) == false)
+    }
+
+    /// 앱을 띄울 때마다 두 파일을 통째로 비교하지 않도록 크기 · 수정 시각을 먼저 본다
+    @Test func helperCopyChecksSizeAndModificationTimeFirst() throws {
+        let fixture = try InstallerFixture()
+        defer { fixture.temp.remove() }
+        let installer = fixture.makeInstaller()
+        let source = fixture.helperSource.path
+        let installed = fixture.helperInstallURL.path
+        try installer.install(helperSource: fixture.helperSource, includeMessageDisplay: false)
+        // 복사본의 수정 시각을 원본에 맞춰 둔다
+        #expect(FileStamp(path: installed) == FileStamp(path: source))
+
+        // 크기가 같아도 수정 시각이 다르면 내용을 비교해 바꾼다
+        let original = try Data(contentsOf: fixture.helperSource)
+        let sameSize = Data(String(decoding: original, as: UTF8.self).replacingOccurrences(of: "printf", with: "printX").utf8)
+        #expect(sameSize.count == original.count && sameSize != original)
+        try sameSize.write(to: fixture.helperSource)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_700_000_000)], ofItemAtPath: source)
+        #expect(try installer.refreshHelperIfInstalled(helperSource: fixture.helperSource))
+        #expect(try Data(contentsOf: fixture.helperInstallURL) == sameSize)
+        #expect(FileStamp(path: installed) == FileStamp(path: source))
+
+        // 내용이 같고 수정 시각만 다르면 복사하지 않고 시각만 맞춘다
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_700_000_100)], ofItemAtPath: source)
+        #expect(try installer.refreshHelperIfInstalled(helperSource: fixture.helperSource) == false)
+        #expect(FileStamp(path: installed) == FileStamp(path: source))
+        #expect(posixPermissions(installed) == 0o755)
     }
 
     @Test func missingHelperSourceThrows() throws {

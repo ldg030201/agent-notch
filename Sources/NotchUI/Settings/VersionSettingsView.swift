@@ -120,13 +120,10 @@ struct VersionSettingsView: View {
         return "마지막 확인 \(Self.ageText(since: date, now: model.now()))"
     }
 
+    /// "방금" · "12분 전" · "3시간 전" · "2일 전" (경과 시간은 아일랜드의 `IslandFormat.idleText` 와 같은 규칙)
     static func ageText(since date: Date, now: Date) -> String {
-        let minutes = Int(now.timeIntervalSince(date) / 60)
-        if minutes < 1 { return "방금" }
-        if minutes < 60 { return "\(minutes)분 전" }
-        let hours = minutes / 60
-        if hours < 24 { return "\(hours)시간 전" }
-        return "\(hours / 24)일 전"
+        let elapsed = IslandFormat.idleText(since: date, now: now)
+        return now.timeIntervalSince(date) < 60 ? elapsed : elapsed + " 전"
     }
 }
 

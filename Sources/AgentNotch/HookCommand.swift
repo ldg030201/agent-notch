@@ -17,7 +17,7 @@ enum HookCommand {
             switch action {
             case .install(let includeMessageDisplay):
                 guard let helper = AppInfo.helperURL() else {
-                    printError("notch-hook 헬퍼를 찾지 못했어요. scripts/build.sh 로 만든 앱에서 실행해 주세요.")
+                    printToStandardError("notch-hook 헬퍼를 찾지 못했어요. scripts/build.sh 로 만든 앱에서 실행해 주세요.")
                     return 1
                 }
                 let backup = try installer.install(helperSource: helper, includeMessageDisplay: includeMessageDisplay)
@@ -35,12 +35,8 @@ enum HookCommand {
             }
             return 0
         } catch {
-            printError("실패: \(error.localizedDescription)")
+            printToStandardError("실패: \(error.localizedDescription)")
             return 1
         }
-    }
-
-    private static func printError(_ message: String) {
-        FileHandle.standardError.write(Data((message + "\n").utf8))
     }
 }

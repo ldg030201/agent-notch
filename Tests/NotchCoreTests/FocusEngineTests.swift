@@ -94,15 +94,12 @@ import NotchShared
         #expect(decide(sessions, manual: "gone", pinned: "gone2").focusedID == "working")
     }
 
-    @Test func endedExcludedAndEmpty() {
-        let sessions = [
-            session("ended", phase: .ended, at: 100),
-            session("idle", phase: .idle, at: 10),
-        ]
-        let result = decide(sessions, current: "ended")
+    @Test func emptySessions() {
+        #expect(decide([]) == FocusEngine.Decision(rankedIDs: [], focusedID: nil))
+        // 없는 세션을 현재 포커스로 넘겨도 남은 세션으로 정한다
+        let result = decide([session("idle", phase: .idle, at: 10)], current: "gone")
         #expect(result.rankedIDs == ["idle"])
         #expect(result.focusedID == "idle")
-        #expect(decide([]) == FocusEngine.Decision(rankedIDs: [], focusedID: nil))
     }
 
     @MainActor

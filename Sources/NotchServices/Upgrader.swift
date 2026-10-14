@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import NotchShared
 import Observation
 
 /// 앱 안에서 `brew upgrade agent-notch` 를 돌리고, 사용자가 확인하면 앱을 새 버전으로 바꿔 다시 띄운다.
@@ -568,10 +569,9 @@ public enum UpgradeHandoff {
         }
     }
 
-    /// `~/Library/Application Support/AgentNotch/upgrade.log`
+    /// `~/Library/Application Support/AgentNotch` (`upgrade.log` 을 둔다)
     public static var supportDirectory: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/AgentNotch", isDirectory: true)
+        NotchWire.appSupportDirectory
     }
 
     public static var defaultLogURL: URL {

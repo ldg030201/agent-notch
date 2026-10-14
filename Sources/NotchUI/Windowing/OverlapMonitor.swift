@@ -1,4 +1,5 @@
 import AppKit
+import NotchShared
 import os
 
 /// 아일랜드와 겹치는 다른 앱 창 찾기 (열린 메뉴 · 팝오버, 다른 노치 앱)
@@ -146,7 +147,7 @@ final class OverlapMonitor {
     /// 다른 앱 창이 겹침으로 인정되려면 연달아 보여야 하는 조회 횟수 · 최소 시간 (메뉴 · 팝오버는 이보다 오래 열려 있다)
     static let zoneScans = 2
     static let zonePersistence: TimeInterval = 0.2
-    private let logger = Logger(subsystem: "com.ldg.agent-notch", category: "Overlap")
+    private let logger = Logger(subsystem: NotchWire.logSubsystem, category: "Overlap")
 
     /// `isIslandHit` 은 마우스 위치가 아일랜드 위인지 (아일랜드 안 컨텍스트 메뉴는 겹침으로 보지 않기 위함)
     func start(isIslandHit: @escaping @MainActor (CGPoint) -> Bool) {

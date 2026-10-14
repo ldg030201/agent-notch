@@ -126,6 +126,7 @@ struct QuestionCardModel {
     /// 선택지 + 기타 행 높이 (모든 질문 중 최대)
     let choicesHeight: CGFloat
 
+    @MainActor
     init(questions: [QuestionItem], cardWidth: CGFloat) {
         typealias M = IslandMetrics
         let content = cardWidth - M.bodyPadding * 2
@@ -162,9 +163,9 @@ struct QuestionCardModel {
     }
 
     /// 머리말 칩 폭 (머리말이 없으면 "질문")
+    @MainActor
     static func chipWidth(_ question: QuestionItem) -> CGFloat {
-        let text = chipText(question) as NSString
-        return ceil(text.size(withAttributes: [.font: NSFont.systemFont(ofSize: 11)]).width) + chipPadding * 2
+        CompactText.width(chipText(question), font: IslandFont.captionNS) + chipPadding * 2
     }
 
     static func chipText(_ question: QuestionItem) -> String {

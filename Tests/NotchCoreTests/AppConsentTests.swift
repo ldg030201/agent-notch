@@ -281,10 +281,37 @@ import NotchShared
         #expect(!rules.watches(toolName: "mcp__claude-in-chrome__computer", toolInput: json(#"{"action":"wait"}"#)))
         #expect(rules.watches(toolName: "mcp__claude-in-chrome__computer", toolInput: json(#"{"action":"left_click"}"#)))
         #expect(!rules.watches(toolName: "Bash", toolInput: nil))
+    }
 
+    /// 세션을 띄운 앱 판단: 번들 ID → 알려진 `TERM_PROGRAM` → 진입점("desktop") 순서
+    @Test func hostBundleIdentifier() {
+        func host(_ context: TerminalContext) -> String? { context.hostBundleIdentifier }
+        #expect(host(TerminalContext(termProgram: "iTerm.app")) == "com.googlecode.iterm2")
+        #expect(host(TerminalContext(termProgram: "Apple_Terminal")) == "com.apple.Terminal")
+        #expect(host(TerminalContext(termProgram: "vscode")) == "com.microsoft.VSCode")
+        #expect(host(TerminalContext(termProgram: "WarpTerminal")) == "dev.warp.Warp-Stable")
+        #expect(host(TerminalContext(termProgram: "ghostty")) == "com.mitchellh.ghostty")
+        #expect(host(TerminalContext(termProgram: "WezTerm")) == "com.github.wez.wezterm")
+        #expect(host(TerminalContext(termProgram: "zed")) == "dev.zed.Zed")
+        #expect(host(TerminalContext(entrypoint: "claude-desktop")) == TerminalContext.claudeDesktopBundleID)
+        // 번들 ID 가 있으면 그것을 우선
+        #expect(host(TerminalContext(termProgram: "tmux", bundleIdentifier: "com.googlecode.iterm2")) == "com.googlecode.iterm2")
+        #expect(host(TerminalContext(termProgram: "vscode", bundleIdentifier: "com.todesktop.230313mzl4w4u92")) == "com.todesktop.230313mzl4w4u92")
+        #expect(host(TerminalContext(bundleIdentifier: " ", entrypoint: "claude-desktop")) == TerminalContext.claudeDesktopBundleID)
+        #expect(host(TerminalContext(termProgram: "tmux")) == nil)
+        #expect(host(TerminalContext()) == nil)
+    }
+
+    /// Claude 데스크톱 앱 판단은 점프 대상(`hostBundleIdentifier`)과 같은 규칙
+    @Test func claudeDesktopAppFollowsHostRule() {
         #expect(TerminalContext(bundleIdentifier: "com.anthropic.claudefordesktop").isClaudeDesktopApp)
         #expect(TerminalContext(entrypoint: "claude-desktop").isClaudeDesktopApp)
         #expect(!TerminalContext(termProgram: "iTerm.app", entrypoint: "cli").isClaudeDesktopApp)
         #expect(!TerminalContext().isClaudeDesktopApp)
+        // 알려진 터미널이 아니면(tmux 등) 진입점을 본다
+        #expect(TerminalContext(termProgram: "tmux", entrypoint: "claude-desktop").isClaudeDesktopApp)
+        // 알려진 터미널 · 다른 앱 번들 ID 가 있으면 진입점이 desktop 이어도 그 앱이다
+        #expect(!TerminalContext(termProgram: "iTerm.app", entrypoint: "claude-desktop").isClaudeDesktopApp)
+        #expect(!TerminalContext(bundleIdentifier: "com.googlecode.iterm2", entrypoint: "claude-desktop").isClaudeDesktopApp)
     }
 }

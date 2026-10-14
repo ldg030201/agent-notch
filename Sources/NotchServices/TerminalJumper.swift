@@ -12,20 +12,8 @@ import os
 @MainActor
 public final class TerminalJumper {
     nonisolated static let iTermBundleID = "com.googlecode.iterm2"
-    nonisolated static let claudeDesktopBundleID = "com.anthropic.claudefordesktop"
     /// iTerm2 에 보낸 Apple Event 의 응답을 기다리는 최대 시간 (초)
     nonisolated static let scriptTimeoutSeconds = 5
-
-    /// `TERM_PROGRAM` → 번들 ID (소문자 키)
-    nonisolated static let termProgramBundleIDs: [String: String] = [
-        "iterm.app": iTermBundleID,
-        "apple_terminal": "com.apple.Terminal",
-        "vscode": "com.microsoft.VSCode",
-        "warpterminal": "dev.warp.Warp-Stable",
-        "ghostty": "com.mitchellh.ghostty",
-        "wezterm": "com.github.wez.wezterm",
-        "zed": "dev.zed.Zed",
-    ]
 
     /// AppleScript 전용 직렬 큐. `NSAppleScript` 는 스레드 안전하지 않아 만들고 돌리는 일을 모두 여기서만 한다.
     private nonisolated static let scriptQueue = DispatchQueue(label: "com.ldg.agent-notch.iterm-script", qos: .userInitiated)
@@ -59,7 +47,7 @@ public final class TerminalJumper {
     /// iTerm2 세션 선택은 메인 밖에서 돌고 끝나면 iTerm2 를 활성화한다 (실패하면 번들 ID 로 앱만 활성화).
     @discardableResult
     public func jump(to context: TerminalContext) -> Bool {
-        let bundleID = bundleIdentifier(for: context)
+        let bundleID = context.hostBundleIdentifier
 
         // iTerm2 안에서 실행된 세션이면 탭까지 찾아간다
         // (VS Code 터미널 등이 ITERM_SESSION_ID 를 물려받은 경우는 제외)
@@ -79,24 +67,6 @@ public final class TerminalJumper {
 
         guard let bundleID else { return false }
         return activateApp(bundleID)
-    }
-
-    /// 세션을 띄운 앱의 번들 ID (앞에 있는 앱 감지와 공유)
-    public func bundleIdentifier(for context: TerminalContext) -> String? {
-        Self.resolveBundleIdentifier(for: context)
-    }
-
-    nonisolated static func resolveBundleIdentifier(for context: TerminalContext) -> String? {
-        if let bundleID = context.bundleIdentifier?.trimmingCharacters(in: .whitespaces), !bundleID.isEmpty {
-            return bundleID
-        }
-        if let program = context.termProgram?.lowercased(), let bundleID = termProgramBundleIDs[program] {
-            return bundleID
-        }
-        if let entrypoint = context.entrypoint?.lowercased(), entrypoint.contains("desktop") {
-            return claudeDesktopBundleID
-        }
-        return nil
     }
 
     /// `w0t1p0:9F1C…` → UUID 부분. 엄격한 UUID 형식이 아니면 nil (AppleScript 에 넣기 전 검증).

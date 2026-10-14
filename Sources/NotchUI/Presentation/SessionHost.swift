@@ -2,27 +2,14 @@ import Foundation
 import NotchCore
 
 /// 세션을 띄운 앱 종류 (카드의 "터미널로" 버튼이 데려가는 곳 · 버튼 이름).
-/// 점프 대상 결정(`TerminalJumper.resolveBundleIdentifier`)과 같은 순서로 본다:
-/// 번들 ID → 터미널 프로그램(`TERM_PROGRAM`) → 진입점(`CLAUDE_CODE_ENTRYPOINT`)
+/// 점프 대상과 같은 규칙으로 정한다 (`TerminalContext.hostBundleIdentifier` · `isClaudeDesktopApp`)
 enum SessionHost: Equatable {
     case terminal
     /// Claude 데스크톱 앱
     case claudeDesktop
 
-    static let claudeDesktopBundleID = "com.anthropic.claudefordesktop"
-
     init(_ context: TerminalContext?) {
-        self = Self.isClaudeDesktop(context) ? .claudeDesktop : .terminal
-    }
-
-    static func isClaudeDesktop(_ context: TerminalContext?) -> Bool {
-        guard let context else { return false }
-        if let bundleID = context.bundleIdentifier?.trimmingCharacters(in: .whitespaces), !bundleID.isEmpty {
-            return bundleID == claudeDesktopBundleID
-        }
-        // 터미널에서 돌면 진입점과 관계없이 터미널로 간다
-        if let program = context.termProgram, !program.isEmpty { return false }
-        return context.entrypoint?.lowercased().contains("desktop") ?? false
+        self = context?.isClaudeDesktopApp == true ? .claudeDesktop : .terminal
     }
 
     /// 버튼 이름 ("터미널로" · "Claude로")

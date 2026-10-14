@@ -31,9 +31,7 @@ public struct SessionRestorer: Sendable {
     }
 
     public static var defaultProjectsDirectory: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".claude", isDirectory: true)
-            .appendingPathComponent("projects", isDirectory: true)
+        NotchServices.claudeDirectory.appendingPathComponent("projects", isDirectory: true)
     }
 
     /// 되살릴 세션 목록 (최근 것부터)

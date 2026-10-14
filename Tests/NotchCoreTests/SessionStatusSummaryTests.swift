@@ -17,9 +17,8 @@ import Testing
         #expect(SessionStatusSummary.group(for: .compacting) == .working)
         #expect(SessionStatusSummary.group(for: .completed) == .done)
         #expect(SessionStatusSummary.group(for: .idle) == .done)
-        #expect(SessionStatusSummary.group(for: .ended) == nil)
         // 새 단계가 생기면 여기서 묶음을 정해야 한다
-        #expect(SessionPhase.allCases.count == 9)
+        #expect(SessionPhase.allCases.count == 8)
     }
 
     @Test func countsOthersExcludingShownSession() {
@@ -30,7 +29,6 @@ import Testing
             session("thinking", .thinking),
             session("done", .completed),
             session("idle", .idle),
-            session("ended", .ended),
         ]
         let summary = SessionStatusSummary(sessions: sessions, excluding: "shown")
         #expect(summary == SessionStatusSummary(waiting: 2, working: 1, done: 2))
@@ -50,8 +48,8 @@ import Testing
         #expect(summary.spokenText == "끝남 2개")
     }
 
-    @Test func emptyWhenOnlyShownOrEnded() {
-        let summary = SessionStatusSummary(sessions: [session("shown", .thinking), session("gone", .ended)], excluding: "shown")
+    @Test func emptyWhenOnlyShown() {
+        let summary = SessionStatusSummary(sessions: [session("shown", .thinking)], excluding: "shown")
         #expect(summary.isEmpty)
         #expect(summary.groups.isEmpty)
         #expect(summary.spokenText.isEmpty)

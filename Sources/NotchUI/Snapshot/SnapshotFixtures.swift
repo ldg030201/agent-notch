@@ -50,14 +50,12 @@ final class SnapshotActions: IslandActions {
     func togglePin(sessionID: String) {}
     func focus(sessionID: String) {}
     func dismiss(sessionID: String) {}
-    func openSettings() {}
 }
 
 @MainActor
 final class SnapshotSettingsProvider: SettingsProvider {
     var appVersion: String { "0.1.0" }
-    var hookStatusText: String { "설치됨 · 이벤트 14개" }
-    var hooksInstalled: Bool { true }
+    var hookState: (text: String, installed: Bool) { ("설치됨 · 이벤트 14개", true) }
     func installHooks() throws {}
     func uninstallHooks() throws {}
     var launchAtLoginEnabled: Bool { true }
@@ -136,7 +134,7 @@ struct SnapshotWorld {
 
     /// Claude 데스크톱 앱에서 돌아가는 세션의 환경변수 (예시 값)
     static let desktopEnvironment = [
-        "__CFBundleIdentifier": SessionHost.claudeDesktopBundleID,
+        "__CFBundleIdentifier": TerminalContext.claudeDesktopBundleID,
         "CLAUDE_CODE_ENTRYPOINT": "claude-desktop",
     ]
 
@@ -422,7 +420,7 @@ struct SnapshotWorld {
             "hook_event_name": .string(event),
             "permission_mode": .string("default"),
         ]
-        for (key, value) in fields { payload[key] = Self.json(value) }
+        for (key, value) in fields { payload[key] = JSONValue(any: value) }
         store.ingest(HookEnvelope(
             event: event,
             sentAt: clock.now.timeIntervalSince1970,
@@ -487,18 +485,5 @@ struct SnapshotWorld {
             "newStart": newStart, "newLines": lines.filter { !$0.hasPrefix("-") }.count,
             "lines": lines,
         ]
-    }
-
-    private static func json(_ value: Any) -> JSONValue {
-        switch value {
-        case let value as JSONValue: return value
-        case let value as String: return .string(value)
-        case let value as Bool: return .bool(value)
-        case let value as Int: return .number(Double(value))
-        case let value as Double: return .number(value)
-        case let value as [Any]: return .array(value.map(json))
-        case let value as [String: Any]: return .object(value.mapValues(json))
-        default: return .null
-        }
     }
 }

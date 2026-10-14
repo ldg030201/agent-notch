@@ -691,6 +691,7 @@ enum SnapshotShapeCheck {
     }
 
     /// 메뉴바 글자 · 아이콘 자리 (가짜 메뉴바와 같은 배치)
+    @MainActor
     static func glyphs(of bar: SnapshotMenuBar) -> [(name: String, rect: CGRect)] {
         let height = bar.geometry.menuBarHeight
         var result: [(String, CGRect)] = []

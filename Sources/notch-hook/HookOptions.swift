@@ -1,4 +1,5 @@
 import Foundation
+import NotchShared
 
 /// 명령줄 인자 해석 결과.
 ///
@@ -24,14 +25,14 @@ struct HookOptions {
                 options.showHelp = true
             case "--ping":
                 options.ping = true
-            case "--reply-timeout":
+            case NotchWire.replyTimeoutFlag:
                 if index + 1 < arguments.count {
                     options.replyTimeout = parseSeconds(arguments[index + 1])
                     index += 1
                 }
             default:
-                if argument.hasPrefix("--reply-timeout=") {
-                    options.replyTimeout = parseSeconds(String(argument.dropFirst("--reply-timeout=".count)))
+                if argument.hasPrefix(NotchWire.replyTimeoutFlag + "=") {
+                    options.replyTimeout = parseSeconds(String(argument.dropFirst(NotchWire.replyTimeoutFlag.count + 1)))
                 } else if !argument.hasPrefix("-"), options.eventName == nil, !argument.isEmpty {
                     options.eventName = argument
                 }

@@ -72,7 +72,8 @@ struct IslandLayout: Equatable {
     /// 메뉴바 아이콘이 비쳐 보이도록 검은 배경에 뚫는 구멍 (패널 기준).
     /// 모드와 관계없이 화면마다 같은 목록이라 아일랜드가 커지고 줄어드는 동안에도 진짜 아이콘 자리에 머문다.
     var iconHoles: [CGRect] = []
-    /// 클릭 · 마우스를 아래 메뉴바 아이템으로 통과시키는 영역 (프레임 기준, `hitRects` 보다 우선)
+    /// 클릭 · 마우스를 아래 메뉴바 아이템으로 통과시키는 영역 (패널 기준, `hitRects` 보다 우선).
+    /// 아이콘 구멍처럼 모드와 관계없이 화면마다 같은 목록이다
     var passThroughRects: [CGRect] = []
 
     /// 그릴 모양 (패널 기준 원점을 함께 넣어 구멍 · 노치 보호를 프레임 위치와 같은 곡선으로 맞춘다)
@@ -101,6 +102,9 @@ struct IslandLayout: Equatable {
 
     /// 패널(화면 맨 위) 기준 사각형 (원점 왼쪽 위)
     var panelRect: CGRect { CGRect(origin: origin, size: size) }
+
+    /// 클릭 영역 (패널 기준)
+    var panelHitRects: [CGRect] { hitRects.map { $0.offsetBy(dx: origin.x, dy: origin.y) } }
 
     /// 노치 아래 띠를 두 줄 높이로 잡았는지 (백그라운드 배지 · 요약이 제목 줄에 함께 안 들어감, `IslandLayoutEngine.stripHeight`).
     /// 두 줄이면 배지 · 요약은 둘째 줄이다
@@ -178,12 +182,29 @@ enum CompactText {
         }
     }
 
+    /// 글자 폭 (올림). 레이아웃 · 뷰 계산마다 같은 글자를 다시 재지 않게 글꼴 · 글자별로 기억한다
+    @MainActor
     static func width(_ text: String, font: NSFont) -> CGFloat {
         guard !text.isEmpty else { return 0 }
-        return ceil((text as NSString).size(withAttributes: [.font: font]).width)
+        let key = WidthKey(font: font, text: text)
+        if let cached = widthCache[key] { return cached }
+        let measured = ceil((text as NSString).size(withAttributes: [.font: font]).width)
+        if widthCache.count >= widthCacheLimit { widthCache.removeAll(keepingCapacity: true) }
+        widthCache[key] = measured
+        return measured
     }
 
+    private struct WidthKey: Hashable {
+        var font: NSFont
+        var text: String
+    }
+
+    @MainActor private static var widthCache: [WidthKey: CGFloat] = [:]
+    /// 기억하는 글자 수 상한 (넘으면 비우고 다시 모은다)
+    private static let widthCacheLimit = 256
+
     /// `+N −M` 폭 (둘 다 0 이면 표시 안 함)
+    @MainActor
     static func statWidth(added: Int, removed: Int) -> CGFloat {
         guard added > 0 || removed > 0 else { return 0 }
         return width("+\(added)", font: IslandFont.monoNS) + 4 + width("\u{2212}\(removed)", font: IslandFont.monoNS)
@@ -268,6 +289,16 @@ struct IslandLayoutEngine {
     /// 직전에 그린 부분 1 (접힌 모양 또는 열린 카드의 부분 1). 펼친 카드 · 접히는 동안의 접힌 상태는 자리가 같으면 이 모양을 그대로 쓴다
     /// (카드가 열려 있는 동안 접힌 내용이 바뀌어 아래 반경 · 띠 높이가 달라져도 부분 1 이 그대로)
     var previousPart1: IslandLayout?
+    /// 아이콘 구멍 계산 결과 (`holes`). 구멍은 위의 `var` 값과 관계없어 복사본끼리 나눠 써도 된다
+    private let holeCache = HoleCache()
+
+    private final class HoleCache {
+        struct Value {
+            var iconHoles: [CGRect]
+            var passThrough: [CGRect]
+        }
+        var value: Value?
+    }
 
     private typealias M = IslandMetrics
     private typealias C = WingCutouts
@@ -731,7 +762,18 @@ struct IslandLayoutEngine {
     /// 아이콘 구멍 (패널 기준): 날개가 닿을 수 있는 범위 안의 아이콘 전부.
     /// 날개 · 카드 모양과 관계없이 늘 같은 자리에 뚫어서, 모양이 커지고 줄어드는 동안에도 아이콘이 가려지지 않는다
     /// (검은 모양 밖의 구멍은 아무 효과가 없다).
-    var iconHoles: [CGRect] {
+    var iconHoles: [CGRect] { holes.iconHoles }
+
+    /// 아이콘 구멍 · 구멍 위 클릭 통과 영역 (패널 기준). 화면 정보 · 메뉴바 측정값으로만 정해져 엔진마다 처음 쓸 때 한 번만 계산한다
+    private var holes: HoleCache.Value {
+        if let value = holeCache.value { return value }
+        let icon = computeIconHoles()
+        let value = HoleCache.Value(iconHoles: icon, passThrough: C.passThrough(icon, bandHeight: neckHeight))
+        holeCache.value = value
+        return value
+    }
+
+    private func computeIconHoles() -> [CGRect] {
         guard cutsIconHoles else { return [] }
         let limit = wingLimit
         let band = min(geometry.headerHeight, neckHeight)
@@ -742,8 +784,9 @@ struct IslandLayoutEngine {
 
     /// 넓은 노치에서 마우스를 올리면 비켜줄 날개 자리 (패널 기준).
     /// 아이콘 위치를 몰라 날개가 아이콘을 덮을 때만 있다 (아이콘 구멍을 쓰면 비켜줄 필요 없음).
-    func retractBands(for content: CompactContent) -> WingBands {
-        guard usesWings, !cutsIconHoles, case let .wings(spec) = compactPlacement(for: content), spec.arrangement != .strip
+    /// 접힌 내용은 비켜줄 날개가 있을 수 있을 때만 계산한다 (`content`)
+    func retractBands(for content: @autoclosure () -> CompactContent) -> WingBands {
+        guard usesWings, !cutsIconHoles, case let .wings(spec) = compactPlacement(for: content()), spec.arrangement != .strip
         else { return .none }
         let ear: CGFloat = 6
         var bands = WingBands()
@@ -1000,11 +1043,13 @@ struct IslandLayoutEngine {
     // 접힌 모양은 그대로 부분 1 (`IslandShapeSpec.part1`)이 되고, 펼친 카드는 부분 1 아래로 부분 2(몸통)를 내린다.
     // 펼치고 접는 동안 부분 1 은 접힌 모양 그대로다 (양 끝 값이 같다)
 
-    /// 노치 화면 접힌 모양의 몸통 모서리 (몸통이 목과 같은 폭이면 보이지 않고, 카드로 넓어질 때 그대로 이어진다)
-    private static let compactBodyTopRadius: CGFloat = 14
+    /// 몸통 모서리: 노치 화면 접힌 모양 · 메뉴바 알약 · 점 · 펼친 카드가 같은 값을 쓴다.
+    /// 노치 화면은 몸통이 목과 같은 폭이면 보이지 않고 카드로 넓어질 때 그대로 이어지며, 알약 · 점은 알약 카드 · 점 카드와 같아서
+    /// 펼치고 접는 동안 이음매 반경이 0 에서 자라며 턱이 남지 않는다
+    private static let bodyTopRadius: CGFloat = 14
+    /// 노치 화면 접힌 모양 · 카드의 어깨 모서리
     private static let compactShoulderRadius: CGFloat = 10
-    /// 메뉴바 알약 · 점의 몸통 모서리 (알약 카드 · 점 카드와 같은 값: 펼치고 접는 동안 이음매 반경이 0 에서 자라며 턱이 남지 않게)
-    private static let pillBodyTopRadius: CGFloat = 14
+    /// 메뉴바 알약 · 점의 어깨 모서리
     private static let pillShoulderRadius: CGFloat = 8
 
     /// 모든 레이아웃 공통 마무리: 하드웨어 노치 보호 · 메뉴바 아래 몸통 · 아이콘 구멍 · 구멍 위 클릭 통과
@@ -1020,15 +1065,13 @@ struct IslandLayoutEngine {
             // 노치 없는 화면도 메뉴바 안 알약 · 점에서 펼친 카드는 메뉴바 아래에서만 넓어진다
             layout.shape.menuBarBottom = menuBarHeight
         }
-        let holes = iconHoles
-        layout.iconHoles = holes
-        layout.passThroughRects = C.passThrough(holes, bandHeight: neckHeight)
-            .map { $0.offsetBy(dx: -layout.origin.x, dy: -layout.origin.y) }
+        let cached = holes
+        layout.iconHoles = cached.iconHoles
+        layout.passThroughRects = cached.passThrough
         return layout
     }
 
-    /// 펼친 카드 몸통(부분 2) 모서리: 노치 화면 · 메뉴바 알약
-    private var cardBodyTopRadius: CGFloat { 14 }
+    /// 펼친 카드 몸통(부분 2) 어깨 모서리: 노치 화면 · 메뉴바 알약
     private var cardShoulderRadius: CGFloat { geometry.hasNotch ? Self.compactShoulderRadius : Self.pillShoulderRadius }
 
     /// 접힌 모양을 부분 1 로 기억시킨다: 부분 1 = 지금 모양 그대로 (패널 기준).
@@ -1055,7 +1098,7 @@ struct IslandLayoutEngine {
                 origin: CGPoint(x: notchMinX, y: 0),
                 shape: IslandShapeSpec(
                     neckHeight: size.height - 10,
-                    bodyTopRadius: Self.compactBodyTopRadius, shoulderRadius: Self.compactShoulderRadius, bottomRadius: 10
+                    bodyTopRadius: Self.bodyTopRadius, shoulderRadius: Self.compactShoulderRadius, bottomRadius: 10
                 ),
                 compact: nil
             )
@@ -1067,19 +1110,25 @@ struct IslandLayoutEngine {
             origin: CGPoint(x: midX - size.width / 2, y: top),
             shape: IslandShapeSpec(
                 neckHeight: size.height / 2, topRadius: 11,
-                bodyTopRadius: Self.pillBodyTopRadius, shoulderRadius: Self.pillShoulderRadius, bottomRadius: 11
+                bodyTopRadius: Self.bodyTopRadius, shoulderRadius: Self.pillShoulderRadius, bottomRadius: 11
             ),
             compact: nil
         )
     }
 
     func compactLayout(for content: CompactContent) -> IslandLayout {
-        let fresh = compactLayout(placement: compactPlacement(for: content), content: content)
+        compactLayoutAndPlacement(for: content).layout
+    }
+
+    /// 접힌 모양과 그 자리 (자리는 한 번만 고른다)
+    func compactLayoutAndPlacement(for content: CompactContent) -> (layout: IslandLayout, placement: CompactPlacement) {
+        let placement = compactPlacement(for: content)
+        let fresh = compactLayout(placement: placement, content: content)
         // 카드를 접는 동안: 카드의 부분 1 을 그대로 그린다 (접힌 내용이 바뀌어 아래 반경 · 띠 높이가 달라도). 내용 자리는 지금 것
-        guard collapseHold != nil, let previous = previousPart1, Self.samePart1Place(previous, fresh) else { return fresh }
+        guard collapseHold != nil, let previous = previousPart1, Self.samePart1Place(previous, fresh) else { return (fresh, placement) }
         var held = previous
         held.compact = fresh.compact
-        return finish(held)
+        return (finish(held), placement)
     }
 
     /// 접힌 자리 하나의 모양 (부분 1)
@@ -1141,7 +1190,7 @@ struct IslandLayoutEngine {
                         neckLeft: earL, neckRight: earR, neckHeight: band - bottomRadius,
                         bodyLeft: earL, bodyRight: earR,
                         leftEar: earL, rightEar: earR,
-                        bodyTopRadius: Self.compactBodyTopRadius, shoulderRadius: Self.compactShoulderRadius,
+                        bodyTopRadius: Self.bodyTopRadius, shoulderRadius: Self.compactShoulderRadius,
                         bottomRadius: bottomRadius
                     ),
                     compact: .wings(spec)
@@ -1177,7 +1226,7 @@ struct IslandLayoutEngine {
                 origin: CGPoint(x: notchMinX, y: 0),
                 shape: IslandShapeSpec(
                     neckHeight: height - M.lineThickness,
-                    bodyTopRadius: Self.compactBodyTopRadius, shoulderRadius: Self.compactShoulderRadius,
+                    bodyTopRadius: Self.bodyTopRadius, shoulderRadius: Self.compactShoulderRadius,
                     bottomRadius: M.lineThickness
                 ),
                 compact: .line
@@ -1192,7 +1241,7 @@ struct IslandLayoutEngine {
                 origin: CGPoint(x: (centerX - width / 2).rounded(), y: ((menuBarHeight - height) / 2).rounded(.down)),
                 shape: IslandShapeSpec(
                     neckHeight: height / 2, topRadius: height / 2,
-                    bodyTopRadius: Self.pillBodyTopRadius, shoulderRadius: Self.pillShoulderRadius, bottomRadius: height / 2
+                    bodyTopRadius: Self.bodyTopRadius, shoulderRadius: Self.pillShoulderRadius, bottomRadius: height / 2
                 ),
                 compact: .pill(items: items)
             )
@@ -1206,7 +1255,7 @@ struct IslandLayoutEngine {
                 origin: CGPoint(x: (centerX - size / 2).rounded(), y: ((menuBarHeight - size) / 2).rounded(.down)),
                 shape: IslandShapeSpec(
                     neckHeight: size / 2, topRadius: size / 2,
-                    bodyTopRadius: Self.pillBodyTopRadius, shoulderRadius: size / 2, bottomRadius: size / 2
+                    bodyTopRadius: Self.bodyTopRadius, shoulderRadius: size / 2, bottomRadius: size / 2
                 ),
                 compact: .dot
             )
@@ -1221,7 +1270,7 @@ struct IslandLayoutEngine {
                 origin: CGPoint(x: midX - width / 2, y: menuBarHeight + NotchGeometry.pillTopGap),
                 shape: IslandShapeSpec(
                     neckHeight: height / 2, topRadius: height / 2,
-                    bodyTopRadius: Self.pillBodyTopRadius, shoulderRadius: Self.pillShoulderRadius, bottomRadius: height / 2
+                    bodyTopRadius: Self.bodyTopRadius, shoulderRadius: Self.pillShoulderRadius, bottomRadius: height / 2
                 ),
                 compact: .pill(items: items)
             )
@@ -1380,7 +1429,7 @@ struct IslandLayoutEngine {
             neckLeft: attachMin - frameMinX, neckRight: frameMaxX - attachMax, neckHeight: neckBottom - top,
             bodyLeft: bodyLeft, bodyRight: bodyRight,
             leftEar: piece.leftEar, rightEar: piece.rightEar, topRadius: piece.topRadius,
-            bodyTopRadius: cardBodyTopRadius, shoulderRadius: cardShoulderRadius, bottomRadius: radius
+            bodyTopRadius: Self.bodyTopRadius, shoulderRadius: cardShoulderRadius, bottomRadius: radius
         )
         shape.capRadius = p1.shape.capRadius
         shape.part1 = piece

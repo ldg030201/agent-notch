@@ -17,6 +17,25 @@ public enum NotchWire {
     /// 테스트·개발용으로 소켓 경로를 바꿀 때 쓰는 환경변수
     public static let socketPathEnvironmentKey = "AGENT_NOTCH_SOCKET"
 
+    /// os.Logger 서브시스템 (정식판 번들 ID). 앱 · 코어 · UI 가 같은 값을 쓴다
+    public static let logSubsystem = "com.ldg.agent-notch"
+
+    /// 헬퍼가 큰 payload 를 줄였다는 표시 키. 헬퍼(`PayloadShrinker`)가 붙이고 앱(`SessionStore`)이 읽는다
+    public static let truncatedMarkerKey = "_agent_notch_truncated"
+
+    // MARK: 응답 대기 시간 사슬
+    // 훅 timeout(Claude Code 가 훅을 끊는 시간) > 헬퍼의 응답 대기 > 앱의 응답 대기 상한.
+    // 안쪽이 먼저 끝나야 앱이 "결정 없음" 으로 답하고 Claude Code 가 기본 프롬프트로 넘어간다 (훅이 끊겨 결정이 사라지지 않게).
+
+    /// 응답을 기다리는 훅(PermissionRequest · PreToolUse)의 `timeout` (초)
+    public static let hookTimeout = 600
+    /// 헬퍼가 앱 응답을 기다리는 시간 (초). 훅 명령의 `--reply-timeout` 값이자 헬퍼 기본값
+    public static let helperReplyTimeout = 590
+    /// 앱이 요청에 답하기를 기다리는 최대 시간 (초). 헬퍼보다 먼저 끝난다
+    public static let maxAppReplyTimeout = 585
+    /// 헬퍼의 응답 대기 시간 명령줄 옵션
+    public static let replyTimeoutFlag = "--reply-timeout"
+
     /// 늘 응답을 기다리는 훅 이벤트
     public static let replyEvents: Set<String> = ["PermissionRequest"]
 

@@ -84,7 +84,7 @@ struct PermissionView: View {
     let reduceMotion: Bool
 
     var body: some View {
-        let card = PermissionCardModel(request: request, cardWidth: layout.cardWidth)
+        let card = presentation.permissionCard(for: request, width: layout.cardWidth)
         let host = SessionHost(session?.terminal)
 
         CardScaffold(layout: layout) {
@@ -352,7 +352,7 @@ struct CompletionView: View {
 
     private var statusText: String {
         if failed { return "실패" }
-        guard let session, let duration = IslandFormat.turnDuration(session) else { return "완료" }
+        guard let session, let duration = session.turnDuration else { return "완료" }
         return "완료 · \(IslandFormat.duration(duration))"
     }
 

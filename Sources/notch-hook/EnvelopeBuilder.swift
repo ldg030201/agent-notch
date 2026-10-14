@@ -104,8 +104,6 @@ enum PayloadShrinker {
     static let maxLevel = 5
     static let longStringLimit = 64 * 1024
     static let smallScalarLimit = 4 * 1024
-    /// 줄였다는 표시 (앱이 diff 가 불완전함을 알 수 있게)
-    static let truncatedMarkerKey = "_agent_notch_truncated"
 
     static let toolInputLongKeys: Set<String> = ["content", "old_string", "new_string", "command"]
     static let keptResponseStructures: Set<String> = ["structuredPatch", "bashEditDiff"]
@@ -142,7 +140,7 @@ enum PayloadShrinker {
             }
             // 줄여 둔 백그라운드 작업 목록(종류 · 상태)은 작아서 남긴다 (없으면 앱이 개수를 맞추지 못한다)
             if let tasks = object["background_tasks"] { reduced["background_tasks"] = tasks }
-            reduced[truncatedMarkerKey] = .bool(true)
+            reduced[NotchWire.truncatedMarkerKey] = .bool(true)  // 줄였다는 표시 (앱이 diff 가 불완전함을 알 수 있게)
             return .object(reduced)
         }
 
@@ -157,7 +155,7 @@ enum PayloadShrinker {
             result = truncateAllStrings(result, limit: longStringLimit)
         }
         if case .object(var final) = result {
-            final[truncatedMarkerKey] = .bool(true)
+            final[NotchWire.truncatedMarkerKey] = .bool(true)
             result = .object(final)
         }
         return result

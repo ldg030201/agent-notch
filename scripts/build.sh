@@ -29,9 +29,9 @@ done
 echo "==> 번들 조립: $APP" >&2
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN_DIR/AgentNotch" "$APP/Contents/MacOS/AgentNotch"
-cp "$BIN_DIR/notch-hook" "$APP/Contents/MacOS/notch-hook"
-chmod 755 "$APP/Contents/MacOS/AgentNotch" "$APP/Contents/MacOS/notch-hook"
+cp "$BIN_DIR/AgentNotch" "$BIN"
+cp "$BIN_DIR/notch-hook" "$HELPER"
+chmod 755 "$BIN" "$HELPER"
 
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 # 변형마다 이름과 번들 ID 만 바꾼다. 실행 파일 이름(AgentNotch)은 그대로다.
@@ -58,7 +58,7 @@ done
 sign_with() {
   local identity="$1"
   codesign --force --sign "$identity" --timestamp=none \
-    --identifier "$BUNDLE_ID.notch-hook" "$APP/Contents/MacOS/notch-hook" 2>/dev/null \
+    --identifier "$BUNDLE_ID.notch-hook" "$HELPER" 2>/dev/null \
     && codesign --force --sign "$identity" --timestamp=none "$APP" 2>/dev/null
 }
 

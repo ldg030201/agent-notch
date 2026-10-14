@@ -36,7 +36,7 @@ public final class FrontmostAppMonitor {
     /// 세션을 실행한 터미널/앱이 맨 앞에 있는지
     public func isFrontmost(_ context: TerminalContext) -> Bool {
         guard let frontmost = frontmostBundleID,
-              let target = TerminalJumper.resolveBundleIdentifier(for: context) else { return false }
+              let target = context.hostBundleIdentifier else { return false }
         return frontmost.caseInsensitiveCompare(target) == .orderedSame
     }
 }

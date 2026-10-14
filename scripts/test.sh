@@ -5,7 +5,7 @@
 # 사용법: scripts/test.sh [swift test 인자...]   예) scripts/test.sh --filter SessionStoreTests
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 ARGS=(--package-path "$ROOT")
 
 DEVELOPER_DIR_PATH="$(xcode-select -p 2>/dev/null || true)"

@@ -134,9 +134,8 @@ public enum ToolSummarizer {
 
         /// 글자 수 제한으로 자르고 숨은 문자를 드러낸다
         func shown(_ text: String, max: Int, keepLineBreaks: Bool = false) -> (text: String, truncated: Bool) {
-            let truncated = text.count > max
-            let cut = truncated ? String(text.prefix(max - 1)) + TextUtils.ellipsis : text
-            return (TextUtils.revealInvisibles(cut, keepLineBreaks: keepLineBreaks), truncated)
+            let cut = TextUtils.truncate(text, max: max)
+            return (TextUtils.revealInvisibles(cut, keepLineBreaks: keepLineBreaks), cut != text)
         }
 
         switch toolName {
@@ -160,13 +159,6 @@ public enum ToolSummarizer {
         case "WebFetch":
             let detail = shown(input.string("url") ?? "", max: maxDetail)
             return PermissionSummary(title: "웹 요청", detail: detail.text, isTruncated: detail.truncated)
-        case "ExitPlanMode":
-            // 계획은 첫 줄만 보여준다 → 나머지가 있으면 잘린 것
-            let plan = toolInput?["plan"]?.stringValue ?? ""
-            let lineCount = plan.split(whereSeparator: \.isNewline)
-                .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.count
-            let detail = shown(firstPlanLine(in: toolInput) ?? "", max: maxDetail)
-            return PermissionSummary(title: "계획 승인 요청", detail: detail.text, isTruncated: detail.truncated || lineCount > 1)
         default:
             if let mcp = mcpParts(toolName) {
                 // 서버 · 툴 이름 다음 줄에 인자 JSON (인자가 없으면 이름만)

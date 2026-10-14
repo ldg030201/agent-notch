@@ -328,6 +328,7 @@ struct SnapshotMenuBar {
         )
     }
 
+    @MainActor
     private static func layoutMenus(_ titles: [String], limit: CGFloat) -> [MenuItem] {
         var items: [MenuItem] = []
         var x: CGFloat = 14 + 16 + 18 // 왼쪽 여백 + 사과 로고 + 간격
@@ -341,8 +342,9 @@ struct SnapshotMenuBar {
         return items
     }
 
+    @MainActor
     static func textWidth(_ text: String, bold: Bool) -> CGFloat {
-        ceil((text as NSString).size(withAttributes: [.font: bold ? menuBoldFont : menuFont]).width)
+        CompactText.width(text, font: bold ? menuBoldFont : menuFont)
     }
 }
 

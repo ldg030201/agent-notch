@@ -297,7 +297,7 @@ struct SessionDetailView: View {
     }
 
     private var recentActivities: [ActivityItem] {
-        let relevant = session.activities.filter { $0.kind != .message && $0.kind != .prompt }
+        let relevant = session.activities.filter { $0.kind != .prompt }
         return Array(relevant.suffix(Self.activityCount))
     }
 }
@@ -349,17 +349,17 @@ struct ElapsedText: View {
         Group {
             if session.phase == .failed {
                 // 실패한 턴은 더 흐르지 않는다 (`needsAttention` 이지만 기다리는 중이 아님)
-                if let duration = IslandFormat.turnDuration(session) {
+                if let duration = session.turnDuration {
                     Text("실패 · \(IslandFormat.duration(duration))")
                 } else {
                     Text("실패")
                 }
             } else if session.phase.isWorking || session.phase.needsAttention,
-                      let start = session.turnStartedAt ?? session.turn.startedAt {
+                      let start = session.turnStartedAt {
                 IslandClock(everySecond: true) { now in
                     Text(IslandFormat.duration(now.timeIntervalSince(start)))
                 }
-            } else if session.phase == .completed, let duration = IslandFormat.turnDuration(session) {
+            } else if session.phase == .completed, let duration = session.turnDuration {
                 Text("완료 · \(IslandFormat.duration(duration))")
             } else {
                 IslandClock { now in

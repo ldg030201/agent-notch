@@ -1,7 +1,7 @@
 import Foundation
 
 /// 세션 상태 요약: 기다리는 중(주황) · 진행 중(초록) · 끝남(회색) 개수.
-/// 접힌 아일랜드는 지금 보여주는 세션을 뺀 나머지를, 펼친 목록 머리는 모든 세션을 요약한다. 종료된 세션은 세지 않는다.
+/// 접힌 아일랜드는 지금 보여주는 세션을 뺀 나머지를, 펼친 목록 머리는 모든 세션을 요약한다.
 public struct SessionStatusSummary: Hashable, Sendable {
     /// 표시 순서: 기다리는 중 → 진행 중 → 끝남
     public enum Group: Int, CaseIterable, Hashable, Sendable {
@@ -36,8 +36,7 @@ public struct SessionStatusSummary: Hashable, Sendable {
     public init<S: Sequence>(sessions: S, excluding excludedID: String? = nil) where S.Element == AgentSession {
         self.init()
         for session in sessions where session.id != excludedID {
-            guard let group = Self.group(for: session) else { continue }
-            switch group {
+            switch Self.group(for: session) {
             case .waiting: waiting += 1
             case .working: working += 1
             case .done: done += 1
@@ -48,14 +47,13 @@ public struct SessionStatusSummary: Hashable, Sendable {
     public static let empty = SessionStatusSummary()
 
     /// 세션 → 묶음. 메인 답변이 끝났어도 백그라운드 작업이 돌고 있으면 진행 중으로 센다
-    public static func group(for session: AgentSession) -> Group? {
+    public static func group(for session: AgentSession) -> Group {
         let group = group(for: session.phase)
         return group == .done && session.backgroundTaskCount > 0 ? .working : group
     }
 
-    /// 단계 → 묶음 (종료된 세션은 nil)
-    public static func group(for phase: SessionPhase) -> Group? {
-        if phase == .ended { return nil }
+    /// 단계 → 묶음
+    public static func group(for phase: SessionPhase) -> Group {
         if phase.needsAttention { return .waiting }
         if phase.isWorking { return .working }
         return .done

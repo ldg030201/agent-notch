@@ -34,7 +34,7 @@ import Testing
     @Test func noTextWithoutBackgroundWorkOrWhileBusy() {
         #expect(session(.idle).backgroundStatusText == nil)
         #expect(session(.completed).backgroundStatusText == nil)
-        // 일하는 중 · 기다리는 중 · 실패 · 종료는 각자 문구가 있다
+        // 일하는 중 · 기다리는 중 · 실패는 각자 문구가 있다
         for phase in SessionPhase.allCases where phase != .idle && phase != .completed {
             #expect(session(phase, subagents: 1).backgroundStatusText == nil, "\(phase)")
         }

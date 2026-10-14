@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# build.sh · dev.sh · release.sh · make-signing-cert.sh 가 함께 쓰는 값과 함수.
+# scripts/*.sh (build · dev · run · stop · release · test · simulate-events · make-signing-cert) 가 함께 쓰는 값과 함수.
 #
 # 앱 이름 · 번들 경로 · 빌드 호출을 스크립트마다 따로 계산하면, 이름을 바꿀 때 한 곳을 놓쳐서
 # 없는 번들을 열거나 엉뚱한 앱을 끄게 된다. 여기 한 곳만 고친다.
@@ -13,11 +13,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # VARIANT=test 로 부르면 번들 이름 · ID 가 다른 별개의 앱(AgentNotch-Test)이 나온다.
 # 설정(UserDefaults)을 정식판과 나눠 쓰고, 새 버전 확인 · 자체 업데이트를 하지 않는다.
 VARIANT="${VARIANT:-release}"
+RELEASE_APP_NAME="AgentNotch"
+TEST_APP_NAME="AgentNotch-Test"
 if [[ "$VARIANT" == "test" ]]; then
-  APP_NAME="AgentNotch-Test"
+  APP_NAME="$TEST_APP_NAME"
   BUNDLE_ID="com.ldg.agent-notch-test"
 else
-  APP_NAME="AgentNotch"
+  APP_NAME="$RELEASE_APP_NAME"
   BUNDLE_ID="com.ldg.agent-notch"
 fi
 

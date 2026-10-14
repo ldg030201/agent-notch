@@ -17,7 +17,7 @@ import NotchShared
 public final class SessionStore {
     /// session_id → 세션
     public private(set) var sessions: [String: AgentSession] = [:]
-    /// 포커스 우선순위 순으로 정렬된 세션 목록 (UI 목록용, 종료된 세션 제외)
+    /// 포커스 우선순위 순으로 정렬된 세션 목록 (UI 목록용)
     public private(set) var rankedSessions: [AgentSession] = []
     /// 지금 노치가 주로 보여줄 세션
     public private(set) var focusedSessionID: String?
@@ -26,10 +26,15 @@ public final class SessionStore {
     /// 응답 대기 중인 권한 요청 · 질문 · 계획 승인 (오래된 순)
     public private(set) var pendingPermissions: [PermissionRequestInfo] = []
     /// 노치에서 답하지 않고 세션 앱(터미널 · Claude 앱)으로 넘긴 질문 · 계획 승인 (세션 ID → tool_use_id).
-    /// 그 다이얼로그에 답할 때까지(입력 대기가 끝나거나 새 입력 요청이 올 때까지) 입력 대기 카드를 다시 띄우지 않는다
-    public private(set) var handedOffInputs: [String: String] = [:]
+    /// 그 다이얼로그에 답할 때까지(입력 대기가 끝나거나 새 입력 요청이 올 때까지) 입력 대기 카드를 다시 띄우지 않는다.
+    /// 밖에서는 `isInputHandedOff` 로 본다 (관찰 대상이라 `@ObservationIgnored` 를 붙이지 않는다)
+    private var handedOffInputs: [String: String] = [:]
     /// UI 일시 반응용 최신 신호
     public private(set) var latestSignal: SignalEvent?
+    /// 세션별 응답 스트리밍 텍스트 (MessageDisplay delta 누적, 최근 `AgentSession.maxStreamingCharacters` 자).
+    /// 세션과 따로 두는 이유: delta 는 초당 여러 번 오는데 이 글을 보여주는 곳은 미리보기 · 완료 · 펼친 상세뿐이다.
+    /// `sessions` 에 쓰면 접힌 아일랜드 · 모든 화면 레이아웃이 delta 마다 다시 계산된다
+    public private(set) var streamingTexts: [String: String] = [:]
 
     /// 권한 요청에 대한 사용자 결정이 나면 호출된다 (SocketServer 가 훅 프로세스에 응답을 전달).
     public var onPermissionResolved: (@MainActor (PermissionRequestInfo, PermissionDecision) -> Void)?
@@ -56,7 +61,7 @@ public final class SessionStore {
     @ObservationIgnored private var terminalWaits: [String: [TerminalWait]] = [:]
     @ObservationIgnored private var signalSeq = 0
 
-    private static let logger = Logger(subsystem: "com.ldg.agent-notch", category: "SessionStore")
+    private static let logger = Logger(subsystem: NotchWire.logSubsystem, category: "SessionStore")
     /// `lastAssistantMessage` 보관 최대 길이 (뒤쪽 유지)
     private static let maxAssistantMessageCharacters = 4_000
 
@@ -89,6 +94,12 @@ public final class SessionStore {
             let released = removeSession(sessionID)
             recomputeFocus()
             releasePassthrough(released)
+            return nil
+        }
+
+        // 응답 스트리밍: 이미 아는 세션이면 글만 덧붙이고 끝낸다 (세션 · 포커스를 건드리지 않음)
+        if event == "MessageDisplay", sessions[sessionID] != nil {
+            appendStreaming(sessionID: sessionID, payload: payload)
             return nil
         }
 
@@ -147,7 +158,8 @@ public final class SessionStore {
         case "Notification":
             signal = handleNotification(&session, payload: payload, agentID: agentID, now: now)
         case "MessageDisplay":
-            handleMessageDisplay(&session, payload: payload)
+            // 처음 보는 세션의 첫 이벤트가 스트리밍인 경우 (세션은 위 공통 경로가 만든다)
+            appendStreaming(sessionID: sessionID, payload: payload)
         case "Stop":
             signal = handleStop(&session, payload: payload, now: now)
         case "StopFailure":
@@ -224,17 +236,8 @@ public final class SessionStore {
             session.terminal = TerminalContext(entrypoint: item.entrypoint)
             switch item.state {
             case let .runningTool(name, input, toolUseID):
-                let summary = ToolSummarizer.summarize(toolName: name, toolInput: input, cwd: item.cwd)
-                let activity = ActivityItem(
-                    id: toolUseID ?? UUID().uuidString,
-                    kind: .tool,
-                    toolName: name,
-                    title: summary.title,
-                    detail: summary.detail,
-                    symbolName: summary.symbolName,
-                    label: summary.label,
-                    status: .running,
-                    startedAt: item.lastEventAt
+                let activity = Self.toolActivity(
+                    id: toolUseID, toolName: name, toolInput: input, cwd: item.cwd, agentID: nil, at: item.lastEventAt
                 )
                 appendActivity(&session, activity)
                 session.currentActivity = activity
@@ -503,10 +506,10 @@ public final class SessionStore {
         session.phase = .thinking
         session.mainTurnEnded = false
         session.turnStartedAt = now
-        session.turn = TurnSummary(startedAt: now)
+        session.turn = TurnSummary()
         session.lastPrompt = TextUtils.nonEmpty(prompt)
         // 새 턴에 이전 턴의 마지막 답변이 보이지 않게 (`latestTextLine` 은 스트리밍이 비면 이 값을 쓴다)
-        session.streamingText = ""
+        if streamingTexts[session.id] != nil { streamingTexts[session.id] = nil }
         session.lastAssistantMessage = nil
         session.hasUnseenCompletion = false
         session.errorMessage = nil
@@ -537,18 +540,8 @@ public final class SessionStore {
     ) -> IslandSignal? {
         let toolName = payload.string("tool_name") ?? "Tool"
         let toolInput = payload["tool_input"]
-        let summary = ToolSummarizer.summarize(toolName: toolName, toolInput: toolInput, cwd: session.cwd)
-        let item = ActivityItem(
-            id: payload.string("tool_use_id") ?? UUID().uuidString,
-            kind: .tool,
-            toolName: toolName,
-            title: summary.title,
-            detail: summary.detail,
-            symbolName: summary.symbolName,
-            label: summary.label,
-            status: .running,
-            startedAt: now,
-            agentID: agentID
+        let item = Self.toolActivity(
+            id: payload.string("tool_use_id"), toolName: toolName, toolInput: toolInput, cwd: session.cwd, agentID: agentID, at: now
         )
         if appendActivity(&session, item) {
             session.turn.toolCount += 1
@@ -777,18 +770,25 @@ public final class SessionStore {
         }
     }
 
-    private func handleMessageDisplay(_ session: inout AgentSession, payload: HookPayload) {
+    /// 응답 스트리밍 텍스트에 MessageDisplay delta 를 덧붙인다 (`streamingTexts`)
+    private func appendStreaming(sessionID: String, payload: HookPayload) {
         guard let delta = payload["delta"]?.stringValue, !delta.isEmpty else { return }
-        var text = session.streamingText
+        var text = streamingTexts[sessionID] ?? ""
         // 새 메시지의 첫 조각이면 이전 메시지와 줄바꿈으로 구분
         if payload.int("index") == 0, !text.isEmpty, !text.hasSuffix("\n") {
             text += "\n"
         }
         text += delta
-        if text.count > AgentSession.maxStreamingCharacters {
+        // 바이트 수가 한도 안이면 글자 수도 한도 안이다 (`count` 는 매번 처음부터 세므로 먼저 거른다)
+        if text.utf8.count > AgentSession.maxStreamingCharacters, text.count > AgentSession.maxStreamingCharacters {
             text = String(text.suffix(AgentSession.maxStreamingCharacters))
         }
-        session.streamingText = text
+        streamingTexts[sessionID] = text
+    }
+
+    /// 아일랜드에 한 줄로 보여줄 세션의 최근 응답 텍스트 (스트리밍 중이면 그 마지막 줄, 아니면 마지막 답변의 마지막 줄)
+    public func latestTextLine(for sessionID: String) -> String? {
+        sessions[sessionID]?.latestTextLine(streaming: streamingTexts[sessionID])
     }
 
     private func handleStop(_ session: inout AgentSession, payload: HookPayload, now: Date) -> IslandSignal {
@@ -822,12 +822,7 @@ public final class SessionStore {
     }
 
     private func handleSubagentStart(_ session: inout AgentSession, payload: HookPayload, now: Date) {
-        let agentID = payload.string("agent_id") ?? "unknown:\(UUID().uuidString)"
-        var running = runningSubagents[session.id] ?? []
-        running.remove("task:\(agentID)")
-        running.insert(agentID)
-        runningSubagents[session.id] = running
-        session.activeSubagents = running.count
+        noteRunningSubagent(&session, agentID: payload.string("agent_id") ?? "unknown:\(UUID().uuidString)")
         appendActivity(&session, ActivityItem(
             id: Self.subagentActivityID(payload.string("agent_id")),
             kind: .subagent,
@@ -844,14 +839,13 @@ public final class SessionStore {
     /// 세면 실제로 도는 서브에이전트 수가 줄고, 타임라인에 가짜 "Agent" 가 붙고, 그 이벤트의 작업 목록으로 셸 수까지 지워진다
     private func handleSubagentStop(_ session: inout AgentSession, payload: HookPayload, now: Date) {
         guard let agentID = payload.string("agent_id"),
-              runningSubagents[session.id]?.remove(agentID) != nil
-                || runningSubagents[session.id]?.remove("task:\(agentID)") != nil
+              var running = runningSubagents[session.id],
+              running.remove(agentID) != nil || running.remove("task:\(agentID)") != nil
         else {
             Self.logger.debug("시작을 못 본 SubagentStop 무시")
             return
         }
-        if runningSubagents[session.id]?.isEmpty == true { runningSubagents[session.id] = nil }
-        session.activeSubagents = runningSubagents[session.id]?.count ?? 0
+        setRunningSubagents(running, in: &session)
         // 그 서브에이전트 항목과, 결과가 오지 않은 채 남은 그 서브에이전트의 툴을 닫는다
         for index in session.activities.indices
         where session.activities[index].agentID == agentID && session.activities[index].status == .running {
@@ -869,14 +863,19 @@ public final class SessionStore {
         reconcileBackgroundTasks(&session, payload: payload, includesSubagents: false)
     }
 
-    /// 시작(SubagentStart)을 못 본 서브에이전트의 이벤트: 도는 중으로 센다 (앱을 새로 띄우기 전에 시작한 서브에이전트 등).
+    /// 서브에이전트가 도는 중으로 센다 (SubagentStart, 시작을 못 본 서브에이전트의 다른 이벤트 — 앱을 새로 띄우기 전에 시작한 서브에이전트 등).
     /// 턴 끝 목록에서만 알던 "task:<id>" 는 그 ID 로 바꾼다 (이후 SubagentStop 으로 끝낼 수 있게)
     private func noteRunningSubagent(_ session: inout AgentSession, agentID: String) {
         var running = runningSubagents[session.id] ?? []
         guard !running.contains(agentID) else { return }
         running.remove("task:\(agentID)")
         running.insert(agentID)
-        runningSubagents[session.id] = running
+        setRunningSubagents(running, in: &session)
+    }
+
+    /// 도는 서브에이전트 집합과 세션의 `activeSubagents` 를 함께 바꾼다 (둘이 어긋나지 않게). 빈 집합은 지운다
+    private func setRunningSubagents(_ running: Set<String>, in session: inout AgentSession) {
+        runningSubagents[session.id] = running.isEmpty ? nil : running
         session.activeSubagents = running.count
     }
 
@@ -923,8 +922,7 @@ public final class SessionStore {
                 next.insert("task:\(taskID ?? UUID().uuidString)")
             }
         }
-        runningSubagents[session.id] = next.isEmpty ? nil : next
-        session.activeSubagents = next.count
+        setRunningSubagents(next, in: &session)
     }
 
     /// `background_tasks` 를 종류별로 센 결과 (서브에이전트는 작업 ID 목록, ID 가 없으면 nil)
@@ -1088,9 +1086,20 @@ public final class SessionStore {
         if let toolUseID, let index = session.activities.lastIndex(where: { $0.id == toolUseID }) {
             return index
         }
-        let summary = ToolSummarizer.summarize(toolName: toolName, toolInput: payload["tool_input"], cwd: session.cwd)
-        session.activities.append(ActivityItem(
-            id: toolUseID ?? UUID().uuidString,
+        session.activities.append(Self.toolActivity(
+            id: toolUseID, toolName: toolName, toolInput: payload["tool_input"], cwd: session.cwd, agentID: agentID, at: now
+        ))
+        session.turn.toolCount += 1
+        return session.activities.count - 1
+    }
+
+    /// 실행 중인 툴 활동 (툴 이름 · 입력을 요약한 제목 · 아이콘). `tool_use_id` 가 없으면 새 ID 를 붙인다
+    private static func toolActivity(
+        id: String?, toolName: String, toolInput: JSONValue?, cwd: String, agentID: String?, at date: Date
+    ) -> ActivityItem {
+        let summary = ToolSummarizer.summarize(toolName: toolName, toolInput: toolInput, cwd: cwd)
+        return ActivityItem(
+            id: id ?? UUID().uuidString,
             kind: .tool,
             toolName: toolName,
             title: summary.title,
@@ -1098,11 +1107,9 @@ public final class SessionStore {
             symbolName: summary.symbolName,
             label: summary.label,
             status: .running,
-            startedAt: now,
+            startedAt: date,
             agentID: agentID
-        ))
-        session.turn.toolCount += 1
-        return session.activities.count - 1
+        )
     }
 
     /// 툴이 끝난 뒤: 아직 실행 중인 다른 툴(병렬 · 서브에이전트)이 있으면 그것을 현재 활동으로, 없으면 thinking
@@ -1142,6 +1149,7 @@ public final class SessionStore {
     /// 세션과 관련 상태를 제거하고, 남아 있던 권한 요청을 돌려준다
     private func removeSession(_ sessionID: String) -> [PermissionRequestInfo] {
         sessions[sessionID] = nil
+        streamingTexts[sessionID] = nil
         phaseBeforeCompact[sessionID] = nil
         if handedOffInputs[sessionID] != nil { handedOffInputs[sessionID] = nil }
         consentWatches[sessionID] = nil
@@ -1284,7 +1292,7 @@ public final class SessionStore {
         switch session.phase {
         case .thinking, .runningTool, .completed, .failed, .idle:
             session.phase = held
-        case .waitingPermission, .waitingInput, .compacting, .ended:
+        case .waitingPermission, .waitingInput, .compacting:
             break
         }
     }
@@ -1462,11 +1470,9 @@ public final class SessionStore {
         latestSignal = SignalEvent(seq: signalSeq, signal: signal, at: date)
     }
 
-    /// notch-hook 의 PayloadShrinker 가 payload 를 줄였다는 표시 (같은 키를 쓴다)
-    static let shrunkMarkerKey = "_agent_notch_truncated"
-
+    /// notch-hook 의 PayloadShrinker 가 payload 를 줄였는지 (`NotchWire.truncatedMarkerKey`)
     private static func isShrunk(_ payload: HookPayload) -> Bool {
-        payload.bool(shrunkMarkerKey) == true
+        payload.bool(NotchWire.truncatedMarkerKey) == true
     }
 
     /// 툴 응답에 Claude Code 가 계산한 diff(비어 있지 않은 structuredPatch · bashEditDiff)가 있는지.

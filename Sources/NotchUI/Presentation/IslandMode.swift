@@ -57,13 +57,8 @@ enum IslandMode: Equatable {
         }
     }
 
-    /// 사용자 주의가 필요한 알림 모드인지 (풀스크린 "알림만" 에서도 표시)
-    var isAlert: Bool {
-        switch self {
-        case .permission, .needsInput: return true
-        default: return false
-        }
-    }
+    /// 접힌 상태(쉬는 중 · 작업 중)인지
+    var isCompact: Bool { self == .idle || self == .working }
 }
 
 // MARK: - 레이아웃 상수

@@ -184,12 +184,10 @@ struct IslandHitShape: Shape {
     /// 클릭 통과 영역 (패널 기준, `hitRects` 보다 우선)
     let cutouts: [CGRect]
 
-    /// 레이아웃의 클릭 영역 · 통과 영역(프레임 기준)을 패널 기준으로 옮겨 쓴다
     init(layout: IslandLayout, shape: IslandPanelShape) {
         self.shape = shape
-        let origin = layout.origin
-        hitRects = layout.hitRects.map { $0.offsetBy(dx: origin.x, dy: origin.y) }
-        cutouts = layout.passThroughRects.map { $0.offsetBy(dx: origin.x, dy: origin.y) }
+        hitRects = layout.panelHitRects
+        cutouts = layout.passThroughRects
     }
 
     var animatableData: IslandShapeSpec {

@@ -128,7 +128,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     private func addHookItems() {
         let status = settings.hookStatus
-        menu.addItem(Self.disabledItem("Claude Code 훅: \(settings.hookStatusText)"))
+        menu.addItem(Self.disabledItem("Claude Code 훅: \(AppSettingsProvider.hookStatusText(for: status))"))
         if status != .installed {
             let title = status == .notInstalled ? "Claude Code 훅 설치" : "Claude Code 훅 다시 설치"
             menu.addItem(ClosureMenuItem(title: title) { [weak self] in self?.host?.installHooksFromMenu() })
@@ -140,18 +140,13 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     // MARK: - 표시 문자열
 
+    /// 단계 이름은 아일랜드 목록과 같다 (`SessionPhase.label`).
     /// 쉬는 중이어도 백그라운드 작업이 돌면 아일랜드와 같이 "백그라운드 N개 작업 중" (`AgentSession.backgroundStatusText`)
     static func statusText(for session: AgentSession) -> String {
         switch session.phase {
-        case .idle: return session.backgroundStatusText ?? "대기 중"
-        case .thinking: return "생각 중"
-        case .runningTool: return session.currentActivity?.title ?? "작업 중"
-        case .waitingPermission: return "승인 대기"
-        case .waitingInput: return "입력 대기"
-        case .compacting: return "압축 중"
-        case .completed: return session.backgroundStatusText ?? "완료"
-        case .failed: return "실패"
-        case .ended: return "종료"
+        case .idle, .completed: return session.backgroundStatusText ?? session.phase.label
+        case .runningTool: return session.currentActivity?.title ?? session.phase.label
+        case .thinking, .waitingPermission, .waitingInput, .compacting, .failed: return session.phase.label
         }
     }
 

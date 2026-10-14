@@ -133,6 +133,21 @@ public enum JSONValue: Codable, Hashable, Sendable {
         }
     }
 
+    /// Swift 값 → JSON 값 (`JSONValue` · `String` · `Bool` · `Int` · `Double` · 배열 · `[String: Any]`, 그 밖의 값은 `null`).
+    /// 데모 · 스냅숏처럼 payload 를 사전 리터럴로 적을 때 쓴다
+    public init(any value: Any) {
+        switch value {
+        case let value as JSONValue: self = value
+        case let value as String: self = .string(value)
+        case let value as Bool: self = .bool(value)
+        case let value as Int: self = .number(Double(value))
+        case let value as Double: self = .number(value)
+        case let value as [Any]: self = .array(value.map { JSONValue(any: $0) })
+        case let value as [String: Any]: self = .object(value.mapValues { JSONValue(any: $0) })
+        default: self = .null
+        }
+    }
+
     public func serialized(sortedKeys: Bool = false) throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = sortedKeys ? [.sortedKeys, .withoutEscapingSlashes] : [.withoutEscapingSlashes]

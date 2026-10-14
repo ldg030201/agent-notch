@@ -25,7 +25,6 @@ import NotchShared
         #expect(s.phase == .thinking)
         #expect(s.lastPrompt == "세션 만료 시간을 환경변수로 빼줘")
         #expect(s.turnStartedAt == clock.now)
-        #expect(s.turn.startedAt == clock.now)
         #expect(s.activities.last?.kind == .prompt)
 
         clock.advance()
@@ -67,7 +66,7 @@ import NotchShared
         #expect(s.phase == .completed)
         #expect(s.hasUnseenCompletion)
         #expect(s.lastAssistantMessage == "세션 TTL 분리했어.\n테스트 통과.")
-        #expect(s.latestTextLine == "테스트 통과.")
+        #expect(store.latestTextLine(for: "s1") == "테스트 통과.")
         #expect(store.latestSignal?.signal == .completed(sessionID: "s1"))
     }
 
@@ -202,23 +201,40 @@ import NotchShared
         store.ingest(hook("UserPromptSubmit", #"{"prompt":"go"}"#))
         store.ingest(hook("MessageDisplay", #"{"index":0,"final":false,"delta":"첫 줄\n"}"#))
         store.ingest(hook("MessageDisplay", #"{"index":1,"final":true,"delta":"둘째 줄"}"#))
-        #expect(store.sessions["s1"]?.streamingText == "첫 줄\n둘째 줄")
+        #expect(store.streamingTexts["s1"] == "첫 줄\n둘째 줄")
         // 새 메시지(index 0)는 줄바꿈으로 구분
         store.ingest(hook("MessageDisplay", #"{"index":0,"final":true,"delta":"다음 메시지"}"#))
-        #expect(store.sessions["s1"]?.streamingText == "첫 줄\n둘째 줄\n다음 메시지")
-        #expect(store.sessions["s1"]?.latestTextLine == "다음 메시지")
+        #expect(store.streamingTexts["s1"] == "첫 줄\n둘째 줄\n다음 메시지")
+        #expect(store.latestTextLine(for: "s1") == "다음 메시지")
+        // 스트리밍은 세션 · 포커스를 건드리지 않는다 (delta 마다 모든 화면이 다시 계산되지 않게)
+        let before = try #require(store.sessions["s1"])
+        let ranked = store.rankedSessions.map(\.id)
+        clock.advance()
+        store.ingest(hook("MessageDisplay", #"{"index":1,"final":false,"delta":" 이어서"}"#))
+        #expect(store.sessions["s1"] == before)
+        #expect(store.rankedSessions.map(\.id) == ranked)
+        #expect(store.latestTextLine(for: "s1") == "다음 메시지 이어서")
 
         // 최근 2000자만 유지
         let long = String(repeating: "가", count: 2_500) + "끝"
         let payload = JSONValue.object(["index": .number(1), "delta": .string(long)])
         store.ingest(hook("MessageDisplay", String(decoding: try payload.serialized(), as: UTF8.self)))
-        let text = try #require(store.sessions["s1"]?.streamingText)
+        let text = try #require(store.streamingTexts["s1"])
         #expect(text.count == AgentSession.maxStreamingCharacters)
         #expect(text.hasSuffix("가끝"))
 
         // 새 프롬프트에서 초기화
         store.ingest(hook("UserPromptSubmit", #"{"prompt":"next"}"#))
-        #expect(store.sessions["s1"]?.streamingText == "")
+        #expect(store.streamingTexts["s1"] == nil)
+
+        // 처음 보는 세션의 첫 이벤트가 스트리밍이어도 세션을 만들고 글을 쌓는다
+        store.ingest(hook("MessageDisplay", session: "fresh", #"{"index":0,"delta":"안녕"}"#))
+        #expect(store.sessions["fresh"] != nil)
+        #expect(store.latestTextLine(for: "fresh") == "안녕")
+
+        // 세션이 끝나면 스트리밍 글도 지운다
+        store.ingest(hook("SessionEnd", session: "fresh"))
+        #expect(store.streamingTexts["fresh"] == nil)
     }
 
     @Test func userPromptResetsTurn() throws {
@@ -234,7 +250,8 @@ import NotchShared
         store.ingest(hook("UserPromptSubmit", #"{"prompt":"<pasted_content id=\"1\">secret code</pasted_content> 이거 고쳐줘"}"#))
         s = try #require(store.sessions["s1"])
         #expect(s.phase == .thinking)
-        #expect(s.turn == TurnSummary(startedAt: clock.now))
+        #expect(s.turn == TurnSummary())
+        #expect(s.turnStartedAt == clock.now)
         #expect(s.errorMessage == nil)
         #expect(!s.hasUnseenCompletion)
         #expect(s.lastPrompt == "[붙여넣음] 이거 고쳐줘")
@@ -450,5 +467,16 @@ import NotchShared
         #expect(second.seq > first.seq)
         #expect(second.signal == first.signal)
         #expect(second.at == clock.now)
+    }
+
+    /// 마지막 비어 있지 않은 줄 (뒤에서부터 찾는다)
+    @Test func lastNonEmptyLine() {
+        #expect(AgentSession.lastNonEmptyLine("") == nil)
+        #expect(AgentSession.lastNonEmptyLine(" \n\t\n") == nil)
+        #expect(AgentSession.lastNonEmptyLine("한 줄") == "한 줄")
+        #expect(AgentSession.lastNonEmptyLine("첫 줄\n  둘째 줄  \n\n \n") == "둘째 줄")
+        #expect(AgentSession.lastNonEmptyLine("a\r\nb\r\n") == "b")
+        #expect(AgentSession.lastNonEmptyLine("\n\n맨 위") == "맨 위")
+        #expect(AgentSession.lastNonEmptyLine("맨 위\n\n") == "맨 위")
     }
 }

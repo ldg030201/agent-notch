@@ -81,9 +81,34 @@ public struct AppConsentHeuristic: Hashable, Sendable {
 extension TerminalContext {
     public static let claudeDesktopBundleID = "com.anthropic.claudefordesktop"
 
-    /// Claude 데스크톱 앱 안에서 실행된 세션인지 (번들 ID 또는 `CLAUDE_CODE_ENTRYPOINT`)
+    /// 알려진 `TERM_PROGRAM` → 번들 ID (소문자 키)
+    public static let termProgramBundleIDs: [String: String] = [
+        "iterm.app": "com.googlecode.iterm2",
+        "apple_terminal": "com.apple.Terminal",
+        "vscode": "com.microsoft.VSCode",
+        "warpterminal": "dev.warp.Warp-Stable",
+        "ghostty": "com.mitchellh.ghostty",
+        "wezterm": "com.github.wez.wezterm",
+        "zed": "dev.zed.Zed",
+    ]
+
+    /// 세션을 띄운 앱의 번들 ID (터미널 점프 · 앞에 있는 앱 감지 · 카드의 "터미널로/Claude로" 가 함께 쓴다).
+    /// 번들 ID(`__CFBundleIdentifier`) → 알려진 터미널 프로그램(`TERM_PROGRAM`) → 진입점(`CLAUDE_CODE_ENTRYPOINT` 에 "desktop") 순서로 본다
+    public var hostBundleIdentifier: String? {
+        if let bundleID = bundleIdentifier?.trimmingCharacters(in: .whitespaces), !bundleID.isEmpty {
+            return bundleID
+        }
+        if let program = termProgram?.lowercased(), let bundleID = Self.termProgramBundleIDs[program] {
+            return bundleID
+        }
+        if entrypoint?.lowercased().contains("desktop") == true {
+            return Self.claudeDesktopBundleID
+        }
+        return nil
+    }
+
+    /// Claude 데스크톱 앱 안에서 실행된 세션인지 (`hostBundleIdentifier` 와 같은 규칙)
     public var isClaudeDesktopApp: Bool {
-        if bundleIdentifier?.trimmingCharacters(in: .whitespaces) == Self.claudeDesktopBundleID { return true }
-        return entrypoint?.lowercased().contains("desktop") == true
+        hostBundleIdentifier == Self.claudeDesktopBundleID
     }
 }

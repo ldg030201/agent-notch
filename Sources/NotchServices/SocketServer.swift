@@ -45,8 +45,8 @@ public final class SocketServer: @unchecked Sendable {
 
     /// 한 줄(envelope)의 최대 크기. 넘으면 연결을 끊는다.
     public static let maxLineBytes = NotchWire.maxEnvelopeBytes + 64 * 1024
-    /// 헬퍼의 `--reply-timeout 590` 보다 먼저 응답하도록 대기 시간을 이 값으로 자른다
-    public static let maxReplyTimeout: TimeInterval = 585
+    /// 헬퍼의 응답 대기(`NotchWire.helperReplyTimeout`)보다 먼저 응답하도록 대기 시간을 이 값으로 자른다
+    public static let maxReplyTimeout = TimeInterval(NotchWire.maxAppReplyTimeout)
     /// 연결 후 envelope 한 줄을 다 받을 때까지 기다리는 최대 시간
     static let lineReadTimeout: TimeInterval = 15
     /// 응답 한 줄을 쓰는 최대 시간
@@ -55,6 +55,8 @@ public final class SocketServer: @unchecked Sendable {
     static let maxConnections = 128
 
     public let socketPath: String
+    /// 인스턴스 잠금 시도 횟수 (`acquireInstanceLock`). 막히면 `lockRetryInterval` 마다 다시 시도한다
+    let lockAttempts: Int
     /// 인스턴스 사이 시작을 직렬화하는 잠금 파일 (지우지 않는다: 지우면 다른 inode 로 잠금이 갈라질 수 있음)
     var lockPath: String { socketPath + ".lock" }
 
@@ -100,8 +102,11 @@ public final class SocketServer: @unchecked Sendable {
     private var awaitingIDCount = 0
     private let readChunk = UnsafeMutableRawBufferPointer.allocate(byteCount: 64 * 1024, alignment: 1)
 
-    public init(socketPath: String = NotchWire.socketPath()) {
+    /// - lockAttempts: 인스턴스 잠금 시도 횟수. 앱은 한 번이면 된다 (막혔으면 다른 인스턴스가 도는 것).
+    ///   방금 놓은 잠금을 같은 프로세스에서 곧바로 다시 잡는 테스트만 늘린다 (`acquireInstanceLock`)
+    public init(socketPath: String = NotchWire.socketPath(), lockAttempts: Int = 1) {
         self.socketPath = socketPath
+        self.lockAttempts = max(1, lockAttempts)
     }
 
     deinit {
@@ -234,11 +239,11 @@ public final class SocketServer: @unchecked Sendable {
     /// 잠금은 커널이 fd 에 묶어 관리하므로 앱이 죽어도 저절로 풀린다 (stale 잠금 없음).
     ///
     /// 같은 프로세스가 자식 프로세스를 띄우는 순간(fork ~ exec 사이)에는 자식이 잠금 fd 를 잠깐 함께 쥐어
-    /// 방금 놓은 잠금도 막힐 수 있다. 그래서 막히면 잠깐씩(`lockRetryInterval`) 몇 번 다시 시도한다.
-    /// 진짜로 다른 인스턴스가 쥐고 있으면 그대로 `alreadyRunning` (최대 약 0.2초 늦어질 뿐).
+    /// 방금 놓은 잠금도 막힐 수 있다. 앱은 시작할 때 한 번만 잡으므로 상관없고, 그런 테스트만 `lockAttempts` 를 늘려
+    /// 잠깐씩(`lockRetryInterval`) 다시 시도한다. 진짜로 다른 인스턴스가 쥐고 있으면 그대로 `alreadyRunning`.
     private func acquireInstanceLock() throws {
         guard lockFD < 0 else { return }
-        for attempt in 1...Self.lockAttempts {
+        for attempt in 1...lockAttempts {
             // O_NOFOLLOW: 잠금 파일 자리에 심어 둔 링크는 따라가지 않는다. O_CLOEXEC: 자식 프로세스로 잠금이 새지 않게.
             let fd = Darwin.open(lockPath, O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW | O_EXLOCK | O_NONBLOCK, 0o600)
             if fd >= 0 {
@@ -247,13 +252,12 @@ public final class SocketServer: @unchecked Sendable {
             }
             let code = errno
             guard code == EWOULDBLOCK else { throw SocketServerError.systemCall(name: "open(lock)", code: code) }
-            if attempt < Self.lockAttempts { usleep(Self.lockRetryInterval) }
+            if attempt < lockAttempts { usleep(Self.lockRetryInterval) }
         }
         throw SocketServerError.alreadyRunning
     }
 
-    /// 인스턴스 잠금 시도 횟수 · 사이 간격(마이크로초). 합쳐서 약 0.2초
-    static let lockAttempts = 10
+    /// 인스턴스 잠금 재시도 간격 (마이크로초)
     static let lockRetryInterval: useconds_t = 20_000
 
     /// 잠금을 푼다 (fd 를 닫으면 풀림). 잠금 파일은 남겨 둔다.

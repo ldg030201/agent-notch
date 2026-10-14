@@ -250,15 +250,13 @@ import NotchShared
             ("WebFetch", #"{"url":"https://example.com/docs","prompt":"요약"}"#, "웹 요청", "https://example.com/docs"),
             ("mcp__github__create_issue", #"{"title":"x","body":"a\nb"}"#, "MCP 툴 요청", "github · create_issue\n" + #"{"body":"a\nb","title":"x"}"#),
             ("mcp__github__list_issues", "{}", "MCP 툴 요청", "github · list_issues"),
-            ("ExitPlanMode", #"{"plan":"\n## 세션 TTL 분리\n1. 설정 추가"}"#, "계획 승인 요청", "세션 TTL 분리"),
             ("WebSearch", #"{"query":"swift"}"#, "WebSearch 사용 요청", #"{"query":"swift"}"#),
         ]
         for (tool, input, title, detail) in cases {
             let summary = ToolSummarizer.permissionSummary(toolName: tool, toolInput: json(input), cwd: projectCwd)
             #expect(summary.title == title, "\(tool)")
             #expect(summary.detail == detail, "\(tool)")
-            // 계획은 첫 줄만 보여주므로 여러 줄 계획은 잘린 것
-            #expect(summary.isTruncated == (tool == "ExitPlanMode"), "\(tool)")
+            #expect(!summary.isTruncated, "\(tool)")
         }
     }
 
@@ -295,9 +293,6 @@ import NotchShared
         #expect(ToolSummarizer.permissionSummary(toolName: "WebSearch", toolInput: bigArgs, cwd: nil).isTruncated)
         let url = JSONValue.object(["url": .string("https://example.com/" + String(repeating: "p", count: 400))])
         #expect(ToolSummarizer.permissionSummary(toolName: "WebFetch", toolInput: url, cwd: nil).isTruncated)
-        // 계획은 첫 줄만 보여주므로 여러 줄이면 잘린 것
-        #expect(ToolSummarizer.permissionSummary(toolName: "ExitPlanMode", toolInput: json(##"{"plan":"# 계획\n1. 테스트"}"##), cwd: nil).isTruncated)
-        #expect(!ToolSummarizer.permissionSummary(toolName: "ExitPlanMode", toolInput: json(#"{"plan":"계획 하나"}"#), cwd: nil).isTruncated)
     }
 
     @Test func requestCarriesTruncation() throws {

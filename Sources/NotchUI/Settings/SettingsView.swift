@@ -74,8 +74,7 @@ final class SettingsModel {
 
     func refresh() {
         appVersion = provider.appVersion
-        hookStatusText = provider.hookStatusText
-        hooksInstalled = provider.hooksInstalled
+        (hookStatusText, hooksInstalled) = provider.hookState
         launchAtLoginEnabled = provider.launchAtLoginEnabled
         launchAtLoginManagedByHomebrew = provider.launchAtLoginManagedByHomebrew
         refreshAccessibility()

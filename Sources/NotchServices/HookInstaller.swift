@@ -77,13 +77,8 @@ public final class HookInstaller {
     /// (PreToolUse 는 그 두 툴일 때만 기다리고 다른 툴은 바로 끝난다 — `NotchWire.expectsReply`)
     static let replyEvents: Set<String> = ["PermissionRequest", "PreToolUse"]
 
-    /// 헬퍼가 앱 응답을 기다리는 최대 시간 (훅 timeout 600 보다 짧게)
-    static let permissionReplyTimeout = 590
-
     public static var defaultSettingsURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".claude", isDirectory: true)
-            .appendingPathComponent("settings.json")
+        NotchServices.claudeDirectory.appendingPathComponent("settings.json")
     }
 
     public static var defaultHelperInstallURL: URL {
@@ -236,25 +231,20 @@ public final class HookInstaller {
     /// 셸 형식 명령. 경로에 공백이 있어 작은따옴표로 감싼다.
     /// 응답을 기다리는 이벤트는 `--reply-timeout` 을 붙인다 (헬퍼는 이 옵션이 있을 때만 PreToolUse 에서 기다린다)
     public func command(for event: String) -> String {
-        var command = "\(Self.shellQuoted(helperInstallURL.path)) \(event)"
+        var command = "\(Upgrader.shellQuoted(helperInstallURL.path)) \(event)"
         if Self.replyEvents.contains(event) {
-            command += " --reply-timeout \(Self.permissionReplyTimeout)"
+            command += " \(NotchWire.replyTimeoutFlag) \(NotchWire.helperReplyTimeout)"
         }
         return command
     }
 
     static func timeout(for event: String) -> Int {
         switch event {
-        case "PermissionRequest", "PreToolUse": return 600
+        case "PermissionRequest", "PreToolUse": return NotchWire.hookTimeout
         case "MessageDisplay": return 5
         case "SessionEnd": return 2
         default: return 10
         }
-    }
-
-    /// POSIX 셸 작은따옴표 인용 (`'` → `'\''`)
-    static func shellQuoted(_ text: String) -> String {
-        "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     private func hookEntry(for event: String) -> JSONValue {
@@ -454,6 +444,9 @@ public final class HookInstaller {
     // MARK: - 헬퍼 복사
 
     /// 헬퍼를 고정 경로로 복사한다. 실제로 파일을 바꿨으면 true.
+    ///
+    /// 앱을 띄울 때마다 불리므로 두 파일을 통째로 비교하는 일을 줄인다: 복사본의 수정 시각을 원본에 맞춰 두고,
+    /// 크기 · 수정 시각이 같으면 그대로 둔다. 크기가 다르면 비교 없이 복사하고, 크기만 같으면 내용을 비교한다.
     @discardableResult
     private func installHelper(from source: URL) throws -> Bool {
         guard fileManager.fileExists(atPath: source.path) else { throw HookInstallerError.helperSourceMissing }
@@ -463,15 +456,23 @@ public final class HookInstaller {
             return false
         }
 
+        let sourceInfo = FileStamp(path: source.path)
+        let currentInfo = FileStamp(path: destination.path)
+        if let sourceInfo, sourceInfo == currentInfo {
+            try setPermissions(0o755, at: destination)
+            return false
+        }
         let data = try Data(contentsOf: source)
         try createDirectoryIfNeeded(destination.deletingLastPathComponent())
-        // 내용이 같으면 그대로 둔다
-        if let current = try? Data(contentsOf: destination), current == data {
+        // 크기가 같을 때만 내용을 비교한다. 같으면 그대로 두고 수정 시각만 맞춘다 (다음부터는 비교하지 않게)
+        if currentInfo?.size == off_t(data.count), let current = try? Data(contentsOf: destination), current == data {
             try setPermissions(0o755, at: destination)
+            sourceInfo?.applyModificationTime(to: destination.path)
             return false
         }
         // rename 으로 교체하므로 실행 중인 훅 프로세스가 있어도 안전하다
         try AtomicFile.write(data, to: destination, permissions: 0o755)
+        sourceInfo?.applyModificationTime(to: destination.path)
         log.info("훅 헬퍼 복사 완료")
         return true
     }
@@ -480,6 +481,33 @@ public final class HookInstaller {
         guard chmod(url.path, permissions) == 0 else {
             throw HookInstallerError.writeFailed(path: url.path, code: errno)
         }
+    }
+}
+
+// MARK: - 파일 크기 · 수정 시각
+
+/// 내용을 읽지 않고 같은 파일인지 가늠하는 크기 · 수정 시각 (나노초까지)
+struct FileStamp: Equatable {
+    var size: off_t
+    var modifiedSeconds: Int
+    var modifiedNanoseconds: Int
+
+    /// 일반 파일이 아니거나 없으면 nil
+    init?(path: String) {
+        var info = stat()
+        guard stat(path, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { return nil }
+        size = info.st_size
+        modifiedSeconds = info.st_mtimespec.tv_sec
+        modifiedNanoseconds = info.st_mtimespec.tv_nsec
+    }
+
+    /// 다른 파일의 수정 시각을 이 값으로 맞춘다 (실패해도 다음에 내용을 비교할 뿐이라 무시)
+    func applyModificationTime(to path: String) {
+        var times = [
+            timespec(tv_sec: 0, tv_nsec: Int(UTIME_OMIT)),
+            timespec(tv_sec: modifiedSeconds, tv_nsec: modifiedNanoseconds),
+        ]
+        _ = utimensat(AT_FDCWD, path, &times, 0)
     }
 }
 

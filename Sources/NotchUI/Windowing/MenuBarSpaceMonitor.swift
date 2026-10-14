@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import NotchShared
 import os
 
 /// 화면 하나의 메뉴바 측정값. x 는 화면 왼쪽 끝 기준 상대값(pt).
@@ -249,9 +250,10 @@ struct MenuExtrasHosts: Sendable {
         var checkedAt: Date
     }
 
+    /// 확인한 pid 를 다시 보는 간격. 상태 아이템이 없던 앱도 이 간격이다
+    /// (방금 실행된 앱은 상태 아이템을 만들 시간을 두고 `MenuBarSpaceMonitor.launchRecheckDelay` 뒤에 다시 찾는다)
     static let recheckInterval: TimeInterval = 60
-    /// 상태 아이템이 없던 앱(메뉴바 · 일반 앱)과 확인 못 한 앱은 이 간격으로 다시 본다
-    /// (실행하고 한참 뒤에 상태 아이템을 만드는 앱, 잠깐 바빴던 앱)
+    /// 확인 못 한 앱(잠깐 바빴던 앱)은 이 간격으로 다시 본다
     static let shortRecheckInterval: TimeInterval = 5
     /// 한 번에 새로 확인하는 시간 한도 (나머지는 다음 측정 때)
     static let discoveryBudget: TimeInterval = 0.1
@@ -286,7 +288,7 @@ struct MenuExtrasHosts: Sendable {
 
     /// 확인할 때가 된 pid 를 (시간 한도 안에서) 확인하고, 상태 아이템이 있는 pid 를 돌려준다.
     /// - 처음 보는 pid 와 `recheck`(방금 실행된 앱)를 먼저, 그다음 다시 볼 때가 된 pid 를 우선순위 순으로 본다.
-    /// - 상태 아이템이 없던 메뉴바 · 일반 앱과 확인 못 한 pid 는 5초, 나머지는 60초마다 다시 본다.
+    /// - 확인 못 한 pid 는 5초, 나머지(상태 아이템이 없던 앱 포함)는 60초마다 다시 본다.
     mutating func discover(
         _ candidates: [Candidate],
         recheck: Set<pid_t>,
@@ -297,8 +299,7 @@ struct MenuExtrasHosts: Sendable {
         entries = entries.filter { alive.contains($0.key) }
         let due = candidates.compactMap { candidate -> (tier: Int, candidate: Candidate)? in
             guard let entry = entries[candidate.pid], !recheck.contains(candidate.pid) else { return (0, candidate) }
-            let short = entry.uncertain || (!entry.hasExtras && candidate.priority <= 2)
-            let interval = short ? Self.shortRecheckInterval : Self.recheckInterval
+            let interval = entry.uncertain ? Self.shortRecheckInterval : Self.recheckInterval
             return now.timeIntervalSince(entry.checkedAt) >= interval ? (1, candidate) : nil
         }
         .sorted { ($0.tier, $0.candidate.priority) < ($1.tier, $1.candidate.priority) }
@@ -566,7 +567,7 @@ final class MenuBarSpaceMonitor {
     private static let menuConfirmDelay: TimeInterval = 0.45
     /// 실행 직후엔 상태 아이템이 아직 없을 수 있어 조금 뒤에 다시 찾는다
     private static let launchRecheckDelay: Duration = .seconds(3)
-    private let logger = Logger(subsystem: "com.ldg.agent-notch", category: "MenuBarSpace")
+    private let logger = Logger(subsystem: NotchWire.logSubsystem, category: "MenuBarSpace")
 
     func start() {
         guard !running else { return }

@@ -50,7 +50,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
         updates = AppUpdateProvider(preferences: preferences)
         demo = DemoScenario(store: store)
         super.init()
-        actions.uiController = uiController
         // 버전 탭 · 아일랜드 헤더가 처음 그려질 때부터 업데이트 상태가 있어야 한다
         uiController.updateProvider = updates
     }

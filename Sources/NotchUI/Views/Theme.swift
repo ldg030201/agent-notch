@@ -89,6 +89,8 @@ enum IslandFont {
     // 레이아웃 계산(텍스트 줄 수 측정)용 AppKit 글꼴
     static let bodyNS = NSFont.systemFont(ofSize: 12)
     static let monoNS = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    /// 보조 11pt (`caption` 과 같은 글꼴)
+    static let captionNS = NSFont.systemFont(ofSize: 11)
     static let summaryCountNS = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
     /// 고정폭 11pt 한 글자 폭
     static let monoCharWidth: CGFloat = ceil(("M" as NSString).size(withAttributes: [.font: monoNS]).width)
@@ -119,6 +121,11 @@ enum IslandMotion {
     static let branchContentDelay: Duration = .milliseconds(340)
     /// 크기 · 위치가 바뀐 뒤 모양이 다 자리 잡았다고 보는 시간 (두 스프링 모두 99.8% 이상). 그 전엔 호버 밝힘을 시작하지 않는다
     static let settleDelay: Duration = .milliseconds(450)
+    /// `settleDelay` (초). 부팅 후 초로 시각을 재는 곳이 쓴다 (접히는 동안 카드 띠 붙잡기 · 접힌 상태 새로 숨기기 미루기)
+    static let settleSeconds: TimeInterval = {
+        let parts = settleDelay.components
+        return Double(parts.seconds) + Double(parts.attoseconds) / 1e18
+    }()
     static let contentFadeIn = Animation.easeOut(duration: 0.18)
     static let contentFadeOut = Animation.easeOut(duration: 0.1)
     static let hover = Animation.easeOut(duration: 0.15)

@@ -351,12 +351,12 @@ import NotchShared
         let store = makeStore(clock)
         store.ingest(hook("UserPromptSubmit", #"{"prompt":"go"}"#))
         store.ingest(hook("Stop", #"{"last_assistant_message":"다 고쳤어."}"#))
-        #expect(store.sessions["s1"]?.latestTextLine == "다 고쳤어.")
+        #expect(store.latestTextLine(for: "s1") == "다 고쳤어.")
 
         store.ingest(hook("UserPromptSubmit", #"{"prompt":"다음"}"#))
         let s = try #require(store.sessions["s1"])
         #expect(s.lastAssistantMessage == nil)
-        #expect(s.latestTextLine == nil)
+        #expect(store.latestTextLine(for: "s1") == nil)
     }
 
     // MARK: - 7. 줄인 payload 의 diff

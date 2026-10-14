@@ -30,31 +30,6 @@ struct TerminalJumperTests {
         }
     }
 
-    @Test func resolvesBundleIdentifier() {
-        func resolve(_ context: TerminalContext) -> String? {
-            TerminalJumper.resolveBundleIdentifier(for: context)
-        }
-        #expect(resolve(TerminalContext(termProgram: "iTerm.app")) == "com.googlecode.iterm2")
-        #expect(resolve(TerminalContext(termProgram: "Apple_Terminal")) == "com.apple.Terminal")
-        #expect(resolve(TerminalContext(termProgram: "vscode")) == "com.microsoft.VSCode")
-        #expect(resolve(TerminalContext(termProgram: "WarpTerminal")) == "dev.warp.Warp-Stable")
-        #expect(resolve(TerminalContext(termProgram: "ghostty")) == "com.mitchellh.ghostty")
-        #expect(resolve(TerminalContext(termProgram: "WezTerm")) == "com.github.wez.wezterm")
-        #expect(resolve(TerminalContext(termProgram: "zed")) == "dev.zed.Zed")
-        #expect(resolve(TerminalContext(entrypoint: "claude-desktop")) == "com.anthropic.claudefordesktop")
-        // 번들 ID 가 있으면 그것을 우선
-        #expect(resolve(TerminalContext(termProgram: "tmux", bundleIdentifier: "com.googlecode.iterm2")) == "com.googlecode.iterm2")
-        #expect(resolve(TerminalContext(termProgram: "vscode", bundleIdentifier: "com.todesktop.230313mzl4w4u92")) == "com.todesktop.230313mzl4w4u92")
-        #expect(resolve(TerminalContext(termProgram: "tmux")) == nil)
-        #expect(resolve(TerminalContext()) == nil)
-    }
-
-    @MainActor
-    @Test func instanceMethodMatchesStatic() {
-        let context = TerminalContext(termProgram: "ghostty")
-        #expect(TerminalJumper().bundleIdentifier(for: context) == "com.mitchellh.ghostty")
-    }
-
     @Test func iTermScriptHasTimeoutAndOnlyValidatedUUID() throws {
         let uuid = "9F1C2B3A-1234-4ABC-9DEF-0123456789AB"
         let script = try #require(TerminalJumper.iTermSelectScript(uuid))

@@ -39,4 +39,16 @@ import Testing
         #expect(throws: (any Error).self) { try JSONValue.parse(Data("not json".utf8)) }
         #expect(throws: (any Error).self) { try JSONValue.parse(Data(#"{"a":"\ud83d"#.utf8)) }
     }
+
+    /// 사전 리터럴(데모 · 스냅숏 payload) → JSON 값
+    @Test func initFromAnyLiteral() {
+        let fields: [String: Any] = [
+            "text": "a", "flag": true, "count": 3, "ratio": 0.5,
+            "list": ["x", 1], "nested": ["k": false], "raw": JSONValue.null, "other": Date(),
+        ]
+        #expect(JSONValue(any: fields) == .object([
+            "text": .string("a"), "flag": .bool(true), "count": .number(3), "ratio": .number(0.5),
+            "list": .array([.string("x"), .number(1)]), "nested": .object(["k": .bool(false)]), "raw": .null, "other": .null,
+        ]))
+    }
 }

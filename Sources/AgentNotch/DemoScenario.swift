@@ -236,7 +236,7 @@ final class DemoScenario {
             "permission_mode": .string("default"),
         ]
         for (key, value) in fields {
-            payload[key] = Self.json(value)
+            payload[key] = JSONValue(any: value)
         }
         let envelope = HookEnvelope(
             event: event,
@@ -284,18 +284,5 @@ final class DemoScenario {
 
     private func pause(_ seconds: Double) async throws {
         try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-    }
-
-    private static func json(_ value: Any) -> JSONValue {
-        switch value {
-        case let value as JSONValue: return value
-        case let value as String: return .string(value)
-        case let value as Bool: return .bool(value)
-        case let value as Int: return .number(Double(value))
-        case let value as Double: return .number(value)
-        case let value as [Any]: return .array(value.map(json))
-        case let value as [String: Any]: return .object(value.mapValues(json))
-        default: return .null
-        }
     }
 }

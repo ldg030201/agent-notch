@@ -18,7 +18,7 @@ struct QuestionView: View {
     let reduceMotion: Bool
 
     var body: some View {
-        let card = QuestionCardModel(questions: questions, cardWidth: layout.cardWidth)
+        let card = presentation.questionCard(for: request, questions: questions, width: layout.cardWidth)
         let host = SessionHost(session?.terminal)
 
         CardScaffold(layout: layout) {

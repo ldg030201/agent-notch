@@ -277,7 +277,8 @@ struct SocketServerTests {
         defer { removeSocketFiles(path) }
         FileManager.default.createFile(atPath: path, contents: Data("keep".utf8))
 
-        let server = SocketServer(socketPath: path)
+        // 같은 서버가 방금 놓은 잠금을 다시 잡는다
+        let server = SocketServer(socketPath: path, lockAttempts: retryingLockAttempts)
         #expect(throws: SocketServerError.pathOccupied) {
             try server.start()
         }
@@ -317,7 +318,8 @@ struct SocketServerTests {
         try #require(lock >= 0)
         #expect(bindUnlistenedSocket(path))
 
-        let server = SocketServer(socketPath: path)
+        // 테스트가 방금 놓은 잠금을 다시 잡는다
+        let server = SocketServer(socketPath: path, lockAttempts: retryingLockAttempts)
         #expect(throws: SocketServerError.alreadyRunning) {
             try server.start()
         }

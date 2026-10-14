@@ -13,8 +13,8 @@ import Glibc
 
 enum HookHelper {
     static let version = "0.1.0"
-    /// 응답 대기 기본값. 훅 기본 타임아웃(600초)보다 짧아야 한다.
-    static let defaultReplyTimeout: Double = 590
+    /// 응답 대기 기본값. 훅 timeout(`NotchWire.hookTimeout`)보다 짧아야 한다.
+    static let defaultReplyTimeout = Double(NotchWire.helperReplyTimeout)
     static let replyTimeoutEnvironmentKey = "AGENT_NOTCH_REPLY_TIMEOUT"
     static let debugEnvironmentKey = "AGENT_NOTCH_DEBUG"
     static let sendTimeout: TimeInterval = 2

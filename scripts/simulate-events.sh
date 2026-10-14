@@ -10,11 +10,12 @@
 #   AGENT_NOTCH_SOCKET  소켓 경로를 바꿀 때 (앱도 같은 값으로 실행해야 함)
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 FIXTURES="$ROOT/Fixtures/events"
 FAST=0
 KEEP=0
 REPLY_TIMEOUT=60
+# lib.sh 의 HELPER(VARIANT 한 판의 헬퍼) 대신 아래에서 두 판 · SwiftPM 빌드를 차례로 찾는다
 HELPER="${NOTCH_HOOK:-}"
 
 usage() {
@@ -54,8 +55,8 @@ done
 
 if [[ -z "$HELPER" ]]; then
   for candidate in \
-    "$ROOT/build/AgentNotch-Test.app/Contents/MacOS/notch-hook" \
-    "$ROOT/build/AgentNotch.app/Contents/MacOS/notch-hook" \
+    "$ROOT/build/$TEST_APP_NAME.app/Contents/MacOS/notch-hook" \
+    "$ROOT/build/$RELEASE_APP_NAME.app/Contents/MacOS/notch-hook" \
     "$ROOT/.build/debug/notch-hook" \
     "$ROOT/.build/release/notch-hook"; do
     if [[ -x "$candidate" ]]; then

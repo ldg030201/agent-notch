@@ -8,7 +8,7 @@ import Foundation
 /// 4. 가장 최근 이벤트가 있었던 세션
 public enum FocusEngine {
     public struct Decision: Hashable, Sendable {
-        /// 우선순위 순 세션 ID (종료된 세션 제외)
+        /// 우선순위 순 세션 ID
         public var rankedIDs: [String]
         public var focusedID: String?
 
@@ -25,9 +25,7 @@ public enum FocusEngine {
         pinnedID: String?,
         currentFocusID: String?
     ) -> Decision {
-        let eligible = sessions.filter { $0.phase != .ended }
-        guard !eligible.isEmpty else { return Decision(rankedIDs: [], focusedID: nil) }
-        let byID = Dictionary(eligible.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let byID = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
         // 세션별 가장 오래된 권한 요청 시각
         var oldestPending: [String: Date] = [:]
@@ -36,8 +34,8 @@ public enum FocusEngine {
             oldestPending[request.sessionID] = request.receivedAt
         }
 
-        let attention = attentionOrder(eligible, oldestPending: oldestPending)
-        let recent = eligible.sorted(by: mostRecentFirst)
+        let attention = attentionOrder(sessions, oldestPending: oldestPending)
+        let recent = sessions.sorted(by: mostRecentFirst)
 
         // 목록 순서: 끼어들기 → 고정 → 작업 중(최근순) → 나머지(최근순)
         var ranked: [String] = []

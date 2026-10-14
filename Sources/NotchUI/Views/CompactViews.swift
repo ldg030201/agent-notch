@@ -215,11 +215,10 @@ struct CompactSessionView: View {
 
     /// 레이아웃이 요약 자리를 줬고 다른 세션이 있을 때만 요약 칩 (앞 내용과 간격 `summaryLead` 를 맞추는 여백 포함)
     @ViewBuilder
-    private func summaryChips(_ items: CompactItems, leading: CGFloat = 0, trailing: CGFloat = 0) -> some View {
+    private func summaryChips(_ items: CompactItems, leading: CGFloat = 0) -> some View {
         if items.contains(.summary), !summary.isEmpty {
             SessionSummaryChips(summary: summary, spokenPrefix: Self.summaryPrefix)
                 .padding(.leading, leading)
-                .padding(.trailing, trailing)
         }
     }
 

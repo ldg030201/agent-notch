@@ -33,8 +33,7 @@ fi
 launch_app ${APP_ARGS[@]+"${APP_ARGS[@]}"}
 
 # 실제로 떴고 훅 이벤트를 받을 준비가 됐는지 확인 (소켓이 열리기까지 1~2초 걸린다).
-# 다른 판이 같은 소켓으로 떠 있으면 새로 띄운 쪽이 "이미 실행 중" 안내 후 꺼진다.
-HELPER="$APP/Contents/MacOS/notch-hook"
+# 다른 판이 같은 소켓으로 떠 있으면 새로 띄운 쪽이 "이미 실행 중" 안내 후 꺼진다. ($HELPER 는 lib.sh)
 for _ in $(seq 1 50); do
   if ! pgrep -f "$(app_process_pattern)" >/dev/null 2>&1; then
     sleep 0.1

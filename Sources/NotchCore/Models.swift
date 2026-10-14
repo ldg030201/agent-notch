@@ -21,8 +21,6 @@ public enum SessionPhase: String, Codable, Sendable, CaseIterable {
     case completed
     /// 턴 실패 (StopFailure)
     case failed
-    /// 세션 종료 (SessionEnd)
-    case ended
 
     /// 사용자의 주의가 필요한 상태인지
     public var needsAttention: Bool {
@@ -37,6 +35,21 @@ public enum SessionPhase: String, Codable, Sendable, CaseIterable {
         switch self {
         case .thinking, .runningTool, .compacting: return true
         default: return false
+        }
+    }
+
+    /// 단계 이름 (아일랜드 목록 부제 · 메뉴바 메뉴 공용).
+    /// 쉬는 중 · 툴 실행 · 완료는 화면마다 더 자세한 문구(경과 시간 · 툴 이름 · 백그라운드 작업)를 쓸 수 있다
+    public var label: String {
+        switch self {
+        case .idle: return "대기 중"
+        case .thinking: return "생각 중"
+        case .runningTool: return "작업 중"
+        case .waitingPermission: return "승인 대기"
+        case .waitingInput: return "입력 대기"
+        case .compacting: return "압축 중"
+        case .completed: return "완료"
+        case .failed: return "실패"
         }
     }
 }
@@ -139,11 +152,8 @@ public struct DiffSnippet: Hashable, Sendable {
 public enum ActivityKind: String, Hashable, Sendable {
     case prompt
     case tool
-    case message
-    case notification
     case compaction
     case subagent
-    case system
 }
 
 public enum ActivityStatus: String, Hashable, Sendable {
@@ -215,7 +225,6 @@ public struct TurnSummary: Hashable, Sendable {
     public var added: Int
     public var removed: Int
     public var toolCount: Int
-    public var startedAt: Date?
     /// 턴이 끝난 시각 (Stop · StopFailure). 그 뒤에 오는 이벤트(idle_prompt · 백그라운드 작업 등)로 소요 시간이 늘지 않게 따로 둔다
     public var endedAt: Date?
 
@@ -224,14 +233,12 @@ public struct TurnSummary: Hashable, Sendable {
         added: Int = 0,
         removed: Int = 0,
         toolCount: Int = 0,
-        startedAt: Date? = nil,
         endedAt: Date? = nil
     ) {
         self.changedFiles = changedFiles
         self.added = added
         self.removed = removed
         self.toolCount = toolCount
-        self.startedAt = startedAt
         self.endedAt = endedAt
     }
 }
@@ -335,8 +342,6 @@ public struct AgentSession: Identifiable, Hashable, Sendable {
     public var lastDiff: DiffSnippet?
     public var turn: TurnSummary
 
-    /// MessageDisplay delta 누적 (최근 `maxStreamingCharacters` 자)
-    public var streamingText: String
     /// Stop 의 `last_assistant_message`
     public var lastAssistantMessage: String?
     public var lastNotification: String?
@@ -369,7 +374,6 @@ public struct AgentSession: Identifiable, Hashable, Sendable {
         activities: [ActivityItem] = [],
         lastDiff: DiffSnippet? = nil,
         turn: TurnSummary = TurnSummary(),
-        streamingText: String = "",
         lastAssistantMessage: String? = nil,
         lastNotification: String? = nil,
         errorMessage: String? = nil,
@@ -396,7 +400,6 @@ public struct AgentSession: Identifiable, Hashable, Sendable {
         self.activities = activities
         self.lastDiff = lastDiff
         self.turn = turn
-        self.streamingText = streamingText
         self.lastAssistantMessage = lastAssistantMessage
         self.lastNotification = lastNotification
         self.errorMessage = errorMessage
@@ -414,22 +417,28 @@ extension AgentSession {
         activeSubagents + backgroundShells + backgroundOthers
     }
 
-    /// 이번(또는 직전) 턴 소요 시간: 턴 시작 → 끝난 시각(`turn.endedAt`). 끝난 시각을 모르면 마지막 이벤트까지, 시작을 모르면 nil
+    /// 이번(또는 직전) 턴 소요 시간: 턴 시작(`turnStartedAt`) → 끝난 시각(`turn.endedAt`). 끝난 시각을 모르면 마지막 이벤트까지, 시작을 모르면 nil
     public var turnDuration: TimeInterval? {
-        guard let start = turn.startedAt ?? turnStartedAt else { return nil }
+        guard let start = turnStartedAt else { return nil }
         return (turn.endedAt ?? lastEventAt).timeIntervalSince(start)
     }
 
     /// 아일랜드에 한 줄로 보여줄 최근 응답 텍스트.
-    /// 스트리밍 중이면 마지막 비어 있지 않은 줄, 아니면 `lastAssistantMessage` 의 마지막 비어 있지 않은 줄.
-    public var latestTextLine: String? {
-        func lastLine(_ text: String) -> String? {
-            text.split(whereSeparator: \.isNewline)
-                .map { $0.trimmingCharacters(in: .whitespaces) }
-                .last { !$0.isEmpty }
+    /// 스트리밍 중이면(`SessionStore.streamingTexts`) 그 마지막 비어 있지 않은 줄, 아니면 `lastAssistantMessage` 의 마지막 비어 있지 않은 줄.
+    public func latestTextLine(streaming: String?) -> String? {
+        streaming.flatMap(Self.lastNonEmptyLine) ?? lastAssistantMessage.flatMap(Self.lastNonEmptyLine)
+    }
+
+    /// 마지막 비어 있지 않은 줄 (앞뒤 공백 제거). 뒤에서부터 찾아 앞쪽 글은 나누지 않는다
+    static func lastNonEmptyLine(_ text: String) -> String? {
+        var end = text.endIndex
+        while end > text.startIndex {
+            let start = text[..<end].lastIndex(where: \.isNewline).map { text.index(after: $0) } ?? text.startIndex
+            let line = text[start..<end].trimmingCharacters(in: .whitespaces)
+            if !line.isEmpty { return line }
+            guard start > text.startIndex else { return nil }
+            end = text.index(before: start)  // 줄바꿈 앞으로
         }
-        if let line = lastLine(streamingText) { return line }
-        if let message = lastAssistantMessage, let line = lastLine(message) { return line }
         return nil
     }
 }

@@ -7,8 +7,8 @@ import NotchCore
 @MainActor
 public protocol SettingsProvider: AnyObject {
     var appVersion: String { get }
-    var hookStatusText: String { get }
-    var hooksInstalled: Bool { get }
+    /// 훅 설치 상태 문구와 설치 여부 (settings.json 을 한 번만 읽어 둘 다 만든다)
+    var hookState: (text: String, installed: Bool) { get }
     func installHooks() throws
     func uninstallHooks() throws
     var launchAtLoginEnabled: Bool { get }

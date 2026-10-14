@@ -177,14 +177,16 @@ func removeSocketFiles(_ path: String) {
     unlink(path + ".lock")
 }
 
-/// 다른 프로세스처럼 인스턴스 잠금을 직접 쥔다. 이미 잠겨 있으면 -1.
-/// 인스턴스 잠금을 쥔다 (실패하면 -1). 다른 테스트가 자식 프로세스를 띄우는 순간 자식이 잠금 fd 를 잠깐 함께 쥘 수 있어
-/// 서버와 같이 잠깐씩 몇 번 다시 시도한다 (`SocketServer.lockAttempts`)
+/// 방금 놓은 인스턴스 잠금을 다시 잡을 때의 시도 횟수 (약 0.2초).
+/// 다른 테스트가 자식 프로세스를 띄우는 순간(fork ~ exec 사이) 자식이 잠금 fd 를 잠깐 함께 쥘 수 있어서다
+let retryingLockAttempts = 10
+
+/// 다른 프로세스처럼 인스턴스 잠금을 직접 쥔다 (실패하면 -1). 방금 놓은 잠금일 수 있어 잠깐씩 몇 번 다시 시도한다
 func holdInstanceLock(_ socketPath: String) -> Int32 {
-    for attempt in 1...SocketServer.lockAttempts {
+    for attempt in 1...retryingLockAttempts {
         let fd = open(socketPath + ".lock", O_RDWR | O_CREAT | O_CLOEXEC | O_EXLOCK | O_NONBLOCK, 0o600)
         if fd >= 0 || errno != EWOULDBLOCK { return fd }
-        if attempt < SocketServer.lockAttempts { usleep(SocketServer.lockRetryInterval) }
+        if attempt < retryingLockAttempts { usleep(SocketServer.lockRetryInterval) }
     }
     return -1
 }

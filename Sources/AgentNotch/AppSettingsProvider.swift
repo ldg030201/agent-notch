@@ -19,10 +19,11 @@ final class AppSettingsProvider: SettingsProvider {
 
     var appVersion: String { AppInfo.displayVersion }
 
+    /// 읽을 때마다 settings.json 을 다시 읽는다. 상태와 문구가 둘 다 필요하면 한 번 읽고 `hookStatusText(for:)` 를 쓴다
     var hookStatus: HookInstallStatus { installer.status() }
 
-    var hookStatusText: String {
-        switch hookStatus {
+    static func hookStatusText(for status: HookInstallStatus) -> String {
+        switch status {
         case .partial(let missing):
             return "일부만 설치됨 (빠진 이벤트: \(missing.joined(separator: ", ")))"
         case .helperMissing:
@@ -32,8 +33,11 @@ final class AppSettingsProvider: SettingsProvider {
         }
     }
 
-    /// 우리 훅 항목이 하나라도 있으면 true (제거 버튼 활성화 기준)
-    var hooksInstalled: Bool { hookStatus != .notInstalled }
+    /// 설정 화면용: settings.json 을 한 번 읽어 문구와 설치 여부(우리 훅 항목이 하나라도 있으면 true, 제거 버튼 활성화 기준)를 함께 만든다
+    var hookState: (text: String, installed: Bool) {
+        let status = hookStatus
+        return (Self.hookStatusText(for: status), status != .notInstalled)
+    }
 
     /// 헬퍼를 복사하고 `~/.claude/settings.json` 에 훅을 등록한다 (기존 파일은 백업)
     func installHooks() throws {

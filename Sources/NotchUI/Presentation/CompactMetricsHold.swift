@@ -52,11 +52,4 @@ struct CompactMetricsHold {
         releaseAt = release
         return next
     }
-
-    mutating func reset() {
-        key = nil
-        held = nil
-        lastNeeded = []
-        releaseAt = nil
-    }
 }

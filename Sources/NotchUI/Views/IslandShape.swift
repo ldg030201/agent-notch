@@ -286,7 +286,7 @@ struct IslandShape: Shape {
         case let .part1(o), let .main(o):
             return o.isEmpty ? Path() : path(o)
         case let .union(main, part1):
-            if main.isEmpty { return path(part1) }
+            // `drawn` 은 주 외곽선이 비면 `.part1` 을 돌려주므로 여기선 늘 둘 다 있다
             return removingSlivers(path(main).union(path(part1)))
         }
     }

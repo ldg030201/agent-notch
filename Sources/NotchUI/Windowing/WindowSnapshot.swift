@@ -33,7 +33,7 @@ struct WindowSnapshot: Sendable {
                 number: (info[kCGWindowNumber as String] as? NSNumber)?.intValue ?? 0,
                 pid: (info[kCGWindowOwnerPID as String] as? NSNumber)?.intValue ?? -1,
                 layer: layer,
-                frame: CGRect(x: bounds.minX, y: primaryHeight - bounds.maxY, width: bounds.width, height: bounds.height),
+                frame: cocoaRect(fromGlobalTopLeft: bounds, primaryHeight: primaryHeight),
                 alpha: (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1,
                 ownerName: info[kCGWindowOwnerName as String] as? String
             ))

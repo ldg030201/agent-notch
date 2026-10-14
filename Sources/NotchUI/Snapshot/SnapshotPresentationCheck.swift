@@ -292,9 +292,8 @@ enum SnapshotInputCheck {
         }
         let w = path(icons)
         cases += 1
-        let origin = w.layout.origin
-        let holes = w.layout.passThroughRects.map { $0.offsetBy(dx: origin.x, dy: origin.y) }
-        let hits = w.layout.hitRects.map { $0.offsetBy(dx: origin.x, dy: origin.y) }
+        let holes = w.layout.passThroughRects
+        let hits = w.layout.panelHitRects
         if let hole = holes.first(where: { h in hits.contains { $0.contains(CGPoint(x: h.midX, y: h.midY)) } }) {
             if w.hit.contains(CGPoint(x: hole.midX, y: hole.midY)) { problems.append("클릭 모양: 아이콘 구멍 위 클릭을 받음") }
         } else {

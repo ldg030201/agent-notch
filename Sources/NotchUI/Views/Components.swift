@@ -547,37 +547,28 @@ enum IslandFormat {
     /// 명령 · 경로 · MCP 툴 이름은 펼친 타임라인과 카드에서 보여준다
     static func shortToolTitle(_ session: AgentSession) -> String {
         switch session.phase {
-        case .compacting: return "압축 중"
-        case .thinking where session.currentActivity?.status != .running: return "생각 중"
+        case .compacting: return session.phase.label
+        case .thinking where session.currentActivity?.status != .running: return session.phase.label
         default: break
         }
-        guard let activity = session.currentActivity else { return session.phase == .thinking ? "생각 중" : "" }
+        guard let activity = session.currentActivity else { return session.phase == .thinking ? session.phase.label : "" }
         return activity.shortLabel
     }
 
-    /// 세션 목록 부제 (승인 대기 / Edit 중 / 유휴 · 12분)
+    /// 세션 목록 부제 (승인 대기 / Edit 중 / 유휴 · 12분). 정해진 단계 이름은 메뉴바 메뉴와 같다 (`SessionPhase.label`)
     static func subtitle(_ session: AgentSession, now: Date) -> String {
         switch session.phase {
-        case .waitingPermission: return "승인 대기"
-        case .waitingInput: return "입력 대기"
         case .runningTool:
             let tool = shortToolTitle(session)
             return tool.isEmpty ? "실행 중" : "\(tool) 중"
-        case .thinking: return "생각 중"
-        case .compacting: return "압축 중"
-        case .completed:
-            if session.hasUnseenCompletion { return "완료" }
-            return backgroundText(session) ?? "유휴 · \(idleText(since: session.lastEventAt, now: now))"
-        case .failed: return "실패"
-        case .idle: return backgroundText(session) ?? "유휴 · \(idleText(since: session.lastEventAt, now: now))"
-        case .ended: return "종료"
+        case .completed where session.hasUnseenCompletion:
+            return session.phase.label
+        case .idle, .completed:
+            // 쉬는 중이어도 백그라운드 작업이 돌면 그 문구 (`AgentSession.backgroundStatusText`)
+            return session.backgroundStatusText ?? "유휴 · \(idleText(since: session.lastEventAt, now: now))"
+        case .thinking, .waitingPermission, .waitingInput, .compacting, .failed:
+            return session.phase.label
         }
-    }
-
-    /// 메인 답변은 끝났지만 백그라운드 작업이 도는 세션의 상태 문구 (없으면 nil)
-    static func backgroundText(_ session: AgentSession) -> String? {
-        let count = session.backgroundTaskCount
-        return count > 0 ? "백그라운드 \(count)개 작업 중" : nil
     }
 
     /// 백그라운드 작업 종류별 내역 (예: "서브에이전트 2 · 셸 1"). 한 종류뿐이면 이름만 ("셸"), 없으면 nil
@@ -590,11 +581,6 @@ enum IslandFormat {
         guard !parts.isEmpty else { return nil }
         if parts.count == 1 { return parts[0].0 }
         return parts.map { "\($0.0) \($0.1)" }.joined(separator: " · ")
-    }
-
-    /// 이번 턴 소요 시간 (턴이 끝난 시각 기준. 그 뒤 이벤트로 늘지 않는다, `AgentSession.turnDuration`)
-    static func turnDuration(_ session: AgentSession) -> TimeInterval? {
-        session.turnDuration
     }
 
     /// 한 줄로 보여줄 텍스트 (줄바꿈 제거)
