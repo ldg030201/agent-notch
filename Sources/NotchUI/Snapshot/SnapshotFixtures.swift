@@ -87,21 +87,22 @@ final class SnapshotUpdateProvider: UpdateProvider {
     var checksForUpdates = true
     var changelog: [ChangelogDisplayEntry] = [
         ChangelogDisplayEntry(version: "0.3.0", date: nil, groups: [
-            .init(title: "아일랜드", notes: [
+            .init(title: "알림", icon: "bell.fill", isNew: true, notes: [
                 .init(kind: "new", text: "세션별 알림 끄기"),
+                .init(kind: "new", text: "조용한 시간 설정"),
             ]),
         ]),
         ChangelogDisplayEntry(version: "0.2.0", date: "2026-01-14", groups: [
-            .init(title: "메뉴바", notes: [
-                .init(kind: "new", text: "외부 모니터에서는 메뉴바 안 빈 곳에 알약으로 표시"),
-                .init(kind: "improve", text: "노치 옆이 메뉴바 아이콘으로 막히면 노치 아래 띠로 표시"),
+            .init(title: "표시", icon: "display", notes: [
+                .init(kind: "improve", text: "외부 모니터 알약 간격 개선"),
+                .init(kind: "fix", text: "열린 메뉴 위로 카드가 겹치던 문제 수정"),
             ]),
-            .init(title: "권한 요청", notes: [
-                .init(kind: "new", text: "권한 카드 접기 (요청은 그대로 대기)"),
-                .init(kind: "fix", text: "열린 메뉴 위로 카드가 겹치던 문제"),
+            .init(title: "권한 · 질문", icon: "hand.raised.fill", notes: [
+                .init(kind: "new", text: "권한 카드 접기 추가"),
             ]),
         ]),
         ChangelogDisplayEntry(version: "0.1.0", date: "2026-01-02", groups: [
+            // 아이콘이 없는 예전 내역 (점으로 보인다)
             .init(title: "처음 공개", notes: [
                 .init(kind: "new", text: "노치에서 Claude Code 세션 보기 · 권한 승인"),
             ]),

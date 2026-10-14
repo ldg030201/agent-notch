@@ -55,9 +55,15 @@ public struct ChangelogDisplayEntry: Identifiable, Hashable, Sendable {
 
     public struct Group: Hashable, Sendable {
         public var title: String
+        /// 제목 앞 아이콘 (SF Symbol 이름, 없으면 점)
+        public var icon: String?
+        /// 묶음 전체가 새 기능이면 제목에 한 번만 표시하고 줄마다 갈래를 붙이지 않는다
+        public var isNew: Bool
         public var notes: [Note]
-        public init(title: String, notes: [Note]) {
+        public init(title: String, icon: String? = nil, isNew: Bool = false, notes: [Note]) {
             self.title = title
+            self.icon = icon
+            self.isNew = isNew
             self.notes = notes
         }
     }

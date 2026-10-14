@@ -152,23 +152,58 @@ struct ChangelogEntryView: View {
                 Spacer(minLength: 0)
             }
             ForEach(Array(entry.groups.enumerated()), id: \.offset) { _, group in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(group.title)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    ForEach(Array(group.notes.enumerated()), id: \.offset) { _, note in
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            SettingsTag(text: Self.kindLabel(note.kind), tint: Self.kindColor(note.kind))
-                            Text(note.text)
-                                .font(.system(size: 12))
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                }
+                groupView(group)
             }
         }
         .padding(12)
         .accessibilityElement(children: .combine)
+    }
+
+    /// 아이콘 칸 폭. 줄 왼쪽 세로선이 아이콘 가운데 아래로 내려온다
+    private static let iconColumn: CGFloat = 16
+    private static let titleSpacing: CGFloat = 6
+
+    /// 묶음 하나: 아이콘 + 제목, 그 아래 왼쪽 세로선으로 묶은 줄들
+    private func groupView(_ group: ChangelogDisplayEntry.Group) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: Self.titleSpacing) {
+                Group {
+                    if let icon = group.icon {
+                        Image(systemName: icon).font(.system(size: 11, weight: .semibold))
+                    } else {
+                        Image(systemName: "circle.fill").font(.system(size: 5))
+                    }
+                }
+                .foregroundStyle(SettingsPalette.accent)
+                .frame(width: Self.iconColumn)
+                Text(group.title)
+                    .font(.system(size: 12, weight: .semibold))
+                if group.isNew {
+                    SettingsTag(text: Self.kindLabel("new"), tint: Self.kindColor("new"))
+                }
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(group.notes.enumerated()), id: \.offset) { _, note in
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        // 새 기능 묶음은 제목에 한 번만 표시한다
+                        if !group.isNew {
+                            SettingsTag(text: Self.kindLabel(note.kind), tint: Self.kindColor(note.kind))
+                        }
+                        Text(note.text)
+                            .font(.system(size: 12))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .padding(.leading, Self.iconColumn + Self.titleSpacing)
+            .overlay(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(SettingsPalette.accent.opacity(0.35))
+                    .frame(width: 2)
+                    .padding(.leading, Self.iconColumn / 2 - 1)
+            }
+        }
+        .padding(.top, 2)
     }
 
     static func kindLabel(_ kind: String) -> String {

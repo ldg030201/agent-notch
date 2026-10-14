@@ -134,6 +134,8 @@ final class AppUpdateProvider: UpdateProvider {
             groups = source.map { group in
                 ChangelogDisplayEntry.Group(
                     title: group.title,
+                    icon: group.icon,
+                    isNew: group.isNew,
                     notes: group.notes.map { ChangelogDisplayEntry.Note(kind: $0.kind.rawValue, text: $0.text) }
                 )
             }
