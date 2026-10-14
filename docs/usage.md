@@ -52,10 +52,12 @@
 
 | 단축키 | 동작 |
 |---|---|
-| `⌘↩` | 허용 |
+| `⌘↩` | 허용 (카드가 보인 지 0.5초 뒤부터. 클릭도 같아요) |
 | `⌥⌘↩` | 항상 허용 (Claude Code 가 제안한 규칙을 저장) |
 | `⌘⌫` | 거부 |
 | `⎋` | 접기 (요청은 그대로 대기) |
+| `1`–`4` | 질문 카드 선택지 고르기 |
+| `↩` | 질문 카드 다음 · 보내기, 계획 카드 승인 |
 | `⌃⌥⌘N` | 어디서든 노치 펼치기/접기 (전역) |
 
 ## 설정
@@ -91,7 +93,7 @@
 **훅 설치가 하는 일**
 - `notch-hook` 을 `~/Library/Application Support/AgentNotch/bin/` 에 복사해요 (업데이트로 Homebrew 경로가 바뀌어도 훅이 깨지지 않게).
 - `~/.claude/settings.json` 을 `settings.json.agentnotch-backup-<날짜>` (0600) 로 백업한 뒤 AgentNotch 항목만 추가해요. **다른 훅과 설정은 그대로 둬요.**
-- 이미 열려 있던 세션은 다시 시작해야 노치에 나타날 수 있어요. 데모는 `open /Applications/AgentNotch.app --args --demo` 로도 볼 수 있어요.
+- 이미 열려 있던 세션도 Claude Code 가 바뀐 설정을 다시 읽으면 바로 나타나요 (안 나타나면 세션을 다시 시작하세요). 데모는 `open /Applications/AgentNotch.app --args --demo` 로도 볼 수 있어요.
 
 ## 업데이트
 
@@ -181,7 +183,8 @@ AGENT_NOTCH_DEBUG=1 ~/Library/"Application Support"/AgentNotch/bin/notch-hook --
   상태와 툴 이름 정도만 메모리에 두고 아무것도 저장하지 않아요. 설정 → 일반 → **앱을 켤 때 돌고 있던 세션 바로 보여주기** 로 끌 수 있어요.
   로그는 `os.Logger` 로 남기고 내용이 들어가는 값은 `private` 으로 가려요.
 - `~/.claude/settings.json` 을 바꾸기 전에 항상 백업하고, AgentNotch 항목만 추가 · 제거해요.
-- 노치에서 파일을 열 때 실행될 수 있는 파일(앱, `.command` 등)은 열지 않고 Finder 에서 위치만 보여줘요.
+- 노치에서 파일을 열 때 실행될 수 있는 파일(앱, `.command`, `.term`, 구성 프로필 등)은 열지 않고 Finder 에서 위치만 보여줘요.
+  스크립트나 모르는 형식은 기본 앱이 코드 편집기(VS Code 등)면 그 앱으로, 아니면 텍스트 편집기로 열어요.
 
 ## 동작 방식
 

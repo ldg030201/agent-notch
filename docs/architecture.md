@@ -66,7 +66,7 @@ Claude Code (CLI · 데스크톱 앱)
 - 예전 설정 고치기: 앱이 켜질 때 `AppSettingsProvider.refreshHelperIfNeeded` 가 헬퍼를 다시 복사한 뒤
   `HookInstaller.updateInstalledHooks()` 로 **이미 설치된 AgentNotch 항목만** 지금 형태(명령 · timeout)로 그 자리에서 고친다.
   우리 항목이 없거나 이미 최신이면 아무것도 하지 않고, 빠진 이벤트를 새로 넣거나 다른 훅 · 설정을 건드리지 않는다.
-  바꾸기 전에 타임스탬프 백업(0600). 이미 떠 있는 Claude Code 세션은 설정을 다시 읽어야(재시작) 새 훅을 쓴다.
+  바꾸기 전에 타임스탬프 백업(0600). Claude Code 는 설정 파일을 감시해 실행 중인 세션도 바뀐 훅을 대개 바로 다시 읽는다 (감시가 놓치면 재시작해야 함).
 
 ## 4. 훅 이벤트 → 세션 상태
 
@@ -110,11 +110,14 @@ Claude Code (CLI · 데스크톱 앱)
     목록이 없으면(작업 목록을 못 읽었거나 payload 를 줄임) 그대로 둔다.
   - 훅 헬퍼는 `background_tasks` 항목마다 `type` · `status` 만 남기고(명령 · 설명은 보내지 않음) `session_crons` 는 뺀다.
     payload 를 4 · 5단계로 줄여도 이 작은 목록은 남긴다.
-  - 메인 답변이 끝난 걸 본 뒤(`completed` · `failed`, 또는 턴을 본 뒤의 `idle` — `SessionStore.turnHasEnded`)
-    서브에이전트(`agent_id` 있음)의 `PreToolUse` · `PostToolUse` ·
-    `PostToolUseFailure` 는 타임라인에만 쌓고 세션 단계 · 지금 활동은 바꾸지 않는다 (예전엔 끝난 세션이 "생각 중" 으로 남았다).
-    질문 · 권한처럼 사용자가 봐야 하는 단계로 바뀌는 건 그대로 반영한다.
+  - 메인 턴이 끝났다는 사실은 단계와 따로 기억한다 (`AgentSession.mainTurnEnded`: Stop · StopFailure · 중단 · idle_prompt ·
+    끝난 채로 되살린 세션에서 true, UserPromptSubmit · SessionStart · 메인 에이전트의 툴 이벤트에서 false).
+    턴이 끝난 뒤 서브에이전트(`agent_id` 있음)의 툴 이벤트는 타임라인에만 쌓고 세션 단계 · 지금 활동은 바꾸지 않는다.
+    백그라운드 서브에이전트의 질문 · 권한에 답한 뒤에도 끝난 단계(`settledPhase`)로 돌아간다 (예전엔 단계로 추정해 "생각 중" 에 갇혔다).
     앱을 새로 띄운 뒤 처음 보는 세션(턴 모름)은 서브에이전트 툴 호출이어도 작업 중으로 보여준다 (메인이 서브에이전트를 기다리는 중일 수 있음).
+  - SubagentStart 를 못 봤어도(앱 재시작 등) `agent_id` 가 붙은 다른 이벤트가 오면 그 서브에이전트가 돈다고 센다.
+    Stop 목록으로만 안 `task:X` 는 X 의 이벤트가 오면 X 로 바꾸고, `SubagentStop`(X) 이 `task:X` 도 지운다. 시작 없는 SubagentStop 은 여전히 무시.
+  - Stop · UserPromptSubmit 은 아직 도는 서브에이전트의 활동(`ActivityItem.agentID`)을 닫지 않는다.
   - 이런 세션은 상태 문구를 "백그라운드 N개 작업 중" 으로 보여주고, 세션 상태 요약에서 진행 중(초록)으로 센다
     (`SessionStatusSummary.group(for: session)`).
   - 표시: 접힌 상태는 끝 요소(`+N −M` · 상태 문구) 뒤에 배지 "⧉ N"(0 이면 숨김, 폭은 `CompactMetrics.badge`).
@@ -273,7 +276,14 @@ Claude 의 객관식 질문과 계획 승인을 다이얼로그 대신 노치에
 - 상세가 카드에 다 안 보이면(4줄 초과, 글자 수 제한, 헬퍼의 payload 축소) **노치에서 허용 · 항상 허용을 막고** "터미널로" 를 강조한다.
   거부 · 접기는 가능. (여러 줄 heredoc 명령도 막히므로 줄 수 한도는 사용해 보며 조정)
 - "항상 허용" 이 가능할 때는 저장될 규칙과 범위(`permission_suggestions` 요약)를 카드에 표시한다.
-- 보이는 요청이 바뀌면 키 윈도우를 반납하고, 새 요청이 뜬 뒤 0.5초 안의 단축키 · 키 반복 입력은 무시한다.
+- 보이는 요청이 바뀌면 키 윈도우를 반납한다. **승인(허용 · 항상 허용 · 계획 승인 · 답 보내기)은 클릭이든 단축키든 그 요청이 카드에 보인 지
+  0.5초가 지나야 전달한다** (요청 ID 마다 처음 보인 때부터, 가려지거나 접었다 다시 보이면 다시 잰다). 거부 · 접기 · 터미널로는 바로.
+  대기열의 다음 요청은 이전 카드가 흐려진 뒤 나타난다 (같은 높이 카드에서 더블클릭이 다음 요청까지 승인하던 문제).
+- Bash 요청에 `dangerouslyDisableSandbox` 가 켜져 있으면 제목 "· 샌드박스 해제" 와 경고 줄, `run_in_background` 면 제목 "· 백그라운드".
+- 훅 대기 없이 터미널 · Claude 앱에서 기다리는 승인 · 입력 대기(터미널로 넘김, 시간 초과, `permission_prompt` 알림, 넘긴 질문)는
+  주인(에이전트 · 호출)을 기억해 다른 에이전트의 툴 이벤트로 지워지지 않는다 (`SessionStore.terminalWaits`).
+  Stop · UserPromptSubmit · StopFailure 는 메인 에이전트의 훅 요청만 푼다 (백그라운드 서브에이전트 요청은 남김).
+- 권한 요청 훅 연결이 끊기면(Esc · 중단, Claude 앱 창에서 먼저 답함) 승인 대기에서 빠져나온다 (Claude 앱이면 실행 · 생각 중, 터미널이면 쉬는 중).
 
 ### 색상 (아일랜드는 항상 검정 배경 — 라이트/다크 공통)
 
@@ -479,7 +489,18 @@ Claude 의 객관식 질문과 계획 승인을 다이얼로그 대신 노치에
 - macOS 보호 폴더(데스크탑 · 문서 · 다운로드 · iCloud Drive · 클라우드 저장소 · `/Volumes`, `ProtectedLocations`)의 파일은
   자동으로 읽지 않는다. 읽기만 해도 "AgentNotch 가 '문서' 폴더에 접근하려고 합니다" 창이 뜨고, ad-hoc 서명이라 빌드 · 업데이트마다 다시 묻는다.
   이런 곳의 프로젝트 브랜치는 `.git` 대신 Claude Code 대화 기록 끝부분의 `gitBranch` 로 보여준다 (`SessionStore.lookupBranch`).
-  사용자가 직접 누른 "파일 열기" 만 그 파일을 확인한다.
+  `GitInfo` 는 작업 폴더 · `.git` · worktree 의 `gitdir:` · 심볼릭 링크를 한 칸씩 글자로 먼저 판정해, 보호 폴더로 이어지면 stat 전에 멈추고
+  대화 기록 브랜치를 쓴다 (바깥 worktree 가 문서 폴더 저장소를 가리키는 경우). 사용자가 직접 누른 "파일 열기" 만 그 파일을 확인한다.
+- 대화 기록 끝부분은 `TranscriptTail.readTail` 하나로만 읽는다: 일반 파일만(lstat · `O_NOFOLLOW` · `O_NONBLOCK` · fstat), 최대 바이트까지만
+  (훅이 준 `transcript_path` 가 FIFO · `/dev/zero` 여도 멈추거나 메모리를 먹지 않게).
+- 파일 열기는 **허용 목록**: 실행 비트 · 앱 · `.command` · `.term` · 구성 프로필 · 위치 파일(`.vncloc` 등) · `.wflow` · `.jnlp` 는 Finder 에서
+  위치만, 텍스트 · 소스 · JSON · YAML · XML · 이미지 · PDF · 오디오/비디오만 기본 앱으로, 나머지(스크립트 · HTML · 모르는 형식)는
+  기본 앱이 알려진 코드 편집기(VS Code · Cursor · JetBrains · Xcode · Zed 등)면 그 앱, 아니면 텍스트 편집기로 연다 (`FileOpener`).
+- 훅 payload 의 짝 없는 UTF-16 서로게이트 이스케이프는 `\uFFFD` 로 바꿔 다시 해석한다 (payload 전체가 `{}` 가 되지 않게).
+  사용자 `settings.json` 은 바꾸지 않고 그대로 읽는다.
+- 메인 스레드를 오래 막는 일은 하지 않는다: 모달 알림은 GCD 메인 큐 블록이 아니라 런루프에서 띄우고(`AppDelegate.presentModal`,
+  모달 동안 소켓 전달이 멈추지 않게), iTerm2 AppleScript 는 전용 큐에서 `with timeout of 5 seconds` 로, brew 찾기는 백그라운드에서
+  사용자 로그인 셸(`$SHELL`)로 8초 제한, 정밀 diff 는 3,000줄 예산(넘으면 근사) 안에서만 한다.
 - 앱을 켤 때만 최근 Claude Code 대화 기록 끝부분을 **읽는다** (세션 되살리기, 설정에서 끌 수 있음). 쓰지 않고, 상태 · 툴 요약만 메모리에 둔다.
   디버그 로그는 `os.Logger` + `privacy: .private`. 레이아웃 변화 로그(`Presentation`)만 숫자 · 모드 종류 · 자리 종류를 `.public` 으로 남긴다.
 - 네트워크 통신은 **업데이트 확인 하나뿐** — 하루 한 번 GitHub 의 `docs/changelog.json` (raw) 을 받는다. 설정에서 끌 수 있다.

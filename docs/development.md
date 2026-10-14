@@ -71,6 +71,7 @@ VARIANT=test scripts/build.sh     # build/AgentNotch-Test.app 만 만들기
 | `AgentNotch --dump-changelog [경로]` | 변경 내역 JSON |
 | `AgentNotch --probe-upgrade` | brew 위치와 업데이트 · 교체 스크립트 문법(`bash -n`)만 점검. **실행하지 않는다** |
 | `AgentNotch --version` | `agent-notch <버전>` |
+| `AgentNotch --help` | 인자 목록. 모르는 `--` 인자는 앱을 띄우지 않고 사용법을 보여주며 끝난다 (실수로 두 번째 앱이 떠 "이미 실행 중" 창이 뜨지 않게) |
 
 - 오프스크린 렌더링은 AppKit 기반 컨트롤(Picker, 스위치, ScrollView 등)을 못 그려서 스냅숏에서만 비슷한 SwiftUI 그림으로 대체한다.
 - 권한(손쉬운 사용 · 자동화)이 걸리는 동작은 터미널에서 바이너리를 직접 부르면 TCC 가 터미널 앱에 권한을 물어 결과가 틀린다.
