@@ -82,7 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
             demo.start()
         } else {
             // 아일랜드가 먼저 자리잡은 뒤에 묻는다 (모달이라 GCD 메인 큐가 아닌 런루프에서 띄운다: `presentModal`)
-            Self.presentModal { [weak self] in self?.offerHookInstallIfNeeded() }
+            Self.presentModal { [weak self] in self?.offerFirstLaunchSetupIfNeeded() }
         }
     }
 
@@ -199,24 +199,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
 
     // MARK: - 훅 설치
 
-    /// 첫 실행 때 한 번만 훅 설치를 제안한다
-    private func offerHookInstallIfNeeded() {
+    /// 첫 실행 때 한 번만 훅 설치 · 로그인 시 실행을 한 창에서 묻는다 (둘 다 처음부터 켜 둔 체크박스).
+    /// 이미 된 것은 빼고, 할 게 없으면 묻지 않는다
+    private func offerFirstLaunchSetupIfNeeded() {
         let defaults = UserDefaults.standard
         guard !defaults.bool(forKey: AppInfo.didOfferHookInstallKey) else { return }
         defaults.set(true, forKey: AppInfo.didOfferHookInstallKey)
-        guard settings.hookStatus == .notInstalled else { return }
+
+        let offersHooks = settings.hookStatus == .notInstalled
+        let offersLogin = settings.launchAtLoginAvailable && !settings.launchAtLoginEnabled
+            && !settings.launchAtLoginManagedByHomebrew
+        guard offersHooks || offersLogin else { return }
+
+        let hooksBox = NSButton(checkboxWithTitle: "Claude Code 훅 설치", target: nil, action: nil)
+        let loginBox = NSButton(checkboxWithTitle: "로그인할 때 자동으로 켜기", target: nil, action: nil)
+        hooksBox.state = .on
+        loginBox.state = .on
+        let stack = NSStackView(views: (offersHooks ? [hooksBox] : []) + (offersLogin ? [loginBox] : []))
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 6
+        stack.setFrameSize(stack.fittingSize)
+
+        var lines: [String] = []
+        if offersHooks {
+            lines.append("세션을 노치에 보여주려면 Claude Code 훅이 필요해요. ~/.claude/settings.json 을 백업한 뒤 AgentNotch 항목만 더하고 다른 훅은 그대로 둬요.")
+        }
+        lines.append("나중에 메뉴바 아이콘이나 설정에서도 바꿀 수 있어요.")
 
         let alert = NSAlert()
-        alert.messageText = "Claude Code 훅을 설치할까요?"
-        alert.informativeText = """
-        세션 상태를 노치에 보여주려면 ~/.claude/settings.json 에 AgentNotch 훅을 추가해야 해요.
-        기존 파일은 백업하고 다른 훅은 그대로 둬요. 나중에 메뉴바 아이콘에서도 설치할 수 있어요.
-        """
-        alert.addButton(withTitle: "훅 설치")
+        alert.messageText = "AgentNotch 시작하기"
+        alert.informativeText = lines.joined(separator: "\n")
+        alert.accessoryView = stack
+        alert.addButton(withTitle: "시작하기")
         alert.addButton(withTitle: "나중에")
         NSApp.activate()
-        if alert.runModal() == .alertFirstButtonReturn {
-            installHooksFromMenu()
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        var failures: [String] = []
+        if offersHooks, hooksBox.state == .on {
+            do { try settings.installHooks() } catch { failures.append("훅 설치: \(error.localizedDescription)") }
+        }
+        if offersLogin, loginBox.state == .on {
+            do { try settings.setLaunchAtLogin(true) } catch { failures.append("로그인 시 실행: \(error.localizedDescription)") }
+        }
+        if !failures.isEmpty {
+            showAlert(title: "일부 설정을 마치지 못했어요", message: failures.joined(separator: "\n"))
         }
     }
 

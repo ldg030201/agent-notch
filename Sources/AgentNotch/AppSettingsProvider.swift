@@ -73,6 +73,9 @@ final class AppSettingsProvider: SettingsProvider {
     /// 시스템 설정 > 로그인 항목의 실제 상태 (`SMAppService.mainApp`)
     var launchAtLoginEnabled: Bool { loginItem.isEnabled }
 
+    /// 앱 번들로 실행 중이라 로그인 항목을 등록할 수 있는지 (첫 실행 안내가 물어볼지 정한다)
+    var launchAtLoginAvailable: Bool { loginItem.isAvailable }
+
     /// 예전 `brew services` LaunchAgent 가 남아 있으면 true (설정 스위치를 잠가 두 번 뜨지 않게 한다)
     var launchAtLoginManagedByHomebrew: Bool { loginItem.isManagedByHomebrewServices }
 

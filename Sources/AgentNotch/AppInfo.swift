@@ -3,7 +3,7 @@ import NotchServices
 
 /// 번들 정보와 실행 파일 경로
 enum AppInfo {
-    /// 첫 실행 때 훅 설치를 한 번 제안했는지 (UserDefaults 키)
+    /// 첫 실행 안내(훅 설치 · 로그인 시 실행)를 한 번 보여줬는지 (UserDefaults 키. 예전 이름 그대로 두어 이미 본 사람에게 다시 묻지 않는다)
     static let didOfferHookInstallKey = "didOfferHookInstall"
 
     /// 실행 중인 버전. 번들 밖(`swift run`)에서는 소스의 `agentNotchVersion`.
