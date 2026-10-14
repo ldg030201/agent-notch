@@ -76,19 +76,8 @@ enum SnapshotScenario: String, CaseIterable {
     case idleSummary = "idle-summary"
     case working
     case workingWings = "working-wings"
-    case workingWingsIcons = "working-wings-icons"
     case workingWingsRetracted = "working-wings-retracted"
-    case workingWingsIconsStrip = "working-wings-icons-strip"
-    /// 넓은 노치 + 아이콘 구멍, 노치 오른쪽 첫 아이콘이 110pt 남짓 떨어진 화면 (카드 목이 아이콘 앞에서 멈춤)
-    case workingWingsIconsNear = "working-wings-icons-near"
-    case workingRightWing = "working-right-wing"
     case workingBelowNotch = "working-below-notch"
-    /// 노치 아래 방식 + 오른쪽은 상태 아이콘이 노치까지, 왼쪽은 빈 메뉴바 (왼쪽 한쪽 날개)
-    case workingBelowNotchLeft = "working-below-notch-left"
-    /// `working-below-notch-left` 에서 앞 앱 메뉴만 노치까지 길어진 화면 (왼쪽 날개도 못 써서 노치 아래 띠)
-    case workingBelowNotchStrip = "working-below-notch-strip"
-    /// 노치 아래 방식 + 노치 왼쪽 빈 곳이 64pt 뿐인 화면: 쉬는 중 요약은 왼쪽 날개, 세션 내용은 노치 아래 띠
-    case workingBelowNotchNarrow = "working-below-notch-narrow"
     case workingMinimal = "working-minimal"
     /// 작업 중 + 백그라운드 셸 1 · 서브에이전트 2 (접힌 상태 끝에 배지 "⧉ 3")
     case workingBackground = "working-background"
@@ -164,8 +153,7 @@ enum SnapshotScenario: String, CaseIterable {
     /// 노치 화면 표시 방식. 노치 아래 장면만 명시하고 나머지는 기본값(넓은 노치)
     var notchStyle: NotchStyle {
         switch self {
-        case .workingBelowNotch, .workingBelowNotchLeft, .workingBelowNotchStrip, .workingBelowNotchNarrow, .workingMinimal, .workingSummaryStrip,
-             .workingBackgroundStrip:
+        case .workingBelowNotch, .workingMinimal, .workingSummaryStrip, .workingBackgroundStrip:
             return .belowNotch
         default: return .wings
         }
@@ -174,22 +162,13 @@ enum SnapshotScenario: String, CaseIterable {
     /// 메뉴바 배치 (메뉴 · 상태 아이콘이 차지하는 자리)
     var crowding: SnapshotMenuBar.Crowding {
         switch self {
-        case .workingRightWing: return .leftBlocked
         case .workingBelowNotch, .workingMinimal, .workingSummaryStrip, .workingBackgroundStrip: return .bothBlocked
-        case .idleWings, .workingWings, .workingWingsIcons, .workingWingsRetracted, .workingBelowNotchLeft: return .iconsToNotch
-        case .workingWingsIconsStrip, .workingBelowNotchStrip: return .menusAndIconsToNotch
-        case .workingWingsIconsNear: return .iconsNearNotch
-        case .workingBelowNotchNarrow: return .narrowLeftRoom
+        case .idleWings, .workingWings, .workingWingsRetracted: return .iconsToNotch
         case .menubarDot: return .narrowGap
         case .menubarWorkingLongTool: return .offCenterGap
         case .menubarWorkingTight: return .tightGap
         default: return .roomy
         }
-    }
-
-    /// 손쉬운 사용으로 메뉴바 아이콘 위치를 잰 상태 (넓은 노치가 아이콘 구멍을 뚫음)
-    var measuresMenuBarItems: Bool {
-        self == .workingWingsIcons || self == .workingWingsIconsStrip || self == .workingWingsIconsNear
     }
 }
 
@@ -197,25 +176,19 @@ enum SnapshotScenario: String, CaseIterable {
 
 /// 스냅숏 배경 메뉴바: 화면 정보 · 측정값 · 그릴 메뉴/아이콘 위치가 서로 맞도록 한곳에서 만든다
 struct SnapshotMenuBar {
+    /// 노치 없는 화면에서 앱 메뉴는 잴 수 없어 추정값(`IslandLayoutEngine.estimatedAppMenuEnd`)까지 차 있다고 본다.
+    /// 빈 곳 장면은 앱 메뉴를 그 추정값 앞까지 그리고, 상태 아이콘을 추정값 기준으로 놓는다
     enum Crowding {
         /// 양옆이 넉넉함
         case roomy
-        /// 앱 메뉴가 노치 왼쪽을 채움
-        case leftBlocked
         /// 왼쪽은 앱 메뉴, 오른쪽은 상태 아이콘이 노치 바로 옆까지 (오른쪽 빈 곳 약 30pt)
         case bothBlocked
         /// 앱 메뉴는 짧고, 상태 아이콘이 노치 바로 옆부터 꽉 참 (넓은 노치가 아이콘을 덮는 모습)
         case iconsToNotch
-        /// 앱 메뉴와 상태 아이콘이 모두 노치 바로 옆까지 (넓은 노치 내용이 노치 아래 띠로)
-        case menusAndIconsToNotch
-        /// 앱 메뉴는 짧고, 상태 아이콘이 노치 오른쪽 118pt 부터 (카드 목이 아이콘 앞에서 멈추는 폭)
-        case iconsNearNotch
-        /// 앱 메뉴가 노치 왼쪽 64pt(+ 여백 8) 앞까지, 상태 아이콘은 노치 바로 옆부터 (작은 내용만 왼쪽 날개에 들어감)
-        case narrowLeftRoom
         /// 노치 없는 화면: 앱 메뉴와 상태 아이콘 사이가 좁음 (알약 대신 점)
         case narrowGap
         /// 노치 없는 화면: 앱 메뉴가 화면 가운데 가까이까지 길고 빈 곳(약 296pt)이 오른쪽으로 치우침.
-        /// 화면 가운데에 두면 알약이 좁다 (손쉬운 사용 없이 외부 모니터에서 추정한 빈 곳과 같은 모양)
+        /// 화면 가운데에 두면 알약이 좁다
         case offCenterGap
         /// 노치 없는 화면: 빈 곳이 알약 하나 겨우 들어갈 만큼(약 140pt)
         case tightGap
@@ -232,10 +205,6 @@ struct SnapshotMenuBar {
     static let clockText = "1월 15일 (목) 오전 10:44"
     static let iconSize = CGSize(width: 16, height: 14)
     static let iconStep: CGFloat = 28
-    /// `narrowLeftRoom` 의 노치 왼쪽 빈 곳 (여백 제외)
-    static let narrowLeftRoom: CGFloat = 64
-    /// 아이콘 사각형(손쉬운 사용으로 읽히는 크기) 좌우 여백
-    static let iconItemPadding: CGFloat = 6
     /// 가짜 상태 아이콘 (SF Symbols)
     static let iconSymbols = [
         "wifi", "battery.75percent", "magnifyingglass", "switch.2", "speaker.wave.2.fill",
@@ -250,9 +219,8 @@ struct SnapshotMenuBar {
     /// 카드가 펼쳐질 자리까지 포함한 그림 높이
     let canvasHeight: CGFloat
 
-    /// - iconShift: 상태 아이콘 전체를 옮긴다 (폭이 바뀌는 메뉴바 아이템 때문에 노치 옆 아이콘이 밀리는 상황 재현)
     @MainActor
-    init(style: IslandSnapshotRenderer.Style, crowding: Crowding, measuresItems: Bool = false, iconShift: CGFloat = 0) {
+    init(style: IslandSnapshotRenderer.Style, crowding: Crowding) {
         let hasNotch = style == .notch
         let width: CGFloat = hasNotch ? 1000 : 1100
         let menuBarHeight: CGFloat = hasNotch ? 33 : 24
@@ -271,38 +239,32 @@ struct SnapshotMenuBar {
         let notchMinX = (width - notchSize.width) / 2
         let notchMaxX = notchMinX + notchSize.width
 
-        // 앱 메뉴: 넉넉하면 짧게, 막힌 장면이면 노치(또는 지정 위치) 바로 앞까지
+        // 앱 메뉴: 넉넉하면 짧게, 막힌 장면이면 노치 바로 앞까지, 빈 곳 장면이면 추정한 앱 메뉴 끝 앞까지
         let shortMenus = ["터미널", "셸", "편집", "보기"]
         let longMenus = ["Xcode", "파일", "편집", "보기", "찾기", "탐색", "편집기", "제품", "디버그", "소스 제어", "윈도우", "도움말"]
+        let appMenuEnd = IslandLayoutEngine.estimatedAppMenuEnd(screenWidth: width)
         let menus: [MenuItem]
         switch crowding {
-        case .roomy, .iconsToNotch, .iconsNearNotch:
+        case .roomy, .iconsToNotch:
             menus = Self.layoutMenus(shortMenus, limit: .greatestFiniteMagnitude)
-        case .leftBlocked, .bothBlocked, .menusAndIconsToNotch:
-            menus = Self.layoutMenus(longMenus, limit: notchMinX - 6)
-        case .narrowLeftRoom:
-            menus = Self.layoutMenus(longMenus, limit: notchMinX - Self.narrowLeftRoom - IslandMetrics.menuBarMargin)
+        case .bothBlocked:
+            // 노치 없는 화면은 추정한 앱 메뉴 끝 앞까지 (알약 · 점이 메뉴 글자를 덮지 않게)
+            menus = Self.layoutMenus(longMenus, limit: hasNotch ? notchMinX - 6 : appMenuEnd)
         case .narrowGap, .offCenterGap, .tightGap:
-            menus = Self.layoutMenus(longMenus, limit: width * 0.46)
+            menus = Self.layoutMenus(longMenus, limit: appMenuEnd)
         }
         menuItems = menus
-        var appMenuEnd = menus.last.map { $0.x + Self.textWidth($0.text, bold: $0.bold) } ?? 40
-        // 손쉬운 사용이 재는 앱 메뉴 끝 (마지막 메뉴 뒤 여백까지): 노치 왼쪽 빈 곳이 정확히 `narrowLeftRoom`
-        if crowding == .narrowLeftRoom { appMenuEnd = notchMinX - Self.narrowLeftRoom - IslandMetrics.menuBarMargin }
 
         // 상태 아이콘 시작 위치
-        var statusStart: CGFloat
+        let statusStart: CGFloat
         switch crowding {
         case .roomy: statusStart = hasNotch ? 760 : 800
-        case .leftBlocked: statusStart = notchMaxX + 210
         case .bothBlocked: statusStart = notchMaxX + 38
-        case .iconsToNotch, .menusAndIconsToNotch, .narrowLeftRoom: statusStart = notchMaxX + 8
-        case .iconsNearNotch: statusStart = notchMaxX + 118
+        case .iconsToNotch: statusStart = notchMaxX + 8
         case .narrowGap: statusStart = appMenuEnd + 92
         case .offCenterGap: statusStart = appMenuEnd + 296
         case .tightGap: statusStart = appMenuEnd + 140
         }
-        statusStart += iconShift
         clockX = width - 12 - Self.textWidth(Self.clockText, bold: false)
         var icons: [CGFloat] = []
         var x = statusStart
@@ -312,20 +274,8 @@ struct SnapshotMenuBar {
         }
         statusIconXs = icons
 
-        // 손쉬운 사용이 돌려주는 아이템 사각형: 아이콘 좌우 여백 포함, 메뉴바 높이 전체
-        let itemFrames = icons.map {
-            CGRect(x: $0 - Self.iconItemPadding, y: 0, width: Self.iconSize.width + Self.iconItemPadding * 2, height: menuBarHeight)
-        }
-        space = MenuBarSpace(
-            menuBarVisible: true,
-            menuBarHeight: menuBarHeight,
-            appMenuEnd: appMenuEnd,
-            appMenuMeasured: true,
-            statusStart: statusStart,
-            statusMeasured: true,
-            itemFrames: measuresItems ? itemFrames : [],
-            itemsMeasured: measuresItems
-        )
+        // 창 목록으로 재는 값: 메뉴바 높이 · 상태 아이템 시작 (상태 아이템 창이 창 목록에 있는 macOS)
+        space = MenuBarSpace(menuBarVisible: true, menuBarHeight: menuBarHeight, statusStart: statusStart, statusMeasured: true)
     }
 
     @MainActor
@@ -475,12 +425,10 @@ enum SnapshotStage {
 
     /// 장면의 가짜 데이터 · 표시 상태를 만든다.
     /// - environment: 메뉴바 배치 · 노치 표시 방식을 가져올 장면 (전환 시트에서 두 상태가 같은 화면을 쓰게). nil 이면 `scene` 자신
-    /// - iconShift: 상태 아이콘을 옮길 거리 (`SnapshotMenuBar`)
     static func prepare(
         _ scene: SnapshotScenario,
         style: IslandSnapshotRenderer.Style,
-        environment: SnapshotScenario? = nil,
-        iconShift: CGFloat = 0
+        environment: SnapshotScenario? = nil
     ) throws -> SnapshotSetup {
         let env = environment ?? scene
         var world = SnapshotWorld()
@@ -493,7 +441,7 @@ enum SnapshotStage {
         presentation.uptime = { uptime.now }
 
         let style: IslandSnapshotRenderer.Style = env.forcesMenuBar || scene.forcesMenuBar ? .menuBar : style
-        let bar = SnapshotMenuBar(style: style, crowding: env.crowding, measuresItems: env.measuresMenuBarItems, iconShift: iconShift)
+        let bar = SnapshotMenuBar(style: style, crowding: env.crowding)
         let screenID = bar.geometry.screenID
         presentation.updateScreens([bar.geometry])
         presentation.setActiveScreen(screenID)
@@ -528,8 +476,7 @@ enum SnapshotStage {
                 showCompact()
                 presentation.toggleExpanded(on: screenID)
             }
-        case .working, .workingWings, .workingWingsIcons, .workingWingsIconsStrip, .workingWingsIconsNear, .workingRightWing, .workingBelowNotch,
-             .workingBelowNotchLeft, .workingBelowNotchStrip, .workingBelowNotchNarrow, .menubarWorking, .menubarDot, .menubarBelowWorking:
+        case .working, .workingWings, .workingBelowNotch, .menubarWorking, .menubarDot, .menubarBelowWorking:
             world.apiServerEdits()
             world.apiServerRunsTests()
         case .menubarWorkingLongTool, .menubarWorkingTight:
@@ -543,7 +490,7 @@ enum SnapshotStage {
                 presentation.toggleExpanded(on: screenID)
             }
         case .workingWingsRetracted:
-            // 아이콘 위치를 모를 때: 마우스를 올린 오른쪽 날개가 노치 안으로 들어간 모습
+            // 마우스를 올린 오른쪽 날개가 노치 안으로 들어간 모습
             world.apiServerEdits()
             world.apiServerRunsTests()
             presentation.setRetractedWings(.right, on: screenID)
@@ -664,7 +611,7 @@ enum SnapshotStage {
         presentation: PresentationController
     ) throws -> CGImage {
         let now = world.clock.now
-        let model = SettingsModel(provider: SnapshotSettingsProvider(), accessibilityCheck: { false }, now: { now })
+        let model = SettingsModel(provider: SnapshotSettingsProvider(), now: { now })
         model.refresh()
         model.updateProvider = SnapshotUpdateProvider(now: now)
         if scene == .settings {

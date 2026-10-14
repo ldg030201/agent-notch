@@ -32,7 +32,7 @@ CONFIG="${CONFIG:-release}"
 
 # 코드 서명 신원.
 #
-# 손쉬운 사용 · 자동화(iTerm2 AppleScript) 권한은 **서명 신원**에 묶인다. ad-hoc(`-`)에는 신원이 없어서
+# 자동화(iTerm2 AppleScript) 권한은 **서명 신원**에 묶인다. ad-hoc(`-`)에는 신원이 없어서
 # macOS 가 바이너리 해시로 앱을 알아보고, 해시는 빌드할 때마다 바뀐다 → 업데이트마다 권한을 다시 묻는다.
 # 자체 서명 인증서(scripts/make-signing-cert.sh 로 한 번 만듦)가 있으면 그걸 쓰고, 없으면 ad-hoc.
 SIGN_CERT_NAME="${SIGN_CERT_NAME:-AgentNotch Local Signing}"

@@ -49,7 +49,7 @@ final class PresentationController {
     private(set) var concealedScreenIDs: Set<ScreenID> = []
     /// 노치를 쓰는 다른 앱 (화면 → 앱 이름)
     private(set) var notchConflicts: [ScreenID: String] = [:]
-    /// 넓은 노치에서 마우스를 올려 비켜준 날개 (아이콘 위치를 모를 때)
+    /// 넓은 노치에서 마우스를 올려 비켜준 날개
     private(set) var retractedWings: [ScreenID: WingSides] = [:]
     /// 업데이트 상태 (없으면 배지 · 버전 탭 숨김)
     var updateProvider: UpdateProvider?
@@ -373,7 +373,7 @@ final class PresentationController {
     /// - 카드 → 접힌 상태: 카드 띠를 접히는 모양이 자리 잡을 때까지 붙잡는다 (`collapseHold`)
     /// - 숨김: 접힌 모양 이력을 지운다. 사라진 화면은 통째로 지운다
     struct LayoutHistory: Equatable {
-        /// 직전 접힌 날개 (아이콘이 조금 밀려도 날개 끝을 붙잡는 데 쓴다). 날개 없이 그렸으면 `.withoutWings`
+        /// 직전 접힌 날개 (배치가 오가지 않게 하는 이력 · 펼친 카드 띠). 날개 없이 그렸으면 `.withoutWings`
         var wings: WingsSpec?
         /// 직전에 그린 부분 1 (접힌 모양 또는 열린 카드 위의 접힌 모양). 카드를 펼치고 접는 동안 부분 1 을 그대로 두는 데 쓴다
         var part1: IslandLayout?

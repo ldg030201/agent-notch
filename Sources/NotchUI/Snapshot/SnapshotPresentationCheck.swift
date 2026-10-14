@@ -336,7 +336,7 @@ enum SnapshotInputCheck {
         return (cases, problems)
     }
 
-    /// 클릭 모양이 레이아웃 클릭 영역(점 둘레 20×20)까지 받고, 아이콘 구멍은 받지 않는지 (`ScreenManager` 의 클릭 판정과 같게)
+    /// 클릭 모양이 레이아웃 클릭 영역(점 둘레 20×20)까지 받는지 (`ScreenManager` 의 클릭 판정과 같게)
     private static func hitShape(_ cases: inout Int, _ problems: inout [String]) {
         func path(_ setup: SnapshotSetup) -> (layout: IslandLayout, hit: Path, drawn: Path) {
             let layout = setup.layout
@@ -345,9 +345,7 @@ enum SnapshotInputCheck {
             let shape = IslandPanelShape(spec: layout.shapeSpec)
             return (layout, IslandHitShape(layout: layout, shape: shape).path(in: rect), shape.path(in: rect))
         }
-        guard let dot = try? SnapshotStage.prepare(.menubarDot, style: .menuBar),
-              let icons = try? SnapshotStage.prepare(.workingWingsIcons, style: .notch)
-        else {
+        guard let dot = try? SnapshotStage.prepare(.menubarDot, style: .menuBar) else {
             problems.append("클릭 모양: 장면 준비 실패")
             return
         }
@@ -362,15 +360,6 @@ enum SnapshotInputCheck {
             if d.hit.contains(outside) { problems.append("클릭 모양: 점 클릭 영역 밖도 받음") }
         } else {
             problems.append("클릭 모양: menubar-dot 장면이 점이 아님")
-        }
-        let w = path(icons)
-        cases += 1
-        let holes = w.layout.passThroughRects
-        let hits = w.layout.panelHitRects
-        if let hole = holes.first(where: { h in hits.contains { $0.contains(CGPoint(x: h.midX, y: h.midY)) } }) {
-            if w.hit.contains(CGPoint(x: hole.midX, y: hole.midY)) { problems.append("클릭 모양: 아이콘 구멍 위 클릭을 받음") }
-        } else {
-            problems.append("클릭 모양: 클릭 영역 안의 아이콘 구멍이 없음 (검사 장면이 맞지 않음)")
         }
     }
 
@@ -397,25 +386,42 @@ enum SnapshotInputCheck {
         }
     }
 
-    /// 상태 아이템 창이 없고(macOS 27) MenuBarAgent 항목만 읽혀도 상태 아이템 시작을 잰다
+    /// 창 목록의 상태 아이템 창으로 상태 아이템 시작을 잰다 (화면 왼쪽 기준). 창 목록에 없으면(macOS 27) 못 잰 것으로 둔다
     private static func statusStart(_ cases: inout Int, _ problems: inout [String]) {
-        let screen = MenuBarScanner.Screen(id: 7, frame: CGRect(x: 0, y: 0, width: 1920, height: 1080), fallbackMenuBarHeight: 24)
-        let scan = [screen.id: MenuBarScanner.Result(menuBarHeight: 24, statusMinX: nil)]
-        func item(_ x: CGFloat) -> CGRect { CGRect(x: x, y: 1056, width: 28, height: 24) }
-        let samples: [(name: String, readings: MenuBarItemReadings, expected: CGFloat)] = [
-            ("MenuBarAgent 만", MenuBarItemReadings(agentExtras: [item(1500), item(1540)]), 1500),
-            ("상태 아이템 + MenuBarAgent", MenuBarItemReadings(status: [item(1600)], agentExtras: [item(1480)]), 1480),
-            ("상태 아이템만", MenuBarItemReadings(status: [item(1600), item(1700)]), 1600),
+        // 주 화면 오른쪽에 둔 1920pt 외부 모니터 (Cocoa 전역)
+        let screen = MenuBarScanner.Screen(id: 7, frame: CGRect(x: 1512, y: 0, width: 1920, height: 1080), fallbackMenuBarHeight: 24)
+        let samples: [(name: String, statusMinX: CGFloat?, expected: CGFloat?)] = [
+            ("상태 아이템 창 있음", 1512 + 1500, 1500),
+            ("상태 아이템 창 없음 (macOS 27)", nil, nil),
         ]
         for sample in samples {
             cases += 1
-            let space = MenuBarSpaceBuilder.build(screens: [screen], scan: scan, readings: sample.readings, reportsMenuBar: [:])[screen.id]
-            if space?.statusMeasured != true || abs((space?.statusStart ?? 0) - sample.expected) > 0.5 {
+            let scan = [screen.id: MenuBarScanner.Result(menuBarHeight: 24, statusMinX: sample.statusMinX)]
+            let space = MenuBarSpaceBuilder.build(screens: [screen], scan: scan, reportsMenuBar: [:])[screen.id]
+            let got = space?.statusMeasured == true ? space?.statusStart : nil
+            let matches: Bool
+            switch (got, sample.expected) {
+            case (nil, nil): matches = true
+            case let (value?, want?): matches = abs(value - want) <= 0.5
+            default: matches = false
+            }
+            if !matches {
                 problems.append(String(
-                    format: "상태 아이템 시작 %@: %@ (기대 %.0f)", sample.name,
-                    space?.statusMeasured == true ? String(format: "%.0f", space?.statusStart ?? 0) : "못 잼", sample.expected
+                    format: "상태 아이템 시작 %@: %@ (기대 %@)", sample.name,
+                    got.map { String(format: "%.0f", $0) } ?? "못 잼", sample.expected.map { String(format: "%.0f", $0) } ?? "못 잼"
                 ))
             }
+        }
+        // 1~2pt 흔들림은 이전 값 그대로, 그보다 크면 새 값
+        cases += 1
+        let measured = MenuBarSpace(menuBarVisible: true, menuBarHeight: 24, statusStart: 1500, statusMeasured: true)
+        func moved(_ x: CGFloat) -> CGFloat? {
+            var next = measured
+            next.statusStart = x
+            return MenuBarSpaceBuilder.stabilized([screen.id: next], previous: [screen.id: measured])[screen.id]?.statusStart
+        }
+        if moved(1501.5) != 1500 || moved(1504) != 1504 {
+            problems.append("상태 아이템 시작 흔들림 거르기가 다름 (1.5pt → \(String(describing: moved(1501.5))), 4pt → \(String(describing: moved(1504))))")
         }
     }
 }

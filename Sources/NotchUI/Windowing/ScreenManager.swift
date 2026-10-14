@@ -22,14 +22,12 @@ final class ScreenManager {
         var shapeChangedAt: TimeInterval?
         /// 클릭 영역 (Cocoa 전역). 마우스 이동마다 레이아웃을 다시 계산하지 않도록 상태가 바뀔 때만 갱신한다.
         var hitRects: [CGRect] = []
-        /// 클릭 통과 영역 (아이콘 구멍, Cocoa 전역). 클릭 영역보다 우선한다.
-        var passThroughRects: [CGRect] = []
         /// 열린 메뉴 겹침 감시 영역 (아일랜드가 보일 때만). 0.25초마다 레이아웃을 다시 계산하지 않도록 상태가 바뀔 때만 갱신한다
         var overlapTarget: OverlapScanner.Target?
     }
 
     private var screens: [ScreenID: Screen] = [:]
-    /// 넓은 노치 날개 비켜주기 (아이콘 위치를 모를 때)
+    /// 넓은 노치 날개 비켜주기 (날개가 메뉴바 아이콘을 덮으므로)
     private let wingRetract = WingRetractTracker()
     private var eventMonitors: [Any] = []
     private var notificationTokens: [(NotificationCenter, NSObjectProtocol)] = []
@@ -193,7 +191,6 @@ final class ScreenManager {
                 screen.lastShape = shape
             }
             screen.hitRects = Self.globalRects(state.layout.panelHitRects, state, geometry: geometry)
-            screen.passThroughRects = Self.globalRects(state.layout.passThroughRects, state, geometry: geometry)
             screen.overlapTarget = overlapTarget(id, state, geometry: geometry)
             if let geometry, !state.bands.isEmpty {
                 bands[id] = WingRetractTracker.Bands(
@@ -299,13 +296,12 @@ final class ScreenManager {
         wingRetract.update(location: location, activeScreen: active?.screenID)
     }
 
-    /// 아일랜드가 클릭을 받는 자리인지 (아이콘 구멍은 아래 메뉴바 아이템으로 통과)
+    /// 아일랜드가 클릭을 받는 자리인지
     private func isInside(_ location: CGPoint, screen id: ScreenID) -> Bool {
-        guard let screen = screens[id], screen.hitRects.contains(where: { Self.containsInclusive($0, location) }) else { return false }
-        return !screen.passThroughRects.contains { Self.containsInclusive($0, location) }
+        screens[id]?.hitRects.contains { Self.containsInclusive($0, location) } ?? false
     }
 
-    /// 패널 기준 사각형(클릭 영역 · 클릭 통과 영역) → Cocoa 전역 좌표. 숨김 · 투명 숨김이면 빈 배열.
+    /// 패널 기준 사각형(클릭 영역) → Cocoa 전역 좌표. 숨김 · 투명 숨김이면 빈 배열.
     private static func globalRects(_ rects: [CGRect], _ state: ScreenFrame, geometry: NotchGeometry?) -> [CGRect] {
         guard let geometry, state.mode != .hidden, !state.concealed else { return [] }
         return rects.map(geometry.screenRect(fromPanel:))
@@ -432,11 +428,6 @@ final class ScreenManager {
         overlapMonitor.start { [weak self] location in
             self?.isIslandHit(location) ?? false
         }
-    }
-
-    /// 메뉴바 빈 공간을 지금 다시 잰다 (손쉬운 사용 권한 변경 등)
-    func refreshMenuBarSpace() {
-        spaceMonitor.refresh(forceAX: true)
     }
 
     /// 아일랜드가 보이는 화면의 감시 영역 (지금 아일랜드 + 카드가 펼쳐질 자리).

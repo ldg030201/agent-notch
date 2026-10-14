@@ -176,43 +176,6 @@ struct IslandPanelShape: Shape {
     }
 }
 
-/// 메뉴바 아이콘 구멍 (둥근 사각형). 아일랜드 배경(`IslandBackground`)이 칠한 검정을 구멍 밖 모양(`outside`)으로 잘라 뚫는다.
-/// 구멍은 패널 기준 자리에 고정이라 애니메이션하지 않는다 (모양이 커지고 줄어드는 동안에도 진짜 아이콘 자리).
-/// 구멍끼리는 겹치지 않는다 (`WingCutouts.merge`) — even-odd 로 그려도 겹친 곳이 다시 칠해지지 않게
-struct IslandHolesShape: Shape {
-    /// 구멍 (패널 기준)
-    var holes: [CGRect] = []
-    /// 그리는 사각형 왼쪽 위의 패널 기준 위치 (패널 전체에 그리면 0)
-    var origin: CGPoint = .zero
-    /// 구멍 밖 전체: 그리는 사각형을 넉넉히 넓힌 사각형 + 구멍 (even-odd 로 칠하면 구멍만 빈다)
-    var inverted = false
-
-    /// 구멍 밖 모양 (`IslandBackground` 가 even-odd 로 자른다). 모양이 노치 보호로 프레임 밖까지 조금 나가도 자르지 않게 넓힌다
-    var outside: IslandHolesShape {
-        var shape = self
-        shape.inverted = true
-        return shape
-    }
-
-    /// `outside` 의 사각형을 그리는 사각형보다 넓히는 폭
-    static let outsideMargin: CGFloat = 64
-
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        if inverted { path.addRect(rect.insetBy(dx: -Self.outsideMargin, dy: -Self.outsideMargin)) }
-        let corner = CGSize(width: WingCutouts.cornerRadius, height: WingCutouts.cornerRadius)
-        for hole in holes {
-            path.addRoundedRect(in: hole.offsetBy(dx: rect.minX - origin.x, dy: rect.minY - origin.y), cornerSize: corner, style: .continuous)
-        }
-        return path
-    }
-
-    /// 칠한 모양(`IslandShape`)에서 구멍을 뺀 자리가 점을 덮는지 (검사용. 둘 다 같은 사각형 기준)
-    static func covers(_ filled: Path, holes: Path, _ point: CGPoint) -> Bool {
-        filled.contains(point) && !holes.contains(point)
-    }
-}
-
 /// 실제로 그려지는 외곽선 치수 (반경 · 폭 제한을 적용한 값, 프레임 기준).
 /// 모든 값이 스펙에 대해 연속이라 스펙을 보간하면 모양도 끊김 없이 바뀐다.
 struct IslandOutline: Equatable {
@@ -248,7 +211,7 @@ struct IslandOutline: Equatable {
     var maxX: CGFloat { max(nx1 + earR, bx1) }
 }
 
-/// 아일랜드 검은 모양 (구멍 없이). 아이콘 구멍은 배경(`IslandBackground`)이 칠한 모양을 `IslandHolesShape.outside` 로 잘라 뚫는다
+/// 아일랜드 검은 모양
 struct IslandShape: Shape {
     var spec: IslandShapeSpec
 
@@ -292,7 +255,7 @@ struct IslandShape: Shape {
         CGRect(x: panel.minX + spec.originX, y: panel.minY + spec.originY, width: spec.frameWidth, height: spec.frameHeight)
     }
 
-    /// 칠할 모양 (구멍 없이).
+    /// 칠할 모양.
     /// 주 외곽선과 부분 1 은 같은 방향으로 도는 닫힌 경로라, 한 경로에 하위 경로 둘로 넣고 기본(nonzero) 규칙으로 칠하면
     /// 겹친 곳도 한 번만 칠해져 합집합과 같다 (불리언 연산 없음 · 이음매 없음). 부분 2 가 폭 0 으로 숨은 순간(점 같은 부분 1 아래의
     /// 넓이 0 인 바늘)이나 부분 1 안에 들어간 목 · 오목 모서리는 칠할 넓이가 없어 아무것도 그리지 않는다.

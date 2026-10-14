@@ -8,7 +8,6 @@ import NotchCore
 // - 내용: 실제 패널의 IslandViewState 를 같은 순서로 돌린다 (내용 구조가 바뀌면 이전 내용이 제자리에서 0.1s 흐려짐 →
 //   contentDelay(종류 변화) · branchContentDelay(같은 종류에서 표시 방식 변화) 뒤 새 내용(최종 배치) 0.18s 나타남,
 //   IslandContainer.beginContentSwap)
-// - 아이콘 구멍: 패널 기준 고정 (모양 애니메이션과 무관하게 늘 진짜 아이콘 자리)
 
 // MARK: - 전환 정의
 
@@ -20,12 +19,6 @@ struct SnapshotTransition {
     let to: SnapshotScenario
     /// 메뉴바 배치 · 노치 표시 방식을 가져올 장면 (두 상태가 같은 화면이어야 하므로 하나로 맞춘다)
     let environment: SnapshotScenario
-    /// 후 상태만 다른 메뉴바에서 계산한다 (앞 앱이 바뀌어 앱 메뉴 길이가 달라지는 전환). nil 이면 `environment`
-    var toEnvironment: SnapshotScenario?
-    /// 후 상태에서 상태 아이콘을 옮긴다 (폭이 바뀌는 메뉴바 아이템 재현). 거리는 날개 폭이 크게 바뀌는 가장 가까운 값을 찾아 쓴다
-    var shiftsIcons = false
-    /// 아이콘을 옮길 거리를 정해 둔다 (nil 이면 위처럼 찾는다)
-    var fixedIconShift: CGFloat?
     /// `from` 카드를 접은 직후(카드 띠를 붙잡은 `to` 접힌 상태) → 띠를 놓은 `to` 접힌 상태 (접힌 뒤 띠가 바뀌는 단계)
     var afterCollapse = false
     /// 한 표시 상태로 이어서 계산하는 전환 (`SnapshotSequence`, `environment` 화면). 있으면 `from` · `to` 는 쓰지 않는다
@@ -42,15 +35,13 @@ struct SnapshotTransition {
             _ from: SnapshotScenario,
             _ to: SnapshotScenario,
             env: SnapshotScenario? = nil,
-            toEnv: SnapshotScenario? = nil,
             name: String? = nil
         ) -> SnapshotTransition {
             SnapshotTransition(
                 name: name ?? "anim-\(from.rawValue)-\(to.rawValue)",
                 from: from,
                 to: to,
-                environment: env ?? from,
-                toEnvironment: toEnv
+                environment: env ?? from
             )
         }
         var list: [SnapshotTransition] = [
@@ -75,7 +66,7 @@ struct SnapshotTransition {
             t(.permission, .workingSummary, env: .working),
             t(.permission, .idle, env: .working),
             t(.expanded, .idle, env: .working),
-            // 넓은 노치 날개 비켜주기 (아이콘 위치 모름)
+            // 넓은 노치 날개 비켜주기 (마우스를 올린 쪽)
             t(.workingWings, .workingWingsRetracted, env: .workingWings),
             t(.workingWingsRetracted, .workingWings, env: .workingWings),
             // 노치 아래 띠 → 카드
@@ -95,47 +86,17 @@ struct SnapshotTransition {
             // 화면 가운데가 좁아 빈 곳 안으로 밀어 놓은 메뉴바 알약 ↔ 카드
             t(.menubarWorkingLongTool, .menubarPermission, env: .menubarWorkingLongTool),
             t(.menubarPermission, .menubarWorkingLongTool, env: .menubarWorkingLongTool),
-            // 실제 사용 환경에 가까운 것: 노치 오른쪽이 상태 아이콘으로 꽉 참
+            // 실제 사용 환경에 가까운 것: 노치 오른쪽이 상태 아이콘으로 꽉 참 (날개가 아이콘을 덮음)
             t(.workingWings, .peek, env: .workingWings, name: "anim-working-wings-peek"),
-            t(.workingWingsIcons, .permission, env: .workingWingsIcons, name: "anim-working-wings-icons-permission"),
-            t(.permission, .workingWingsIcons, env: .workingWingsIcons, name: "anim-permission-working-wings-icons"),
-            t(.workingWingsIcons, .peek, env: .workingWingsIcons, name: "anim-working-wings-icons-peek"),
-            t(.workingWingsIconsStrip, .peek, env: .workingWingsIconsStrip, name: "anim-working-wings-icons-strip-peek"),
-            t(.peek, .workingWingsIconsStrip, env: .workingWingsIconsStrip, name: "anim-peek-working-wings-icons-strip"),
             t(.permissionCollapsed, .permission, env: .working),
-            // 노치 아래 방식 + 왼쪽 한쪽 날개 (오른쪽이 아이콘으로 꽉 찬 화면)
-            t(.workingBelowNotchLeft, .permission, env: .workingBelowNotchLeft),
-            t(.permission, .workingBelowNotchLeft, env: .workingBelowNotchLeft),
-            t(.workingBelowNotchLeft, .expanded, env: .workingBelowNotchLeft),
-            t(.expanded, .workingBelowNotchLeft, env: .workingBelowNotchLeft),
-            t(.workingBelowNotchLeft, .peek, env: .workingBelowNotchLeft),
-            t(.peek, .workingBelowNotchLeft, env: .workingBelowNotchLeft),
-            t(.workingBelowNotchLeft, .done, env: .workingBelowNotchLeft),
-            // 같은 접힌 상태에서 앞 앱 메뉴 길이만 바뀜: 왼쪽 날개 ↔ 노치 아래 띠 (실제 사용 환경에서 가장 잦은 전환)
-            t(.workingBelowNotchLeft, .workingBelowNotchStrip, toEnv: .workingBelowNotchStrip, name: "anim-working-below-notch-left-strip"),
-            t(.workingBelowNotchStrip, .workingBelowNotchLeft, toEnv: .workingBelowNotchLeft, name: "anim-working-below-notch-strip-left"),
-            // 넓은 노치 + 아이콘 구멍에서 같은 변화: 날개 안 내용 ↔ 노치 아래 띠
-            t(.workingWingsIcons, .workingWingsIconsStrip, toEnv: .workingWingsIconsStrip, name: "anim-working-wings-icons-to-strip"),
-            t(.workingWingsIconsStrip, .workingWingsIcons, toEnv: .workingWingsIcons, name: "anim-working-wings-icons-from-strip"),
         ]
         for (from, to) in [(SnapshotScenario.permission, SnapshotScenario.workingSummary), (.permission, .idle), (.expanded, .idle)] {
             var release = t(from, to, env: .working, name: "anim-\(from.rawValue)-\(to.rawValue)-release")
             release.afterCollapse = true
             list.append(release)
         }
-        var shift = t(.workingWingsIcons, .workingWingsIcons, env: .workingWingsIcons, name: "anim-working-wings-icons-shift")
-        shift.shiftsIcons = true
-        list.append(shift)
-        // 노치 오른쪽 아이콘이 가까워 카드 목이 아이콘 앞에서 멈추는 화면: 카드 열기 · CPU% 폭 변화로 아이콘이 밀릴 때
-        list.append(t(.workingWingsIconsNear, .permission, env: .workingWingsIconsNear, name: "anim-working-wings-icons-near-permission"))
-        for (name, distance) in [("anim-permission-icons-near-shift-in", CGFloat(-3)), ("anim-permission-icons-near-shift-out", CGFloat(6))] {
-            var cardShift = t(.permission, .permission, env: .workingWingsIconsNear, name: name)
-            cardShift.shiftsIcons = true
-            cardShift.fixedIconShift = distance
-            list.append(cardShift)
-        }
-        // 접힌 내용이 카드를 여는 순간 · 열린 동안 바뀌는 전환 (한 표시 상태로 이어서): 넓은 노치 · 아이콘 구멍 · 노치 아래 띠 ·
-        // 노치 아래 날개 ↔ 띠 · 메뉴바 알약 · 메뉴바 아래 알약
+        // 접힌 내용이 카드를 여는 순간 · 열린 동안 바뀌는 전환 (한 표시 상태로 이어서): 넓은 노치 · 노치 아래 띠 ·
+        // 메뉴바 알약 · 메뉴바 아래 알약 · 메뉴바 안 점
         for sequence in SnapshotSequence.all {
             for env in SnapshotSequence.environments {
                 for phase in SnapshotSequence.Phase.allCases where phase != .change || sequence.during != nil {
@@ -174,12 +135,10 @@ struct SnapshotSequence {
     let close: Step
 
     /// 화면 (장면 · 이름 · 고정할 화면 종류). 넓은 노치 화면은 노치 없는 화면 스타일로도 그려 메뉴바 안 알약도 본다.
-    /// 노치 전용 배치(아이콘 구멍 · 노치 아래 띠 · 좁은 왼쪽)는 노치 화면만 (노치 없는 화면에선 빈 곳이 좁아 점이 되므로
-    /// 점은 빈 곳이 좁은 메뉴바 `dot` 하나로 본다)
+    /// 노치 아래 띠는 노치 화면만 (노치 없는 화면에선 빈 곳이 좁아 점이 되므로 점은 빈 곳이 좁은 메뉴바 `dot` 하나로 본다)
     static let environments: [(scene: SnapshotScenario, name: String, style: IslandSnapshotRenderer.Style?)] = [
-        (.working, "wings", nil), (.workingWingsIcons, "icons", .notch), (.workingBelowNotch, "strip", .notch),
-        (.workingBelowNotchNarrow, "narrow", .notch), (.menubarWorking, "pill", .menuBar), (.menubarBelowWorking, "below", .menuBar),
-        (.menubarDot, "dot", .menuBar),
+        (.working, "wings", nil), (.workingBelowNotch, "strip", .notch),
+        (.menubarWorking, "pill", .menuBar), (.menubarBelowWorking, "below", .menuBar), (.menubarDot, "dot", .menuBar),
     ]
 
     static var all: [SnapshotSequence] {
@@ -652,7 +611,7 @@ enum SnapshotInterpolation {
     }
 
     /// SwiftUI 가 레이아웃 변경 한 번에 같은 스프링으로 함께 보간하는 값: 프레임 크기 · 위치 · 모양.
-    /// 숫자가 아닌 값(접힌 방식 등)과 아이콘 구멍(애니메이션하지 않음)은 후 상태 그대로. 날개 폭 같은 숫자는 보간.
+    /// 숫자가 아닌 값(접힌 방식 등)은 후 상태 그대로. 날개 폭 같은 숫자는 보간.
     static func mix(_ a: IslandLayout, _ b: IslandLayout, _ v: Double) -> IslandLayout {
         var result = b
         result.size = CGSize(width: mix(a.size.width, b.size.width, v), height: mix(a.size.height, b.size.height, v))
@@ -668,10 +627,6 @@ enum SnapshotInterpolation {
         if case let .wings(from) = a.compact, case var .wings(to) = b.compact {
             to.left = mix(from.left, to.left, v)
             to.right = mix(from.right, to.right, v)
-            to.leftSpan = mix(from.leftSpan, to.leftSpan, v)
-            to.rightSpan = mix(from.rightSpan, to.rightSpan, v)
-            to.leftOuterPad = mix(from.leftOuterPad, to.leftOuterPad, v)
-            to.rightOuterPad = mix(from.rightOuterPad, to.rightOuterPad, v)
             result.compact = .wings(to)
         }
         return result
@@ -686,8 +641,6 @@ enum SnapshotShapeCheck {
         let geometry: NotchGeometry
         let from: IslandLayout
         let to: IslandLayout
-        /// 손쉬운 사용으로 잰 메뉴바 아이콘 (패널 기준, 잰 장면만)
-        let icons: [CGRect]
         /// 가짜 메뉴바에 그린 글자 · 아이콘 자리 (패널 기준). 전 · 후 상태에서 보이던 것은 중간에도 가려지면 안 된다
         var glyphs: [(name: String, rect: CGRect)] = []
     }
@@ -708,18 +661,9 @@ enum SnapshotShapeCheck {
         return result
     }
 
-    /// 그리는 검은 모양과 구멍 (프레임 기준, 구멍은 패널 기준 자리에서 옮김)
-    static func filledAndHoles(_ layout: IslandLayout) -> (filled: Path, holes: Path) {
-        let frame = CGRect(origin: .zero, size: layout.size)
-        return (
-            IslandShape(spec: layout.shapeSpec).path(in: frame),
-            IslandHolesShape(holes: layout.iconHoles, origin: layout.origin).path(in: frame)
-        )
-    }
-
-    /// 검은 모양(구멍 제외)이 사각형 안의 점을 하나라도 덮는지
+    /// 검은 모양이 사각형 안의 점을 하나라도 덮는지
     static func covers(_ layout: IslandLayout, _ rect: CGRect) -> Bool {
-        let shape = filledAndHoles(layout)
+        let filled = IslandShape(spec: layout.shapeSpec).path(in: CGRect(origin: .zero, size: layout.size))
         let inner = rect.insetBy(dx: 1, dy: 1)
         for fx in [0.0, 0.25, 0.5, 0.75, 1.0] {
             for fy in [0.0, 0.5, 1.0] {
@@ -727,7 +671,7 @@ enum SnapshotShapeCheck {
                     x: inner.minX + inner.width * fx - layout.origin.x,
                     y: inner.minY + inner.height * fy - layout.origin.y
                 )
-                if IslandHolesShape.covers(shape.filled, holes: shape.holes, point) { return true }
+                if filled.contains(point) { return true }
             }
         }
         return false
@@ -831,16 +775,6 @@ enum SnapshotShapeCheck {
                 issues.append("\(glyph.name) 전환 중에만 가려짐")
             }
         }
-
-        // 메뉴바 아이콘이 검은 모양에 가려지는지 (아이콘 구멍을 쓰는 화면: 구멍이 늘 아이콘 자리에 있어야 함)
-        guard !layout.iconHoles.isEmpty else { return issues }
-        let shape = filledAndHoles(layout)
-        for icon in context.icons {
-            let center = CGPoint(x: icon.midX - layout.origin.x, y: icon.midY - layout.origin.y)
-            if IslandHolesShape.covers(shape.filled, holes: shape.holes, center) {
-                issues.append(String(format: "아이콘 %.0f…%.0f 가려짐", icon.minX, icon.maxX))
-            }
-        }
         return issues
     }
 
@@ -871,7 +805,7 @@ enum SnapshotShapeCheck {
         return issues
     }
 
-    /// 스프링 값 0 → 최대값을 촘촘히 훑어 칠한 모양(구멍 없이)이 여러 조각으로 갈라지는 구간 (이어진 구간 하나로 보고).
+    /// 스프링 값 0 → 최대값을 촘촘히 훑어 칠한 모양이 여러 조각으로 갈라지는 구간 (이어진 구간 하나로 보고).
     /// 주 외곽선과 부분 1 을 함께 그리는 순간만 본다: 둘은 각각 닫힌 경로 하나라, 갈라진다면 서로 떨어진 것이다.
     /// 둘이 만나는 위쪽 띠(부분 1 · 목 아래끝 + 4pt)만 1배로 칠해(스프링 값 0.001 간격) 칠한 픽셀(절반 이상)이 이어진 덩어리를 센다
     /// (목이 띠 안에 있어 띠 안의 주 외곽선은 한 덩어리다)
@@ -1087,37 +1021,29 @@ enum SnapshotAnimationSheet {
         let from: SnapshotSetup
         let fromLayout: IslandLayout
         let to: SnapshotSetup
-        var shiftNote = ""
+        var sheetNote = ""
         if let (sequence, phase) = transition.sequence {
             let prepared = try sequence.prepare(phase, style: style, environment: transition.environment)
             from = prepared.from
             fromLayout = prepared.fromLayout
             to = prepared.to
-            shiftNote = prepared.note
+            sheetNote = prepared.note
         } else if transition.afterCollapse {
             // 카드를 그려 카드 띠를 커밋 → 접힌 상태가 그 띠를 붙잡음(전) → 놓을 시각이 지나 띠를 놓음(후). 같은 표시 상태에서 이어서 계산한다
             let card = try SnapshotStage.prepare(transition.from, style: style, environment: transition.environment)
             card.draw()
-            from = try SnapshotStage.prepare(transition.to, style: style, environment: transition.toEnvironment ?? transition.environment)
+            from = try SnapshotStage.prepare(transition.to, style: style, environment: transition.environment)
             from.presentation.adoptLayoutHistory(from: card.presentation)
             fromLayout = from.draw()
             from.uptime.advance(by: Self.collapseHoldElapsed)
             to = from
-            shiftNote = "\(transition.from.rawValue) 카드를 접은 뒤 붙잡은 띠를 놓음"
+            sheetNote = "\(transition.from.rawValue) 카드를 접은 뒤 붙잡은 띠를 놓음"
         } else {
             from = try SnapshotStage.prepare(transition.from, style: style, environment: transition.environment)
             // 전 상태를 그리면서(관찰 패스 · 커밋) 배치 이력(직전 접힌 날개 · 열린 카드 띠)이 남는다
             fromLayout = from.draw()
-            var shift: CGFloat = 0
-            if transition.shiftsIcons {
-                let sweep = try iconShiftSweep(transition, style: style, from: from, previous: fromLayout)
-                shift = sweep.chosen
-                shiftNote = sweep.note
-            }
-            to = try SnapshotStage.prepare(
-                transition.to, style: style, environment: transition.toEnvironment ?? transition.environment, iconShift: shift
-            )
-            // 실제 앱처럼 전 상태의 배치 이력을 기억한 채 후 상태를 계산한다 (날개 끝 · 카드 띠 이력 유지, 카드를 접으면 띠를 붙잡음)
+            to = try SnapshotStage.prepare(transition.to, style: style, environment: transition.environment)
+            // 실제 앱처럼 전 상태의 배치 이력을 기억한 채 후 상태를 계산한다 (날개 배치 · 카드 띠 이력 유지, 카드를 접으면 띠를 붙잡음)
             to.presentation.adoptLayoutHistory(from: from.presentation)
         }
         let fromMode = from.mode
@@ -1132,13 +1058,10 @@ enum SnapshotAnimationSheet {
             spring: sameKind ? .adjust : .resize,
             swapDelay: sameKind ? IslandMotion.branchContentDelay : IslandMotion.contentDelay
         )
-        // 배경 메뉴바는 후 상태 기준 (아이콘 이동 장면에서 아이콘은 즉시 옮겨지고 아일랜드가 따라간다)
+        // 배경 메뉴바는 후 상태 기준
         let bar = to.bar
-        let icons = bar.space.itemsMeasured ? bar.space.itemFrames.map {
-            $0.insetBy(dx: SnapshotMenuBar.iconItemPadding, dy: 0)
-        } : []
 
-        var context = SnapshotShapeCheck.Context(geometry: bar.geometry, from: fromLayout, to: toLayout, icons: icons)
+        var context = SnapshotShapeCheck.Context(geometry: bar.geometry, from: fromLayout, to: toLayout)
         context.glyphs = SnapshotShapeCheck.glyphs(of: bar)
         /// 내용 교체 순서 문제 (보고 앞쪽에 찍는다)
         var report0: [String] = []
@@ -1223,7 +1146,7 @@ enum SnapshotAnimationSheet {
         ))
         report.append("   전: \(describe(fromLayout))")
         report.append("   후: \(describe(toLayout))")
-        if !shiftNote.isEmpty { report.append("   " + shiftNote) }
+        if !sheetNote.isEmpty { report.append("   " + sheetNote) }
         for warning in SnapshotTimeline.syncWarnings() { report.append("   ⚠︎ \(warning)") }
         report.append(contentsOf: report0)
         let swapCheck = SnapshotContentSwapCheck.run()
@@ -1288,7 +1211,7 @@ enum SnapshotAnimationSheet {
         let sheet = SnapshotAnimationSheetView(
             title: "\(transition.name) · \(styleName)",
             subtitle: "\(describe(fromMode)) → \(describe(toMode)) · \(timeline.spring.name) spring(response \(timeline.spring.response), damping \(timeline.spring.dampingFraction)) · \(swapLabel)"
-                + (shiftNote.isEmpty ? "" : " · " + shiftNote),
+                + (sheetNote.isEmpty ? "" : " · " + sheetNote),
             notes: notes,
             bar: bar,
             crop: crop,
@@ -1318,58 +1241,6 @@ enum SnapshotAnimationSheet {
         return request == old ? .permission(request, queueCount: count) : mode
     }
 
-    /// 상태 아이콘을 -16…16pt 옮겨 가며 오른쪽 폭을 잰다 (이력 없이 새로 계산 / 전 상태 배치 이력을 기억한 앱 동작).
-    /// 접힌 날개는 오른쪽 날개 폭, 펼친 카드는 노치 오른쪽 끝 ~ 목 오른쪽 끝(귀 제외).
-    /// 시트에는 정해 둔 거리(`fixedIconShift`)나, 이력 없이 계산하면 폭이 가장 크게 바뀌는 가까운 거리를 쓴다.
-    private static func iconShiftSweep(
-        _ transition: SnapshotTransition,
-        style: IslandSnapshotRenderer.Style,
-        from: SnapshotSetup,
-        previous: IslandLayout
-    ) throws -> (chosen: CGFloat, note: String) {
-        func right(_ layout: IslandLayout) -> CGFloat {
-            if case let .wings(spec) = layout.compact { return spec.right }
-            guard layout.compact == nil, layout.shape.notchWidth > 0 else { return 0 }
-            let neckMaxX = layout.origin.x + layout.size.width - layout.shape.neckRight
-            return neckMaxX - (layout.shape.notchMinX + layout.shape.notchWidth)
-        }
-        func measure(_ shift: CGFloat) throws -> (fresh: CGFloat, sticky: CGFloat) {
-            let fresh = try SnapshotStage.prepare(transition.to, style: style, environment: transition.environment, iconShift: shift)
-            let sticky = try SnapshotStage.prepare(transition.to, style: style, environment: transition.environment, iconShift: shift)
-            sticky.presentation.adoptLayoutHistory(from: from.presentation)
-            return (right(fresh.layout), right(sticky.layout))
-        }
-        let base = right(previous)
-        let kind = previous.compact == nil ? "카드 목 오른쪽 폭" : "오른쪽 날개 폭"
-        var rows: [String] = []
-        var chosen: CGFloat? = transition.fixedIconShift
-        for shift in stride(from: -16, through: 16, by: 1) {
-            let value = try measure(CGFloat(shift))
-            let mark = abs(value.fresh - base) >= 8 ? " ← 급변" : ""
-            rows.append(String(format: "%+3d: 이력 없이 %.0f · 앱(이력 기억) %.0f%@", shift, value.fresh, value.sticky, mark))
-        }
-        print("   아이콘 이동별 \(kind) (\(transition.name), 직전 \(String(format: "%.0f", base))):\n      "
-            + rows.joined(separator: "\n      "))
-        if chosen == nil {
-            for magnitude in 1...16 {
-                for sign in [-1, 1] {
-                    let shift = CGFloat(magnitude * sign)
-                    if abs(try measure(shift).fresh - base) >= 8 {
-                        chosen = shift
-                        break
-                    }
-                }
-                if chosen != nil { break }
-            }
-        }
-        let shift = chosen ?? 4
-        let held = try measure(shift)
-        return (shift, String(
-            format: "후 상태: 상태 아이콘 %+.0fpt 이동 (%@ 이력 없이 %.0f → 앱 %.0f, 직전 %.0f)",
-            shift, kind, held.fresh, held.sticky, base
-        ))
-    }
-
     private static func cropRect(frames: [Frame], bar: SnapshotMenuBar, extra: [CGRect]) -> CGRect {
         var union = extra.reduce(CGRect.null) { $0.union($1) }
         for frame in frames { union = union.union(frame.layout.panelRect) }
@@ -1395,7 +1266,6 @@ enum SnapshotAnimationSheet {
             s.neckLeft, s.neckRight, s.neckHeight, s.bodyLeft, s.bodyRight, s.leftEar, s.rightEar,
             s.topRadius, s.bodyTopRadius, s.shoulderRadius, s.bottomRadius
         )
-        if !layout.iconHoles.isEmpty { text += " · 구멍 \(layout.iconHoles.count)개" }
         if case let .wings(spec) = layout.compact {
             text += String(format: " · 날개 %.0f/%.0f (%@)", spec.left, spec.right, "\(spec.arrangement)")
         }
@@ -1535,7 +1405,7 @@ private struct SnapshotAnimationCell: View {
     }
 }
 
-/// IslandContainer 와 같은 짜임: 내용 → 프레임 → 배경(모양 + 아이콘 구멍) → 모양으로 자르기 → 위치.
+/// IslandContainer 와 같은 짜임: 내용 → 프레임 → 배경(모양) → 모양으로 자르기 → 위치.
 /// 레이아웃 값만 애니메이션 중간값으로 직접 넣는다.
 private struct SnapshotAnimatedIsland: View {
     let layout: IslandLayout
@@ -1553,8 +1423,7 @@ private struct SnapshotAnimatedIsland: View {
         }
         .frame(width: layout.size.width, height: layout.size.height, alignment: .topLeading)
         .background {
-            // 구멍은 패널 기준 자리 (프레임이 움직여도 그대로)
-            IslandBackground(shape: IslandShape(spec: spec), holes: IslandHolesShape(holes: layout.iconHoles, origin: layout.origin))
+            IslandBackground(shape: IslandShape(spec: spec))
         }
         .clipShape(IslandShape(spec: spec))
         .offset(x: layout.origin.x, y: layout.origin.y)

@@ -81,10 +81,6 @@ public final class NotchUIController {
     private func makeSettingsWindow() -> SettingsWindowController {
         let controller = SettingsWindowController(preferences: preferences, provider: settings, presentation: presentation)
         controller.setUpdateProvider(updateProvider)
-        // 시스템 설정에서 손쉬운 사용 권한을 허용하고 돌아오면 메뉴바를 바로 다시 잰다
-        controller.onAccessibilityChange = { [weak self] _ in
-            self?.screenManager.refreshMenuBarSpace()
-        }
         return controller
     }
 

@@ -1,5 +1,4 @@
 import AppKit
-import ApplicationServices
 import Observation
 import SwiftUI
 import NotchCore
@@ -34,13 +33,8 @@ enum SettingsSection: String, CaseIterable, Identifiable {
 @Observable
 final class SettingsModel {
     @ObservationIgnored private let provider: SettingsProvider
-    @ObservationIgnored private let accessibilityCheck: () -> Bool
     /// 마지막 확인 시각 표시용 (스냅숏은 고정 시각)
     @ObservationIgnored let now: () -> Date
-    /// 손쉬운 사용 권한이 바뀌면 호출 (메뉴바 측정 다시 하기)
-    @ObservationIgnored var onAccessibilityChange: ((Bool) -> Void)?
-    @ObservationIgnored private var pollTask: Task<Void, Never>?
-    @ObservationIgnored private var activeToken: NSObjectProtocol?
 
     private(set) var appVersion = ""
     private(set) var hookStatusText = ""
@@ -49,8 +43,6 @@ final class SettingsModel {
     private(set) var launchAtLoginManagedByHomebrew = false
     private(set) var hookError: String?
     private(set) var loginError: String?
-    /// 손쉬운 사용 권한 (메뉴 위치 정확히 감지)
-    private(set) var accessibilityTrusted = false
 
     var selectedSection: SettingsSection = .general
     /// 업데이트 상태 (없으면 버전 탭 숨김)
@@ -62,13 +54,8 @@ final class SettingsModel {
     var confirmingForceQuit = false
 
     /// 값은 설정 창을 열 때 `refresh()` 로 읽는다
-    init(
-        provider: SettingsProvider,
-        accessibilityCheck: @escaping () -> Bool = { AXIsProcessTrusted() },
-        now: @escaping () -> Date = Date.init
-    ) {
+    init(provider: SettingsProvider, now: @escaping () -> Date = Date.init) {
         self.provider = provider
-        self.accessibilityCheck = accessibilityCheck
         self.now = now
     }
 
@@ -77,22 +64,6 @@ final class SettingsModel {
         (hookStatusText, hooksInstalled) = provider.hookState
         launchAtLoginEnabled = provider.launchAtLoginEnabled
         launchAtLoginManagedByHomebrew = provider.launchAtLoginManagedByHomebrew
-        refreshAccessibility()
-    }
-
-    func refreshAccessibility() {
-        let trusted = accessibilityCheck()
-        if trusted != accessibilityTrusted {
-            accessibilityTrusted = trusted
-            onAccessibilityChange?(trusted)
-        }
-    }
-
-    /// 시스템 손쉬운 사용 권한 요청 창을 띄운다 (사용자가 시스템 설정에서 직접 허용)
-    func requestAccessibility() {
-        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
-        refreshAccessibility()
     }
 
     /// 시스템 설정 > 메뉴 막대를 연다. 그 화면으로 바로 못 가면 시스템 설정만 연다.
@@ -103,34 +74,6 @@ final class SettingsModel {
         }
         if let app = workspace.urlForApplication(withBundleIdentifier: "com.apple.systempreferences") {
             workspace.openApplication(at: app, configuration: NSWorkspace.OpenConfiguration())
-        }
-    }
-
-    /// 창이 열려 있는 동안 권한 변화를 본다 (시스템 설정에서 허용하고 돌아왔을 때 바로 반영):
-    /// 몇 초마다 + 앱이 다시 앞으로 올 때
-    func startWatching() {
-        pollTask?.cancel()
-        pollTask = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(1500))
-                self?.refreshAccessibility()
-            }
-        }
-        if activeToken == nil {
-            activeToken = NotificationCenter.default.addObserver(
-                forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
-            ) { [weak self] _ in
-                MainActor.assumeIsolated { self?.refreshAccessibility() }
-            }
-        }
-    }
-
-    func stopWatching() {
-        pollTask?.cancel()
-        pollTask = nil
-        if let activeToken {
-            NotificationCenter.default.removeObserver(activeToken)
-            self.activeToken = nil
         }
     }
 
@@ -390,41 +333,21 @@ struct SettingsView: View {
                     ])
                 }
                 SettingsDivider()
-                if preferences.notchStyle == .wings {
-                    // 넓은 노치: 손쉬운 사용 권한이 있으면 아이콘 구멍, 없으면 마우스를 올릴 때 비켜주기
-                    SettingsRow(
-                        title: "날개 위 메뉴바 아이콘",
-                        note: (model.accessibilityTrusted
-                            ? "켜짐 · 아이콘이 날개 위에 보여요. 앞 앱 메뉴도 재서 왼쪽 날개가 메뉴를 덮지 않게 해요."
-                            : "손쉬운 사용 권한이 있으면 아이콘이 날개 위에 보여요. 없으면 마우스를 올릴 때 날개가 비켜줘요.")
-                            + " " + Self.adHocNote
-                    ) {
-                        accessibilityControl
-                    }
-                } else {
-                    SettingsRow(title: "노치 옆이 막혔을 때", note: "노치 옆 메뉴바에 자리가 없으면 노치 아래에 이렇게 보여줘요") {
-                        SettingsMenuPicker(title: "노치 옆이 막혔을 때", selection: $preferences.compactOverlapStyle, options: [
+                if preferences.notchStyle == .belowNotch {
+                    SettingsRow(title: "노치 아래 표시", note: "접힌 아일랜드를 노치 아래에 보여줄 모양") {
+                        SettingsMenuPicker(title: "노치 아래 표시", selection: $preferences.compactOverlapStyle, options: [
                             (.belowNotch, "노치 아래 띠"),
                             (.minimal, "선만"),
                         ])
                     }
+                    SettingsDivider()
                 }
-                SettingsDivider()
                 SettingsRow(title: "외부 모니터 표시", note: "노치 없는 화면에서 접힌 아일랜드를 둘 곳") {
                     SettingsMenuPicker(title: "외부 모니터 표시", selection: $preferences.externalDisplayStyle, options: [
                         (.inMenuBar, "메뉴바 안"),
                         (.belowMenuBar, "메뉴바 아래"),
                         (.hidden, "표시 안 함"),
                     ])
-                }
-                if preferences.notchStyle == .belowNotch {
-                    SettingsDivider()
-                    SettingsRow(
-                        title: "메뉴 위치 정확히 감지",
-                        note: "손쉬운 사용 권한이 있으면 앞 앱 메뉴와 메뉴바 아이콘 위치를 재서 노치 옆이 비어 있으면 그 자리에 보여줘요. " + Self.adHocNote
-                    ) {
-                        accessibilityControl
-                    }
                 }
                 ForEach(presentation?.notchConflictNames ?? [], id: \.self) { name in
                     SettingsDivider()
@@ -456,29 +379,10 @@ struct SettingsView: View {
         }
     }
 
-    /// 손쉬운 사용 권한은 서명 신원에 묶여서 ad-hoc 서명 앱은 업데이트마다 다시 물을 수 있다
-    private static let adHocNote = "직접 빌드한 앱(ad-hoc 서명)은 업데이트한 뒤 다시 허용해야 할 수 있어요."
-
-    /// 손쉬운 사용 권한 상태 (허용됨 표시 또는 요청 버튼)
-    @ViewBuilder
-    private var accessibilityControl: some View {
-        if model.accessibilityTrusted {
-            Label("허용됨", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(SettingsPalette.green)
-                .fixedSize()
-        } else {
-            Button("손쉬운 사용 권한 요청") {
-                model.requestAccessibility()
-            }
-            .buttonStyle(SettingsButtonStyle())
-            .fixedSize()
-        }
-    }
-
     /// 노치 화면 표시 방식 설명
     private static func notchStyleNote(_ style: NotchStyle) -> String {
         switch style {
-        case .wings: return "노치 양옆 메뉴바 자리를 검게 칠해 노치가 넓어 보여요. 메뉴바 아이콘은 날개 위에 보여요."
+        case .wings: return "노치 양옆 메뉴바 자리를 검게 칠해 노치가 넓어 보여요. 날개에 마우스를 올리면 비켜줘서 아래 메뉴바 아이콘을 쓸 수 있어요."
         case .belowNotch: return "메뉴바를 가리지 않고 노치 바로 아래에 노치 폭만큼 내려 보여줘요."
         }
     }
@@ -525,7 +429,7 @@ struct SettingsView: View {
 
 /// 설정 창 (한 개만 유지)
 @MainActor
-final class SettingsWindowController: NSObject, NSWindowDelegate {
+final class SettingsWindowController {
     private let preferences: AppPreferences
     private let model: SettingsModel
     private let presentation: PresentationController
@@ -535,12 +439,6 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         self.preferences = preferences
         self.model = SettingsModel(provider: provider)
         self.presentation = presentation
-        super.init()
-    }
-
-    var onAccessibilityChange: ((Bool) -> Void)? {
-        get { model.onAccessibilityChange }
-        set { model.onAccessibilityChange = newValue }
     }
 
     func setUpdateProvider(_ provider: UpdateProvider?) {
@@ -554,7 +452,6 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         model.confirmingForceQuit = false
         let window = self.window ?? makeWindow()
         self.window = window
-        model.startWatching()
         // 메뉴바 앱(액세서리)이라 창을 앞으로 가져오려면 앱 활성화가 필요하다
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
@@ -562,10 +459,6 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     func close() {
         window?.close()
-    }
-
-    func windowWillClose(_ notification: Notification) {
-        model.stopWatching()
     }
 
     private func makeWindow() -> NSWindow {
@@ -576,7 +469,6 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.title = "AgentNotch 설정"
         window.styleMask = [.titled, .closable, .miniaturizable]
         window.isReleasedWhenClosed = false
-        window.delegate = self
         window.setContentSize(SettingsView.windowSize)
         window.center()
         return window

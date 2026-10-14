@@ -178,16 +178,14 @@ enum SnapshotSummaryCheck {
             ("끝남 2", SessionStatusSummary(done: 2)),
             ("세 묶음", SessionStatusSummary(waiting: 1, working: 1, done: 2)),
         ]
-        let scenes: [(String, IslandSnapshotRenderer.Style, SnapshotMenuBar.Crowding, Bool, NotchStyle)] = [
-            ("넓은 노치 · 넉넉함", .notch, .roomy, false, .wings),
-            ("넓은 노치 · 아이콘 구멍", .notch, .iconsToNotch, true, .wings),
-            ("넓은 노치 · 아이콘 가까움", .notch, .iconsNearNotch, true, .wings),
-            ("노치 아래 · 양옆 막힘", .notch, .bothBlocked, false, .belowNotch),
-            ("노치 아래 · 왼쪽 날개", .notch, .iconsToNotch, false, .belowNotch),
-            ("메뉴바 알약", .menuBar, .roomy, false, .wings),
+        let scenes: [(String, IslandSnapshotRenderer.Style, SnapshotMenuBar.Crowding, NotchStyle)] = [
+            ("넓은 노치 · 넉넉함", .notch, .roomy, .wings),
+            ("넓은 노치 · 아이콘이 노치까지", .notch, .iconsToNotch, .wings),
+            ("노치 아래 · 양옆 막힘", .notch, .bothBlocked, .belowNotch),
+            ("메뉴바 알약", .menuBar, .roomy, .wings),
         ]
-        for (sceneName, style, crowding, measures, notchStyle) in scenes {
-            let bar = SnapshotMenuBar(style: style, crowding: crowding, measuresItems: measures)
+        for (sceneName, style, crowding, notchStyle) in scenes {
+            let bar = SnapshotMenuBar(style: style, crowding: crowding)
             let engine = IslandLayoutEngine(
                 geometry: bar.geometry, space: bar.space, externalStyle: .inMenuBar,
                 notchStyle: notchStyle, overlapStyle: .belowNotch, notchConflict: false
@@ -230,7 +228,7 @@ enum SnapshotSummaryCheck {
 // MARK: - 메뉴바 알약 제목
 
 /// 노치 없는 화면의 알약이 제목(프로젝트명 · 툴 제목)을 빼고 상태 아이콘만 남기지 않는지, 알약이 빈 곳 안에 있는지.
-/// 손쉬운 사용 권한이 없는 1920pt 외부 모니터 (빈 곳 추정 864…1160, 화면 가운데 960 → 가운데로는 176pt)
+/// 상태 아이템도 못 잰 1920pt 외부 모니터 (빈 곳 추정 864…1160, 화면 가운데 960 → 가운데로는 176pt)
 @MainActor
 enum SnapshotPillCheck {
     static func run() -> (cases: Int, problems: [String]) {
@@ -292,10 +290,10 @@ enum SnapshotPillCheck {
             problems.append(String(format: "짧은 제목: 알약 가운데 %.1f (화면 가운데 %.0f)", short.panelRect.midX, inMenuBar.midX))
         }
 
-        // 3) 빈 곳이 좁아도 툴 제목 최소 폭이 들어가면 제목을 넣는다 (빈 곳 약 124pt)
+        // 3) 빈 곳이 좁아도 툴 제목 최소 폭이 들어가면 제목을 넣는다 (빈 곳 약 124pt: 추정한 앱 메뉴 끝 ~ 잰 상태 아이템 시작)
         cases += 1
         let tight = engine(.inMenuBar, space: MenuBarSpace(
-            menuBarVisible: true, menuBarHeight: 24, appMenuEnd: 880, appMenuMeasured: true, statusStart: 1020, statusMeasured: true
+            menuBarVisible: true, menuBarHeight: 24, statusStart: gap.start + 2 * IslandMetrics.menuBarMargin + 124, statusMeasured: true
         ))
         if case let .pill(items) = tight.compactLayout(for: .session(metrics(tool: "plugin_design_figma"))).compact {
             if !items.contains(.tool), !items.contains(.project) { problems.append("좁은 빈 곳: 제목 없이 상태 아이콘만") }
@@ -313,8 +311,8 @@ enum SnapshotPillCheck {
                     let base: CompactItems = summary.isEmpty ? [] : [.summary]
                     for room in stride(from: CGFloat(80), through: 200, by: 1) {
                         let swept = engine(.inMenuBar, space: MenuBarSpace(
-                            menuBarVisible: true, menuBarHeight: 24, appMenuEnd: 880, appMenuMeasured: true,
-                            statusStart: 880 + 2 * IslandMetrics.menuBarMargin + room, statusMeasured: true
+                            menuBarVisible: true, menuBarHeight: 24,
+                            statusStart: gap.start + 2 * IslandMetrics.menuBarMargin + room, statusMeasured: true
                         ))
                         let name = "빈 곳 \(Int(room))pt · \(tool) · +\(stat.0) −\(stat.1) · \(summaryName)"
                         let layout = swept.compactLayout(for: .session(sweptMetrics))
@@ -420,7 +418,6 @@ enum SnapshotStripCheck {
         func items(_ layout: IslandLayout) -> CompactItems? {
             switch layout.compact {
             case let .strip(items)?, let .pill(items)?: return items
-            case let .wings(spec)? where spec.arrangement == .strip: return spec.items
             default: return nil
             }
         }
@@ -470,11 +467,6 @@ enum SnapshotStripCheck {
                 }
             }
         }
-        let wingsIconsBar = SnapshotMenuBar(style: .notch, crowding: .menusAndIconsToNotch, measuresItems: true)
-        let wingsIconsEngine = IslandLayoutEngine(
-            geometry: wingsIconsBar.geometry, space: wingsIconsBar.space, externalStyle: .inMenuBar,
-            notchStyle: .wings, overlapStyle: .belowNotch, notchConflict: false
-        )
         for sample in samples {
             let content = CompactContent.session(sample)
             let strip = stripEngine.compactLayout(for: content)
@@ -539,12 +531,6 @@ enum SnapshotStripCheck {
                 == E.contentWidth(inline, items: first, toolWidth: sample.tool, toolCap: 90)
             if !pillSame || !splitSame || !singleSame {
                 problems.append("\(name): 알약 \(pillSame) · 양쪽 날개 \(splitSame) · 한쪽 날개 \(singleSame) 가 배지를 끝 요소와 다르게 셈")
-            }
-            // 넓은 노치 + 아이콘 구멍에서 내용을 노치 아래 띠로 내린 경우도 같은 요소
-            cases += 1
-            let iconStrip = wingsIconsEngine.compactLayout(for: content)
-            if case let .wings(spec)? = iconStrip.compact, spec.arrangement == .strip, spec.items != stripItems {
-                problems.append("\(name): 아이콘 구멍 날개의 노치 아래 띠 요소 \(spec.items.rawValue) ≠ 띠 \(stripItems.rawValue)")
             }
         }
         return (cases, problems)

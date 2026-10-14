@@ -27,8 +27,7 @@ struct IslandRootView: View {
 /// - 내용 구조(`IslandContentKey`: 모드 종류 · 접힌 표시 방식 · 카드의 요청)가 바뀌면 이전 내용은 이전 레이아웃 그대로,
 ///   화면 위 그 자리에 머문 채 흐려지고, 모양이 거의 자리 잡은 뒤 새 내용이 나타난다.
 /// - 호버 밝힘(내용만 살짝 밝게)은 모양이 다 자리 잡은 뒤에만 시작하고, 내용이 바뀔 때 마우스가 위에 있었으면 한 번 나갔다 들어와야 한다.
-/// - 아이콘 구멍은 패널 기준으로 늘 진짜 아이콘 자리에 뚫는다 (모양 애니메이션과 무관).
-/// - 클릭 모양은 그린 모양 + 레이아웃 클릭 영역(`hitRects`, 점 둘레 등) − 클릭 통과 영역. 패널이 클릭을 받는 자리(`ScreenManager`)와 같다.
+/// - 클릭 모양은 그린 모양 + 레이아웃 클릭 영역(`hitRects`, 점 둘레 등). 패널이 클릭을 받는 자리(`ScreenManager`)와 같다.
 struct IslandContainer: View {
     let screenID: ScreenID
     let presentation: PresentationController
@@ -47,7 +46,7 @@ struct IslandContainer: View {
         let shown = outgoing ?? IslandShownContent(mode: mode, layout: layout)
         let swapping = outgoing != nil || !viewState.contentVisible
         let pointerOver = presentation.hoveredScreenID == screenID
-        // 전환 중에는 호버 표시를 하지 않는다. 내용 밝기만 바꾸므로 아이콘 구멍 옆에서도 구멍이 어긋나지 않는다
+        // 전환 중에는 호버 표시를 하지 않는다. 내용 밝기만 바꾼다
         let wantsHover = pointerOver && !mode.isOpen && !swapping && !reduceMotion
         // 모양이 다 자리 잡은 뒤에만 호버 표시를 시작한다 (전환 끝에 깜빡이지 않게)
         let lit = viewState.hoverHighlight(wants: wantsHover)
@@ -77,13 +76,12 @@ struct IslandContainer: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background {
-            IslandBackground(shape: shape, holes: IslandHolesShape(holes: layout.iconHoles))
+            IslandBackground(shape: shape)
         }
-        // 내용은 구멍 없는 모양으로 자른다 (내용 자리는 구멍을 피해 둔다: 날개 내용은 노치 ~ 첫 구멍, 카드 내용은 메뉴바 아래)
+        // 내용은 그린 모양으로 자른다
         .clipShape(shape)
-        // 클릭 모양: 그린 모양 + 레이아웃 클릭 영역(점 둘레처럼 모양보다 넓힌 자리) − 아이콘 구멍.
-        // 패널은 클릭 영역 안에서 클릭을 받으므로(`ScreenManager`) 여기서도 받아야 삼키지 않는다.
-        // 아이콘 구멍 위는 받지 않는다 (마우스 상태 갱신 전에 눌려도 펼쳐지지 않게)
+        // 클릭 모양: 그린 모양 + 레이아웃 클릭 영역(점 둘레처럼 모양보다 넓힌 자리).
+        // 패널은 클릭 영역 안에서 클릭을 받으므로(`ScreenManager`) 여기서도 받아야 삼키지 않는다
         .contentShape(IslandHitShape(layout: layout, shape: shape))
         .opacity(invisible ? 0 : 1)
         .allowsHitTesting(!invisible)
@@ -177,35 +175,28 @@ struct IslandContainer: View {
     }
 }
 
-/// 아일랜드 검은 배경. 칠한 모양을 "구멍 밖" 모양(넓은 사각형 + 구멍, even-odd)으로 잘라 아이콘 구멍을 뚫는다.
-/// 프레임마다 경로 불리언 연산(모양 − 구멍)을 하지 않고, 구멍은 모양 애니메이션과 관계없이 패널 기준 자리에 머문다.
-/// 구멍 가장자리 안티에일리어싱은 예전 빼기 경로와 같다 (구멍 밖 영역의 덮임 그대로. `destinationOut` 으로 지우면 구멍 모서리가 조금 밝아진다)
+/// 아일랜드 검은 배경
 struct IslandBackground<S: Shape>: View {
     let shape: S
-    var holes = IslandHolesShape()
 
     var body: some View {
         shape
             .fill(Palette.background)
-            .clipShape(holes.outside, style: FillStyle(eoFill: true))
             .accessibilityHidden(true)
     }
 }
 
-/// 클릭을 받는 모양: 아일랜드 모양 + 클릭 영역(`IslandLayout.hitRects`)에서 클릭 통과 영역(아이콘 구멍)을 뺀 것.
-/// 클릭 영역 · 통과 영역은 애니메이션하지 않고 지금 레이아웃 값 그대로다 (`ScreenManager` 의 클릭 판정과 같다).
-/// 모양과 클릭 영역은 하위 경로로 이어 붙이고(nonzero 규칙이라 합집합), 불리언 연산은 통과 영역을 뺄 때(아이콘 구멍을 쓰는 화면) 한 번만 한다
+/// 클릭을 받는 모양: 아일랜드 모양 + 클릭 영역(`IslandLayout.hitRects`).
+/// 클릭 영역은 애니메이션하지 않고 지금 레이아웃 값 그대로다 (`ScreenManager` 의 클릭 판정과 같다).
+/// 모양과 클릭 영역은 하위 경로로 이어 붙인다 (nonzero 규칙이라 합집합, 불리언 연산 없음)
 struct IslandHitShape: Shape {
     var shape: IslandPanelShape
     /// 클릭 영역 (패널 기준)
     let hitRects: [CGRect]
-    /// 클릭 통과 영역 (패널 기준, `hitRects` 보다 우선)
-    let cutouts: [CGRect]
 
     init(layout: IslandLayout, shape: IslandPanelShape) {
         self.shape = shape
         hitRects = layout.panelHitRects
-        cutouts = layout.passThroughRects
     }
 
     var animatableData: IslandShapeSpec {
@@ -214,14 +205,9 @@ struct IslandHitShape: Shape {
     }
 
     func path(in rect: CGRect) -> Path {
-        var base = shape.path(in: rect)
-        for hit in hitRects { base.addRect(hit) }
-        let bounds = base.boundingRect
-        let cut = cutouts.filter { $0.intersects(bounds) }
-        guard !cut.isEmpty else { return base }
-        var holes = Path()
-        for cutout in cut { holes.addRect(cutout) }
-        return base.subtracting(holes)
+        var path = shape.path(in: rect)
+        for hit in hitRects { path.addRect(hit) }
+        return path
     }
 }
 
@@ -234,7 +220,7 @@ struct IslandShownContent: Equatable {
 }
 
 /// 내용 뷰 구조: 모드 종류 + 접힌 상태 표시 방식 + 카드의 요청.
-/// 모드 종류가 같아도 표시 방식이 바뀌면(앞 앱 메뉴 길이로 왼쪽 날개 ↔ 노치 아래 띠 등) 내용을 통째로 바꾼다.
+/// 모드 종류가 같아도 표시 방식이 바뀌면(다른 노치 앱이 생겨 날개 ↔ 노치 아래 띠, 메뉴바 빈 곳이 줄어 알약 ↔ 점 등) 내용을 통째로 바꾼다.
 /// 그대로 두면 이전 · 새 내용이 프레임을 따라 200pt 가까이 미끄러지며 겹쳐 보인다.
 /// 권한 요청 · 질문 · 계획 승인 카드는 요청이 바뀌어도(대기열의 다음 요청) 바꾼다: 같은 높이의 카드 글자만 제자리에서
 /// 바뀌면 새 요청이 온 줄 모르고 이어서 누르기 쉽다 (승인은 새 요청 카드가 나타난 뒤 `PresentationController.shortcutSettleDelay` 가 지나야 받는다)

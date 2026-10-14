@@ -1,6 +1,6 @@
 import AppKit
 
-/// 넓은 노치 날개 비켜주기 (손쉬운 사용 권한이 없거나 메뉴바 아이콘 위치를 모를 때).
+/// 넓은 노치 날개 비켜주기 (날개가 메뉴바 아이콘을 덮으므로, 마우스를 올리면 그쪽 날개가 비켜준다).
 ///
 /// - 접힌 아일랜드를 왼쪽 날개 · 노치(카메라) · 오른쪽 날개로 나눈다.
 /// - 마우스가 날개 자리에 약 120ms 머물면 그쪽 날개가 노치 안으로 들어가고(폭 0), 그 자리는 클릭이 아래 메뉴바 아이템으로 간다.
@@ -34,7 +34,7 @@ final class WingRetractTracker {
     private var enterTasks: [Key: Task<Void, Never>] = [:]
     private var restoreTasks: [Key: Task<Void, Never>] = [:]
 
-    /// 비켜줄 수 있는 화면과 자리. 빠진 화면(카드가 펼쳐짐, 아이콘 구멍 사용 등)은 날개를 원래대로 돌린다.
+    /// 비켜줄 수 있는 화면과 자리. 빠진 화면(카드가 펼쳐짐, 날개 없는 표시 방식 등)은 날개를 원래대로 돌린다.
     func setBands(_ next: [ScreenID: Bands]) {
         let removed = Set(bands.keys).union(retracted.keys).subtracting(next.keys)
         bands = next

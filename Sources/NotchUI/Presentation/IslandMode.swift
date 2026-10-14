@@ -71,9 +71,6 @@ enum IslandMetrics {
     static let bodyTop: CGFloat = 4
     static let bodyBottom: CGFloat = 12
 
-    /// 접힌 working 상태에서 노치 양옆 날개 폭
-    static let workingWing: CGFloat = 108
-
     /// 세션 상태 요약 "● 2": 점 지름 · 점과 숫자 사이 · 묶음 사이 · 앞 내용과 사이
     static let summaryDotSize: CGFloat = 6
     static let summaryDotGap: CGFloat = 4
@@ -107,8 +104,6 @@ enum IslandMetrics {
 
     /// 메뉴바 아이템과 띄울 여백
     static let menuBarMargin: CGFloat = 8
-    /// 접힌 날개: 양쪽 날개 최대/최소 폭
-    static let minBothWing: CGFloat = 72
     /// 접힌 날개 하나만 쓸 때 최대 폭
     static let maxSingleWing: CGFloat = 240
     /// 넓은 노치: 양쪽 날개 한쪽 최대/최소 폭, 왼쪽 프로젝트명 · 오른쪽 툴 이름 최대 폭
@@ -116,10 +111,6 @@ enum IslandMetrics {
     static let minWideWing: CGFloat = 64
     static let wideWingProjectCap: CGFloat = 76
     static let wideWingToolCap: CGFloat = 56
-    /// 넓은 노치: 아이콘을 반으로 자르지 않게 날개를 늘릴 때 한쪽 최대 폭
-    static let iconWingMax: CGFloat = 200
-    /// 넓은 노치: 노치 ~ 첫 아이콘 구멍 사이가 이보다 좁으면 그쪽엔 내용을 두지 않는다
-    static let wingContentMinRoom: CGFloat = 28
     /// 노치 아래 띠 (폭은 노치 폭)
     static let stripHeight: CGFloat = 22
     /// 노치 아래 선
