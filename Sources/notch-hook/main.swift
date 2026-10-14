@@ -61,8 +61,11 @@ guard let connection = HookSocket.connect(path: socketPath, sendTimeout: HookHel
     exit(0)
 }
 
-let payload = EnvelopeBuilder.reduceTaskLists(EnvelopeBuilder.parsePayload(input.data))
-let event = EnvelopeBuilder.eventName(payload: payload, argument: options.eventName)
+let parsed = EnvelopeBuilder.reduceTaskLists(EnvelopeBuilder.parsePayload(input.data))
+let event = EnvelopeBuilder.eventName(payload: parsed, argument: options.eventName)
+// SessionStart · UserPromptSubmit 만: 작업 폴더의 git 브랜치를 읽어 붙인다.
+// 헬퍼는 Claude Code 프로세스 안에서 돌아 프로젝트 폴더를 이미 볼 수 있다 (앱은 프로젝트 폴더를 읽지 않는다)
+let payload = NotchWire.attachingGitBranch(to: parsed, event: event)
 // 질문 · 계획 승인 툴의 PreToolUse 는 훅 명령에 --reply-timeout 이 있을 때만 기다린다 (예전 설정의 10초 timeout 보호)
 let expectsReply = NotchWire.expectsReply(
     event: event,

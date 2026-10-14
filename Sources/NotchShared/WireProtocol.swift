@@ -23,6 +23,27 @@ public enum NotchWire {
     /// 헬퍼가 큰 payload 를 줄였다는 표시 키. 헬퍼(`PayloadShrinker`)가 붙이고 앱(`SessionStore`)이 읽는다
     public static let truncatedMarkerKey = "_agent_notch_truncated"
 
+    /// 헬퍼가 읽어 붙이는 작업 폴더의 git 브랜치 키 (`attachingGitBranch`). 브랜치가 없으면 빈 문자열이다.
+    /// 앱(`SessionStore`)은 이 값을 쓰고, 키가 없으면(예전 헬퍼) 대화 기록의 브랜치를 쓴다
+    public static let gitBranchKey = "_agent_notch_git_branch"
+    /// 헬퍼가 브랜치를 읽는 이벤트. 다른 이벤트에서는 읽지 않는다 (헬퍼는 바로 끝나야 한다:
+    /// 특히 MessageDisplay 는 헬퍼가 끝날 때까지 Claude Code 화면이 멈춘다)
+    public static let gitBranchEvents: Set<String> = ["SessionStart", "UserPromptSubmit"]
+
+    /// `gitBranchEvents` 이고 payload 에 `cwd` 가 있으면 그 폴더의 브랜치를 `gitBranchKey` 로 붙인다 (헬퍼가 쓴다).
+    /// 저장소가 아니면 빈 문자열을 붙인다 (헬퍼가 확인했다는 표시: 앱은 이때 대화 기록의 브랜치를 쓰지 않는다)
+    public static func attachingGitBranch(
+        to payload: JSONValue,
+        event: String,
+        readBranch: (String) -> String? = GitInfo.branch(forDirectory:)
+    ) -> JSONValue {
+        guard gitBranchEvents.contains(event), var object = payload.objectValue,
+              let cwd = object["cwd"]?.stringValue, !cwd.isEmpty
+        else { return payload }
+        object[gitBranchKey] = .string(readBranch(cwd) ?? "")
+        return .object(object)
+    }
+
     // MARK: 응답 대기 시간 사슬
     // 훅 timeout(Claude Code 가 훅을 끊는 시간) > 헬퍼의 응답 대기 > 앱의 응답 대기 상한.
     // 안쪽이 먼저 끝나야 앱이 "결정 없음" 으로 답하고 Claude Code 가 기본 프롬프트로 넘어간다 (훅이 끊겨 결정이 사라지지 않게).

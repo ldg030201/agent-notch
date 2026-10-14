@@ -223,7 +223,7 @@ public enum TranscriptTail {
     }
 
     /// 대화 기록 끝부분에 적힌 마지막 브랜치 (`gitBranch`). 기록이 없거나 브랜치가 없으면 nil.
-    /// 보호 폴더(`ProtectedLocations`)에 있는 프로젝트의 `.git` 을 직접 읽지 않으려고 쓴다 (기록은 `~/.claude` 아래)
+    /// 훅 헬퍼가 브랜치를 보내지 않을 때(예전 헬퍼) 쓴다 (앱은 프로젝트의 `.git` 을 읽지 않는다)
     public static func lastGitBranch(atPath path: String, tailBytes: Int = 64 * 1024) -> String? {
         guard let lines = readTail(atPath: path, maxBytes: tailBytes) else { return nil }
         for line in lines.reversed() where line.contains("\"gitBranch\"") {
@@ -233,6 +233,14 @@ public enum TranscriptTail {
             return branch
         }
         return nil
+    }
+
+    /// `~/.claude`(홈 폴더 `home` 기준) 아래 경로인지. 글자로만 본다: 절대 경로가 아니거나 `.` · `..` 조각이 있으면 아니다
+    public static func isInClaudeDirectory(_ path: String, home: String) -> Bool {
+        guard path.hasPrefix("/"), !home.isEmpty else { return false }
+        let parts = path.split(separator: "/")
+        guard !parts.contains("."), !parts.contains("..") else { return false }
+        return path.hasPrefix((home as NSString).appendingPathComponent(".claude") + "/")
     }
 
     /// 파일 끝 `maxBytes` 바이트까지를 줄 단위로 (오래된 것 → 최근 것). 중간부터 읽었으면 잘린 첫 줄은 버린다.

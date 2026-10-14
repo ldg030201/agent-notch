@@ -283,6 +283,76 @@ import NotchShared
         #expect(!rules.watches(toolName: "Bash", toolInput: nil))
     }
 
+    /// 허용 목록: 확인 카드를 띄우는 툴만 2.5초, 첫 방문 사이트 승인을 띄울 수 있는 페이지 툴은 8초, 나머지는 지켜보지 않는다
+    @Test func allowlistDelays() {
+        let rules = AppConsentHeuristic.default
+        for name in [
+            "mcp__computer-use__request_access", "mcp__computer-use__request_full_control", "mcp__computer-use__request_teach_access",
+            "mcp__ccd_directory__request_directory", "mcp__ccd_directory__change_directory",
+            "mcp__Claude_Browser__navigate", "mcp__claude-in-chrome__navigate",
+            "mcp__claude-in-chrome__select_browser", "mcp__claude-in-chrome__switch_browser",
+        ] {
+            #expect(rules.delay(toolName: name, toolInput: nil) == AppConsentHeuristic.consentDelay, "\(name)")
+        }
+        for prefix in ["mcp__Claude_Browser__", "mcp__claude-in-chrome__"] {
+            for tool in ["computer", "find", "form_input", "get_page_text", "javascript_tool", "read_page"] {
+                #expect(rules.delay(toolName: prefix + tool, toolInput: nil) == AppConsentHeuristic.pageActionDelay, "\(prefix + tool)")
+            }
+        }
+        #expect(AppConsentHeuristic.pageActionDelay >= 8)
+        // 예전에 접두사로 지켜보던 느린 툴 (앱 첫 실행 · 스크린샷 · 묶음 · 개발 서버 · 탭 · 콘솔 등)
+        for name in [
+            "mcp__computer-use__open_application", "mcp__computer-use__app_screenshot", "mcp__computer-use__computer_batch",
+            "mcp__computer-use__list_apps", "mcp__computer-use__teach_step", "mcp__Claude_Browser__browser_batch",
+            "mcp__Claude_Browser__preview_start", "mcp__Claude_Browser__tabs_create", "mcp__claude-in-chrome__tabs_create_mcp",
+            "mcp__claude-in-chrome__read_console_messages", "mcp__claude-in-chrome__gif_creator", "mcp__claude-in-chrome__shortcuts_execute",
+        ] {
+            #expect(rules.delay(toolName: name, toolInput: nil) == nil, "\(name)")
+        }
+        // 기다리기 동작은 페이지 툴이어도 지켜보지 않는다
+        #expect(rules.delay(toolName: "mcp__Claude_Browser__computer", toolInput: json(#"{"action":"wait","duration":5}"#)) == nil)
+    }
+
+    /// 느린 앱 · 브라우저 호출이 확인 카드로 잘못 뜨지 않는다 (예전에는 2.5초가 지나면 모두 "확인이 필요할 수 있어요" 카드)
+    @Test func slowCallsOutsideAllowlistNeverSignal() {
+        let store = makeStore(clock)
+        startTurn(store, env: desktopEnv)
+        let calls = [
+            #"{"tool_name":"mcp__computer-use__open_application","tool_use_id":"o1","tool_input":{"app":"Xcode"}}"#,
+            #"{"tool_name":"mcp__Claude_Browser__preview_start","tool_use_id":"p1","tool_input":{"name":"web"}}"#,
+            #"{"tool_name":"mcp__claude-in-chrome__tabs_create_mcp","tool_use_id":"t1","tool_input":{}}"#,
+        ]
+        for call in calls {
+            store.ingest(hook("PreToolUse", call, env: desktopEnv))
+        }
+        let before = store.latestSignal?.seq
+        clock.advance(30)
+        store.checkStalledTools()
+        #expect(store.sessions["s1"]?.phase == .runningTool)
+        #expect(store.latestSignal?.seq == before)
+    }
+
+    /// 페이지를 다루는 브라우저 툴은 훨씬 길게(8초) 기다린 뒤에만 확인 대기로 본다
+    @Test(arguments: ["mcp__Claude_Browser__find", "mcp__claude-in-chrome__javascript_tool", "mcp__Claude_Browser__computer"])
+    func pageActionWaitsLonger(tool: String) throws {
+        let store = makeStore(clock)
+        startTurn(store, env: desktopEnv)
+        store.ingest(hook("PreToolUse", #"{"tool_name":"\#(tool)","tool_use_id":"pa1","tool_input":{"action":"left_click"}}"#, env: desktopEnv))
+        let before = store.latestSignal?.seq
+
+        clock.advance(7.5)
+        store.checkStalledTools()
+        #expect(store.sessions["s1"]?.phase == .runningTool)
+        #expect(store.latestSignal?.seq == before)
+
+        clock.advance(0.5)
+        store.checkStalledTools()
+        let s = try #require(store.sessions["s1"])
+        #expect(s.phase == .waitingInput)
+        #expect(s.currentActivity?.id == "pa1")
+        #expect(store.latestSignal?.seq == (before ?? 0) + 1)
+    }
+
     /// 세션을 띄운 앱 판단: 번들 ID → 알려진 `TERM_PROGRAM` → 진입점("desktop") 순서
     @Test func hostBundleIdentifier() {
         func host(_ context: TerminalContext) -> String? { context.hostBundleIdentifier }

@@ -325,6 +325,7 @@ public struct AgentSession: Identifiable, Hashable, Sendable {
     public var model: String?
     public var permissionMode: String?
 
+    /// 보이는 단계. 스토어가 남은 대기와 메인 턴 단계(`mainPhase`)로 정한다 (`SessionStore` 의 `finalize`)
     public var phase: SessionPhase
     public var startedAt: Date
     public var lastEventAt: Date
@@ -334,6 +335,10 @@ public struct AgentSession: Identifiable, Hashable, Sendable {
     /// 이때 오는 서브에이전트 이벤트는 백그라운드 작업이라 세션을 다시 작업 중으로 바꾸지 않는다 (단계로 추정하지 않고 따로 기억한다:
     /// 백그라운드 서브에이전트의 질문 · 승인에 답하면 단계가 바뀌어 "끝났다" 는 사실을 잃는다)
     public var mainTurnEnded: Bool
+    /// 대기를 뺀 메인 턴의 단계 (유휴 · 생각 중 · 툴 실행 · 압축 · 완료 · 실패). 이벤트 처리는 이 값만 바꾸고
+    /// 승인 · 입력 대기는 스토어의 대기 목록에 둔다. 메인 턴이 진행 중일 때는 서브에이전트의 툴 진행도 턴의 작업이라 반영하고
+    /// (메인은 Agent 툴로 그 서브에이전트를 기다린다), 메인 턴이 끝난 뒤의 서브에이전트(백그라운드) 이벤트는 반영하지 않는다
+    var mainPhase: SessionPhase
 
     public var lastPrompt: String?
     public var currentActivity: ActivityItem?
@@ -391,6 +396,8 @@ public struct AgentSession: Identifiable, Hashable, Sendable {
         self.model = model
         self.permissionMode = permissionMode
         self.phase = phase
+        // 대기 단계로 만든 세션은 그 대기를 일으킨 툴이 실행 중인 것으로 둔다
+        self.mainPhase = phase == .waitingPermission || phase == .waitingInput ? .runningTool : phase
         self.startedAt = startedAt
         self.lastEventAt = lastEventAt
         self.turnStartedAt = turnStartedAt
