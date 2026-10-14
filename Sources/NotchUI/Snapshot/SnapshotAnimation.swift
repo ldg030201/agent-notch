@@ -560,6 +560,20 @@ enum SnapshotContentSwapCheck {
             expect("띠→날개→띠 첫 렌더", panel.change(to: .working, width: 185, compact: .strip(items: [])), .working, 185)
             settled("띠→날개→띠", panel)
         }
+        // 카드에서 대기열의 다음 요청으로 바뀜: 이전 요청 카드가 흐려진 뒤 새 요청 카드 (대기 수만 바뀌면 그대로)
+        do {
+            let first = SnapshotDecisionCheck.request("ls")
+            let second = SnapshotDecisionCheck.request("rm -rf build")
+            let panel = Panel(.permission(first, queueCount: 2), width: 480)
+            _ = panel.change(to: .permission(first, queueCount: 3), width: 480)
+            if panel.pendingFinish { problems.append("같은 요청 대기 수 변화: 교체 예약이 생김") }
+            _ = panel.change(to: .permission(second, queueCount: 2), width: 480)
+            if panel.state.outgoing?.mode != .permission(first, queueCount: 3) { problems.append("다음 요청: 첫 렌더에 이전 요청 카드를 그리지 않음") }
+            if panel.state.contentVisible || !panel.pendingFinish { problems.append("다음 요청: 이전 요청 카드를 흐리지 않음") }
+            panel.elapse()
+            settled("다음 요청", panel)
+            if panel.state.outgoing != nil { problems.append("다음 요청: 교체가 끝난 뒤에도 이전 요청 카드가 남음") }
+        }
         // 동작 줄이기: 교체 없이 바로 새 모드
         do {
             let panel = Panel(.working, width: 300)
@@ -571,11 +585,11 @@ enum SnapshotContentSwapCheck {
     }
 }
 
-// MARK: - 호버 확대 순서 검사
+// MARK: - 호버 밝힘 순서 검사
 
-/// IslandViewState 의 호버 확대 규칙을 실제 패널 순서(렌더 → onChange)대로 돌려 검사한다.
-/// - 클릭으로 펼쳤다 같은 자리를 다시 눌러 접으면 접힌 아일랜드 위에 마우스가 있어도 다시 부풀지 않아야 한다
-/// - 모양이 자리 잡기 전(`settleDelay`)엔 커지기 시작하지 않는다 (이미 커져 있으면 유지)
+/// IslandViewState 의 호버 밝힘 규칙을 실제 패널 순서(렌더 → onChange)대로 돌려 검사한다.
+/// - 클릭으로 펼쳤다 같은 자리를 다시 눌러 접으면 접힌 아일랜드 위에 마우스가 있어도 다시 밝아지지 않아야 한다
+/// - 모양이 자리 잡기 전(`settleDelay`)엔 밝히기 시작하지 않는다 (이미 밝으면 유지)
 @MainActor
 enum SnapshotHoverCheck {
     static func run() -> (cases: Int, problems: [String]) {
@@ -584,21 +598,21 @@ enum SnapshotHoverCheck {
         let state = IslandViewState()
         let compact = IslandContentKey(mode: .working, layout: IslandLayout(size: .zero, origin: .zero, shape: IslandShapeSpec(), compact: .strip(items: [])))
         let card = IslandContentKey(mode: .expanded, layout: IslandLayout(size: .zero, origin: .zero, shape: IslandShapeSpec(), compact: nil))
-        func expect(_ name: String, wants: Bool, _ scaled: Bool) {
+        func expect(_ name: String, wants: Bool, _ lit: Bool) {
             cases += 1
-            if state.hoverScale(wants: wants) != scaled { problems.append("\(name): 확대 \(scaled ? "돼야" : "안 돼야") 하는데 반대") }
+            if state.hoverHighlight(wants: wants) != lit { problems.append("\(name): 밝힘 \(lit ? "돼야" : "안 돼야") 하는데 반대") }
         }
 
-        // 자리 잡은 접힌 아일랜드에 마우스를 올림 → 커짐
+        // 자리 잡은 접힌 아일랜드에 마우스를 올림 → 밝아짐
         expect("자리 잡은 뒤 호버", wants: true, true)
-        // 클릭해서 펼침 (마우스는 위에 있음): 내용 교체 + 모양 변화 → 펼친 동안엔 커지지 않음
+        // 클릭해서 펼침 (마우스는 위에 있음): 내용 교체 + 모양 변화 → 펼친 동안엔 밝히지 않음
         state.blockHover()
         _ = state.beginSwap(to: card, reduceMotion: false)
         state.layoutChanged()
         expect("펼친 카드", wants: false, false)
         state.finishSwap()
         state.markSettled()
-        // 같은 자리를 다시 눌러 접음 → 교체가 끝난 뒤(220ms) 마우스가 접힌 아일랜드 위에 있어도 커지지 않음
+        // 같은 자리를 다시 눌러 접음 → 교체가 끝난 뒤(220ms) 마우스가 접힌 아일랜드 위에 있어도 밝히지 않음
         state.blockHover()
         _ = state.beginSwap(to: compact, reduceMotion: false)
         state.layoutChanged()
@@ -606,14 +620,14 @@ enum SnapshotHoverCheck {
         expect("접힌 직후 (자리 잡기 전)", wants: true, false)
         state.markSettled()
         expect("접히고 자리 잡은 뒤 (마우스가 그대로)", wants: true, false)
-        // 마우스가 나갔다 들어오면 다시 커짐
+        // 마우스가 나갔다 들어오면 다시 밝아짐
         state.pointerLeft()
         expect("나간 동안", wants: false, false)
         expect("다시 들어옴", wants: true, true)
-        // 커져 있는 동안 폭이 바뀌어도 유지 (줄었다 다시 커지지 않게)
+        // 밝은 동안 폭이 바뀌어도 유지 (어두워졌다 다시 밝아지지 않게)
         state.layoutChanged()
-        expect("커진 채 폭 변화", wants: true, true)
-        // 모양이 바뀌는 중에 새로 들어오면 자리 잡은 뒤에 커짐
+        expect("밝은 채 폭 변화", wants: true, true)
+        // 모양이 바뀌는 중에 새로 들어오면 자리 잡은 뒤에 밝아짐
         state.pointerLeft()
         expect("나감", wants: false, false)
         state.layoutChanged()
@@ -1083,7 +1097,7 @@ enum SnapshotAnimationSheet {
             to.presentation.adoptLayoutHistory(from: from.presentation)
         }
         let fromMode = from.mode
-        let toMode = to.mode
+        let toMode = Self.sameRequest(to.mode, as: fromMode)
         let toLayout = to.layout
         let sameKind = fromMode.kind == toMode.kind
         // 내용 구조(모드 종류 · 접힌 표시 방식)가 같으면 내용을 유지하고, 다르면 교체한다 (IslandContainer 와 같은 규칙)
@@ -1196,16 +1210,18 @@ enum SnapshotAnimationSheet {
         }
         let hoverCheck = SnapshotHoverCheck.run()
         if hoverCheck.problems.isEmpty {
-            report.append("   호버 확대 순서 검사 \(hoverCheck.cases)개 통과")
+            report.append("   호버 밝힘 순서 검사 \(hoverCheck.cases)개 통과")
         } else {
-            report0.append(contentsOf: hoverCheck.problems.map { "   ✗ 호버 확대 순서: \($0)" })
-            report.append(contentsOf: hoverCheck.problems.map { "   ✗ 호버 확대 순서: \($0)" })
+            report0.append(contentsOf: hoverCheck.problems.map { "   ✗ 호버 밝힘 순서: \($0)" })
+            report.append(contentsOf: hoverCheck.problems.map { "   ✗ 호버 밝힘 순서: \($0)" })
         }
         let seamSelfTest = (cases: 3, problems: SnapshotSeamCheck.selfTest())
         for (label, check) in [
             ("겹침 감지", SnapshotOverlapCheck.run()), ("세션 요약 자리", SnapshotSummaryCheck.run()), ("이음매 래스터 자체", seamSelfTest),
             ("메뉴바 알약 제목", SnapshotPillCheck.run()), ("노치 아래 띠 요소", SnapshotStripCheck.run()),
             ("메뉴바 창 찾기", SnapshotMenuBarScanCheck.run()),
+            ("승인 대기", SnapshotDecisionCheck.run()), ("배치 이력", SnapshotLayoutHistoryCheck.run()),
+            ("클릭 모양 · 숫자 키 · 상태 아이템", SnapshotInputCheck.run()),
         ] {
             if check.problems.isEmpty {
                 report.append("   \(label) 검사 \(check.cases)개 통과")
@@ -1265,6 +1281,16 @@ enum SnapshotAnimationSheet {
                 + CGFloat(rows - 1) * SnapshotAnimationSheetView.spacing + 24
         )
         return try SnapshotStage.image(of: sheet, size: size)
+    }
+
+    /// 전 · 후를 다른 표시 상태(스냅숏 세계)로 계산하면 같은 요청도 요청 ID 가 다르다 (스토어가 ID 를 새로 만든다).
+    /// ID 말고는 같은 요청이면 전 요청 ID 로 맞춘다: 실제 앱에선 한 요청이라 카드 내용을 바꾸지 않는다 (`IslandContentKey.request`)
+    private static func sameRequest(_ mode: IslandMode, as reference: IslandMode) -> IslandMode {
+        guard case let .permission(old, _) = reference, case .permission(var request, let count) = mode, request.id != old.id else {
+            return mode
+        }
+        request.id = old.id
+        return request == old ? .permission(request, queueCount: count) : mode
     }
 
     /// 상태 아이콘을 -16…16pt 옮겨 가며 오른쪽 폭을 잰다 (이력 없이 새로 계산 / 전 상태 배치 이력을 기억한 앱 동작).

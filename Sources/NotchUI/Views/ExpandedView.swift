@@ -341,14 +341,21 @@ struct ActivityRow: View {
     }
 }
 
-/// 경과 시간: 작업 중이면 턴 시작부터 1초마다, 아니면 완료 소요 시간/유휴 시간
+/// 경과 시간: 작업 중 · 승인/입력 대기면 턴 시작부터 1초마다, 끝난 턴(완료 · 실패)은 소요 시간, 아니면 유휴 시간
 struct ElapsedText: View {
     let session: AgentSession
 
     var body: some View {
         Group {
-            if session.phase.isWorking || session.phase.needsAttention,
-               let start = session.turnStartedAt ?? session.turn.startedAt {
+            if session.phase == .failed {
+                // 실패한 턴은 더 흐르지 않는다 (`needsAttention` 이지만 기다리는 중이 아님)
+                if let duration = IslandFormat.turnDuration(session) {
+                    Text("실패 · \(IslandFormat.duration(duration))")
+                } else {
+                    Text("실패")
+                }
+            } else if session.phase.isWorking || session.phase.needsAttention,
+                      let start = session.turnStartedAt ?? session.turn.startedAt {
                 IslandClock(everySecond: true) { now in
                     Text(IslandFormat.duration(now.timeIntervalSince(start)))
                 }

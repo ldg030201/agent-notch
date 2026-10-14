@@ -353,7 +353,9 @@ enum MenuBarSpaceBuilder {
     ) -> [ScreenID: MenuBarSpace] {
         let anyMenuBarFound = scan.values.contains { $0.menuBarHeight != nil }
         let appMenuWidth = leftAlignedWidth(readings.appMenus, screens: screens)
-        let statusInset = rightAlignedInset(readings.status, screens: screens)
+        // 상태 아이템 시작: 상태 아이템 창이 없으면(macOS 27, `statusMinX` nil) 손쉬운 사용으로 읽은 값뿐이므로
+        // MenuBarAgent 의 menu extra 도 함께 센다 (아이템 자리 `itemFrames` 와 같은 목록)
+        let statusInset = rightAlignedInset(readings.status + readings.agentExtras, screens: screens)
         let items = itemFrames(screens: screens, scan: scan, readings: readings)
 
         var spaces: [ScreenID: MenuBarSpace] = [:]

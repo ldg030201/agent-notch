@@ -61,12 +61,15 @@ final class PresentationController {
     /// needsInput 신호로 받은 메시지 (세션별 최신)
     private var inputMessages: [String: String] = [:]
 
-    /// 지금 카드에 보이는 권한 요청과 처음 보인 시각(부팅 후 초). 막 바뀐 요청은 단축키로 결정하지 않는다.
+    /// 지금 카드에 보이는 권한 요청과 보이기 시작한 시각(부팅 후 초). 카드가 가려지거나 접히면 지운다.
+    /// 막 보인 요청은 승인하지 않는다 (`acceptsDecision`)
     @ObservationIgnored private var displayedPermission: (id: UUID, since: TimeInterval)?
     /// 질문 카드에서 고르는 중인 답 (요청 ID → 답). 요청이 대기열에서 빠지면 지운다
     @ObservationIgnored private var questionDrafts: [UUID: QuestionDraft] = [:]
-    /// 새 권한 요청이 보이고 나서 단축키 결정을 받기 시작할 때까지의 시간
+    /// 요청이 카드에 보이고 나서 승인(허용 · 항상 허용 · 계획 승인 · 답 보내기)을 받기 시작할 때까지의 시간 (클릭 · 단축키 모두)
     static let shortcutSettleDelay: TimeInterval = 0.5
+    /// 지금 시각 (부팅 후 초). 스냅숏 검사가 시간을 돌려 승인 대기를 확인한다
+    @ObservationIgnored var uptime: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
 
     @ObservationIgnored private var transientTask: Task<Void, Never>?
 
@@ -157,6 +160,7 @@ final class PresentationController {
     func updateScreens(_ list: [NotchGeometry]) {
         let map = Dictionary(list.map { ($0.screenID, $0) }, uniquingKeysWith: { first, _ in first })
         let order = list.map(\.screenID)
+        for id in geometries.keys where map[id] == nil { forgetScreen(id) }
         if map != geometries { geometries = map }
         if order != screenOrder { screenOrder = order }
         if let expanded = expandedScreenID, map[expanded] == nil { expandedScreenID = nil }
@@ -259,10 +263,14 @@ final class PresentationController {
         let occluded = occludedScreenIDs.contains(id)
 
         if isTarget, !(fullscreen && behavior == .hide), let alert = alertMode() {
-            if occluded { return compactMode(for: id) }
+            if occluded {
+                noteDisplayed(nil)
+                return compactMode(for: id)
+            }
             noteDisplayed(alert)
             return alert
         }
+        if isTarget { noteDisplayed(nil) }
         // 사용자가 직접 연 펼침은 풀스크린 설정보다 우선
         if expandedScreenID == id { return .expanded }
         if fullscreen && behavior != .showAll { return .hidden }
@@ -489,11 +497,30 @@ final class PresentationController {
                 lastPill[id] = band
             }
         } else if mode == .hidden {
-            // 숨겼다가 여는 카드는 그때 내용으로 부분 1 을 새로 그린다
-            lastCompactContent[id] = nil
+            // 숨겼다가 여는 카드는 그때 내용으로 부분 1 을 새로 그린다: 숨기기 전 접힌 모양(두 줄 띠 등) · 날개 · 알약 이력을 쓰지 않는다
+            // (풀스크린 "알림만" 처럼 알림마다 숨김 → 카드가 되는 화면에서 카드 목이 지금 내용과 다른 높이로 열리지 않게)
+            forgetCompactHistory(on: id)
         }
         logLayoutChange(id, mode: mode, layout: result, placement: placement)
         return result
+    }
+
+    /// 화면의 접힌 상태 배치 이력(직전 부분 1 · 날개 · 알약 · 접힌 내용)을 지운다. 다음 접힌 상태 · 카드는 지금 내용으로 새로 계산한다
+    private func forgetCompactHistory(on id: ScreenID) {
+        lastPart1[id] = nil
+        lastWings[id] = nil
+        lastPill[id] = nil
+        lastCompactContent[id] = nil
+    }
+
+    /// 사라진 화면의 배치 이력 · 카드 띠 · 붙잡은 띠 · 로그 기록을 모두 지운다.
+    /// 덮개를 닫았다 연 내장 화면처럼 같은 ScreenID 로 돌아온 화면이 예전 띠를 붙잡거나 예전 부분 1 을 쓰지 않게
+    private func forgetScreen(_ id: ScreenID) {
+        forgetCompactHistory(on: id)
+        loggedLayouts[id] = nil
+        lastCardBand[id] = nil
+        collapseHolds[id] = nil
+        collapseHoldTasks.removeValue(forKey: id)?.cancel()
     }
 
     /// 로그에 남기는 레이아웃 값 (숫자 · 모드 종류 · 자리 종류만, 세션 이름 · 내용 없음)
@@ -712,9 +739,27 @@ final class PresentationController {
         }
     }
 
+    /// 권한 카드 버튼 · 단축키의 결정. 승인하는 결정은 요청이 보인 지 `shortcutSettleDelay` 가 지나야 전달한다
     func resolve(_ request: PermissionRequestInfo, decision: PermissionDecision) {
+        guard acceptsDecision(decision, for: request) else { return }
         logger.debug("권한 결정 전달")
         actions.resolvePermission(id: request.id, decision: decision)
+    }
+
+    /// 결정을 지금 전달해도 되는지. 승인(허용 · 항상 허용 · 계획 승인 · 답)은 그 요청이 카드에 보인 지
+    /// `shortcutSettleDelay` 가 지나야 받는다 (클릭 · 단축키 모두): 대기열의 다음 요청이 같은 자리에 바뀌어 들어온 순간
+    /// 두 번째 클릭 · 키가 보지 못한 요청을 승인하지 않게. 거부 · 넘기기는 바로 받는다
+    private func acceptsDecision(_ decision: PermissionDecision, for request: PermissionRequestInfo) -> Bool {
+        switch decision {
+        case .deny, .passthrough:
+            return true
+        case .allow, .allowAlways, .answer:
+            guard isSettled(request) else {
+                logger.debug("새 요청 직후 승인 무시")
+                return false
+            }
+            return true
+        }
     }
 
     /// 터미널로: 노치에서 결정하지 않고 Claude Code 기본 프롬프트로 넘긴 뒤 터미널로 이동.
@@ -746,7 +791,7 @@ final class PresentationController {
 
     /// 선택지를 고름 (클릭 · 숫자 키). 한 개만 고르는 질문이면 그 질문의 답이 되어 다음 쪽으로 넘어가고
     /// (아직 답하지 않은 질문 먼저), 마지막 쪽에서 모두 답했으면 바로 보낸다. 여러 개 고르는 질문은 켜고 끄기만 한다.
-    /// 카드가 막 보였을 때(`shortcutSettleDelay` 안)는 고르기만 하고 보내지 않는다 (카드가 뜨는 순간의 잘못된 클릭)
+    /// 카드가 막 보였을 때(`shortcutSettleDelay` 안)는 고르기만 하고 보내지 않는다 (카드가 뜨는 순간의 잘못된 클릭, `submitAnswers`)
     func pickOption(_ option: Int, in request: PermissionRequestInfo) {
         guard let draft = questionDraft(for: request) else { return }
         let question = draft.page
@@ -755,7 +800,7 @@ final class PresentationController {
         if !draft.isLastPage {
             draft.go(to: draft.nextUnanswered ?? question + 1)
         } else if draft.allAnswered {
-            if isSettled(request) { submitAnswers(request) }
+            submitAnswers(request)
         } else if let next = draft.nextUnanswered {
             draft.go(to: next)
         }
@@ -775,16 +820,18 @@ final class PresentationController {
         }
     }
 
-    /// 고른 답을 보낸다 (모든 질문에 답했을 때만)
+    /// 고른 답을 보낸다 (모든 질문에 답했고, 질문이 보인 지 `shortcutSettleDelay` 가 지났을 때만)
     func submitAnswers(_ request: PermissionRequestInfo) {
         guard let answers = questionDraft(for: request)?.answers else { return }
+        let decision = PermissionDecision.answer(answers)
+        guard acceptsDecision(decision, for: request) else { return }
         logger.debug("질문 답 전달")
-        actions.resolvePermission(id: request.id, decision: .answer(answers))
+        actions.resolvePermission(id: request.id, decision: decision)
     }
 
-    /// 계획 승인
+    /// 계획 승인 (계획이 보인 지 `shortcutSettleDelay` 가 지났을 때만)
     func approvePlan(_ request: PermissionRequestInfo) {
-        guard case .plan = request.kind else { return }
+        guard case .plan = request.kind, acceptsDecision(.allow, for: request) else { return }
         logger.debug("계획 승인 전달")
         actions.resolvePermission(id: request.id, decision: .allow)
     }
@@ -849,16 +896,21 @@ final class PresentationController {
         return true
     }
 
-    /// 카드에 보이는 권한 요청이 바뀌면 그 시각을 기록한다 (`mode(for:)` 에서 호출)
-    private func noteDisplayed(_ mode: IslandMode) {
-        guard case let .permission(request, _) = mode, displayedPermission?.id != request.id else { return }
-        displayedPermission = (request.id, ProcessInfo.processInfo.systemUptime)
+    /// 대상 화면 카드에 보이는 권한 요청이 바뀌면 그 시각을 기록한다 (`mode(for:)` 에서 호출).
+    /// 요청 카드가 아니면(가려짐 · 접음 · 다른 알림) 지워서, 다시 보일 때 승인 대기를 처음부터 잰다
+    private func noteDisplayed(_ mode: IslandMode?) {
+        guard case let .permission(request, _)? = mode else {
+            if displayedPermission != nil { displayedPermission = nil }
+            return
+        }
+        guard displayedPermission?.id != request.id else { return }
+        displayedPermission = (request.id, uptime())
     }
 
-    /// 이 요청이 카드에 보인 지 `shortcutSettleDelay` 이상 지났는지
+    /// 이 요청이 카드에 이어서 보인 지 `shortcutSettleDelay` 이상 지났는지
     private func isSettled(_ request: PermissionRequestInfo) -> Bool {
         guard let shown = displayedPermission, shown.id == request.id else { return false }
-        return ProcessInfo.processInfo.systemUptime - shown.since >= Self.shortcutSettleDelay
+        return uptime() - shown.since >= Self.shortcutSettleDelay
     }
 
     // MARK: - 신호 처리

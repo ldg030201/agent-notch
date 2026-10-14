@@ -117,7 +117,7 @@ enum IslandMotion {
     /// 같은 모드 안에서 내용 구조만 바뀔 때(왼쪽 날개 ↔ 노치 아래 띠 등)의 지연.
     /// 프레임이 크게(200pt 가까이) 옮겨 가므로 모양이 99% 자리 잡은 뒤 나타나야 새 내용이 미끄러져 들어오지 않는다
     static let branchContentDelay: Duration = .milliseconds(340)
-    /// 크기 · 위치가 바뀐 뒤 모양이 다 자리 잡았다고 보는 시간 (두 스프링 모두 99.8% 이상). 그 전엔 호버 확대를 시작하지 않는다
+    /// 크기 · 위치가 바뀐 뒤 모양이 다 자리 잡았다고 보는 시간 (두 스프링 모두 99.8% 이상). 그 전엔 호버 밝힘을 시작하지 않는다
     static let settleDelay: Duration = .milliseconds(450)
     static let contentFadeIn = Animation.easeOut(duration: 0.18)
     static let contentFadeOut = Animation.easeOut(duration: 0.1)

@@ -93,12 +93,6 @@ struct IslandLayout: Equatable {
         return key
     }
 
-    /// 아이콘 구멍이 아일랜드 자리와 겹치는지 (겹치면 호버 확대를 하지 않는다 — 확대하면 구멍이 아이콘과 어긋난다)
-    var overlapsIconHoles: Bool {
-        let rect = panelRect.insetBy(dx: -8, dy: 0)
-        return iconHoles.contains { $0.intersects(rect) }
-    }
-
     /// 본문 시작 y (상단 행 바로 아래)
     var contentTop: CGFloat { header.top + header.height }
     /// 본문 왼쪽/오른쪽 여백 (부분 1 · 귀 때문에 프레임이 몸통보다 넓을 때)

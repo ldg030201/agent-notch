@@ -32,8 +32,9 @@ final class ScreenManager {
     private lazy var keyReleasePanel = KeyReleasePanel()
     /// 키를 반납하는 동안엔 아일랜드 패널이 다시 키 윈도우가 되지 않게 한다
     private var releasingKey = false
-    /// stop/start 를 반복해도 관찰 루프가 겹치지 않게 하는 세대 번호
-    private var generation = 0
+    /// 모드 관찰을 걸 때마다 올리는 번호. 마지막으로 건 관찰만 다시 걸어서
+    /// stop/start · 화면 변경으로 새로 걸어도 관찰 루프가 겹치지 않는다
+    private var modeObservationSeq = 0
 
     private let logger = Logger(subsystem: "com.ldg.agent-notch", category: "Screens")
 
@@ -50,7 +51,6 @@ final class ScreenManager {
     func start() {
         guard !running else { return }
         running = true
-        generation += 1
         presentation.onRequestKey = { [weak self] id in self?.makeKey(id) }
         wingRetract.onChange = { [weak self] id, sides in
             self?.presentation.setRetractedWings(sides, on: id)
@@ -166,12 +166,17 @@ final class ScreenManager {
         var bands: WingBands
     }
 
+    /// 화면별 표시 상태를 읽어 적용하고, 그중 하나라도 바뀌면 다시 건다.
+    /// 화면 구성(`geometries`)도 함께 읽어, 패널이 하나도 없을 때(하나뿐인 모니터를 끔 · 덮개를 닫고 외부 모니터를 뺌 ·
+    /// 화면 없이 실행)도 화면이 다시 생기면 깨어난다. 화면이 바뀌면 `rebuildPanels` 뒤에 바로 다시 건다
     private func armModeObservation() {
         guard running else { return }
+        modeObservationSeq &+= 1
         let ids = Array(panels.keys)
-        let current = generation
+        let current = modeObservationSeq
         let states = withObservationTracking {
-            Dictionary(uniqueKeysWithValues: ids.map { id -> (ScreenID, ScreenState) in
+            _ = presentation.geometries
+            return Dictionary(uniqueKeysWithValues: ids.map { id -> (ScreenID, ScreenState) in
                 let mode = presentation.mode(for: id)
                 return (id, ScreenState(
                     mode: mode,
@@ -182,7 +187,8 @@ final class ScreenManager {
             })
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
-                guard let self, self.running, self.generation == current else { return }
+                // 그 사이 새로 걸었으면(화면 변경 · stop/start) 이 관찰은 끝 (관찰 루프가 겹치지 않게)
+                guard let self, self.running, self.modeObservationSeq == current else { return }
                 self.armModeObservation()
             }
         }
@@ -296,7 +302,7 @@ final class ScreenManager {
         var hovered: ScreenID?
         for (id, panel) in panels {
             let inside = id == active?.screenID && isInside(location, screen: id)
-            // 비켜줄 날개 위에서는 커지는 효과를 주지 않는다 (곧 들어가므로)
+            // 비켜줄 날개 위에서는 호버 밝힘을 주지 않는다 (곧 들어가므로)
             if inside, !wingRetract.isInBand(location, screen: id) { hovered = id }
             if panel.ignoresMouseEvents == inside {
                 panel.ignoresMouseEvents = !inside
@@ -365,15 +371,28 @@ final class ScreenManager {
             if flags == [.command], fieldEditor == nil { return presentation.perform(.deny, on: id) }
             return false
         default:
-            // 숫자 1–4 (위 줄 · 키패드): 질문 카드 선택지
-            if flags.isEmpty, fieldEditor == nil, !event.isARepeat, let digit = Self.optionDigits[event.keyCode] {
+            // 숫자 1–4: 질문 카드 선택지
+            if fieldEditor == nil, !event.isARepeat,
+               let digit = Self.optionDigit(characters: event.characters, keyCode: event.keyCode, flags: flags) {
                 return presentation.perform(.pick(digit), on: id)
             }
             return false
         }
     }
 
-    /// 숫자 키 → 선택지 위치 (1–4 위 줄, 키패드)
+    /// 질문 카드 선택지 위치 (0–3). 입력된 글자가 숫자면 그 숫자로 고른다 (⇧ 허용: AZERTY 처럼 ⇧ 를 눌러야 숫자가 나오는 자판).
+    /// 숫자가 아닌 글자를 내면 수식키 없이 누른 위 줄 · 키패드 1–4 자리로 고른다 (AZERTY 의 "&" 자리 = 1)
+    static func optionDigit(characters: String?, keyCode: UInt16, flags: NSEvent.ModifierFlags) -> Int? {
+        let flags = flags.intersection([.command, .option, .shift, .control])
+        guard flags.isSubset(of: [.shift]) else { return nil }
+        if let typed = characters, typed.count == 1, let value = typed.first?.wholeNumberValue {
+            return (1...4).contains(value) ? value - 1 : nil
+        }
+        guard flags.isEmpty else { return nil }
+        return optionDigits[keyCode]
+    }
+
+    /// 숫자 키 자리 → 선택지 위치 (1–4 위 줄 · 키패드, 자판 배치와 무관한 키 코드)
     private static let optionDigits: [UInt16: Int] = [18: 0, 19: 1, 20: 2, 21: 3, 83: 0, 84: 1, 85: 2, 86: 3]
 
     // MARK: - 알림 (화면 변경, 스페이스 전환, 동작 줄이기)
@@ -385,6 +404,8 @@ final class ScreenManager {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.rebuildPanels()
+                // 새 패널 목록으로 관찰을 다시 걸고 클릭 영역을 바로 채운다 (패널이 없던 동안 관찰할 화면이 없었을 수 있다)
+                self?.armModeObservation()
                 self?.scheduleFullscreenRefresh()
             }
         }

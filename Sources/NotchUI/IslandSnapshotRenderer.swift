@@ -126,6 +126,8 @@ enum SnapshotScenario: String, CaseIterable {
     case expandedSummary = "expanded-summary"
     /// `working-background` 를 펼친 모습: 세션 줄에 배지, 상세 머리에 "⧉ 3 서브에이전트 2 · 셸 1"
     case expandedBackground = "expanded-background"
+    /// `failed` 세션을 펼친 모습: 상세 머리 경과 시간이 흐르지 않고 "실패 · 소요 시간"
+    case expandedFailed = "expanded-failed"
     case menubarWorking = "menubar-working"
     /// 제목이 긴 MCP 툴 실행 중 (수정 없음), 빈 곳이 화면 가운데에서 오른쪽으로 치우친 메뉴바 (가운데에 두면 좁아 빈 곳 안으로 밀어 놓음)
     case menubarWorkingLongTool = "menubar-working-long-tool"
@@ -621,6 +623,13 @@ enum SnapshotStage {
         case .failed:
             world.webAppFails()
             presentation.setTransientForSnapshot(.failed(sessionID: SnapshotWorld.webApp.id))
+        case .expandedFailed:
+            // 펼쳐 둔 동안 턴이 실패하고(실패 세션이 포커스) 10분이 흘러도 상세 머리는 턴 소요 시간 그대로.
+            // (먼저 실패한 뒤 펼치면 펼칠 때 확인 처리돼 유휴가 된다)
+            showCompact()
+            presentation.toggleExpanded(on: screenID)
+            world.webAppFails()
+            world.clock.set(1302)
         case .expanded, .expandedUpdate:
             world.apiServerEdits()
             world.apiServerRunsTests()
