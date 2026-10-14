@@ -706,10 +706,18 @@ enum SnapshotShapeCheck {
         return result
     }
 
+    /// 그리는 검은 모양과 구멍 (프레임 기준, 구멍은 패널 기준 자리에서 옮김)
+    static func filledAndHoles(_ layout: IslandLayout) -> (filled: Path, holes: Path) {
+        let frame = CGRect(origin: .zero, size: layout.size)
+        return (
+            IslandShape(spec: layout.shapeSpec).path(in: frame),
+            IslandHolesShape(holes: layout.iconHoles, origin: layout.origin).path(in: frame)
+        )
+    }
+
     /// 검은 모양(구멍 제외)이 사각형 안의 점을 하나라도 덮는지
     static func covers(_ layout: IslandLayout, _ rect: CGRect) -> Bool {
-        let frame = CGRect(origin: .zero, size: layout.size)
-        let filled = IslandShape(spec: layout.shapeSpec, holes: layout.iconHoles).path(in: frame)
+        let shape = filledAndHoles(layout)
         let inner = rect.insetBy(dx: 1, dy: 1)
         for fx in [0.0, 0.25, 0.5, 0.75, 1.0] {
             for fy in [0.0, 0.5, 1.0] {
@@ -717,7 +725,7 @@ enum SnapshotShapeCheck {
                     x: inner.minX + inner.width * fx - layout.origin.x,
                     y: inner.minY + inner.height * fy - layout.origin.y
                 )
-                if filled.contains(point) { return true }
+                if IslandHolesShape.covers(shape.filled, holes: shape.holes, point) { return true }
             }
         }
         return false
@@ -824,17 +832,19 @@ enum SnapshotShapeCheck {
 
         // 메뉴바 아이콘이 검은 모양에 가려지는지 (아이콘 구멍을 쓰는 화면: 구멍이 늘 아이콘 자리에 있어야 함)
         guard !layout.iconHoles.isEmpty else { return issues }
-        let filled = IslandShape(spec: layout.shapeSpec, holes: layout.iconHoles).path(in: rect)
+        let shape = filledAndHoles(layout)
         for icon in context.icons {
             let center = CGPoint(x: icon.midX - layout.origin.x, y: icon.midY - layout.origin.y)
-            if filled.contains(center) {
+            if IslandHolesShape.covers(shape.filled, holes: shape.holes, center) {
                 issues.append(String(format: "아이콘 %.0f…%.0f 가려짐", icon.minX, icon.maxX))
             }
         }
         return issues
     }
 
-    /// 경로 조각 수 · 경계 · 자기 교차
+    /// 경로 경계 · 하위 경로(주 외곽선 · 부분 1)마다 자기 교차.
+    /// 모양이 여러 조각으로 보이는지는 칠한 래스터로 본다 (`SnapshotSeamCheck.rasterIssues`: 주 외곽선과 부분 1 은 하위 경로 둘이라
+    /// 경로 조각 수로는 알 수 없다)
     static func pathCheck(_ path: Path, rect: CGRect, expected: IslandOutline, extent: (minX: CGFloat, maxX: CGFloat)? = nil) -> [String] {
         var issues: [String] = []
         if path.isEmpty {
@@ -842,7 +852,6 @@ enum SnapshotShapeCheck {
             return issues
         }
         let polygons = flatten(path)
-        if polygons.count > 1 { issues.append("경로 조각 \(polygons.count)개") }
         let bounds = path.boundingRect
         if bounds.minX < rect.minX - 0.5 || bounds.maxX > rect.maxX + 0.5 || bounds.minY < rect.minY - 0.5 || bounds.maxY > rect.maxY + 0.5 {
             // 노치 보호로 프레임 밖까지 그리는 것은 0.5pt 이내만 정상
@@ -860,23 +869,33 @@ enum SnapshotShapeCheck {
         return issues
     }
 
-    /// 스프링 값 0 → 최대값을 촘촘히 훑어 칠할 모양(구멍 없이)이 여러 조각으로 갈라지는 구간 (이어진 구간 하나로 보고).
-    /// 주 외곽선과 부분 1 을 합칠 때 넓이 0 인 바늘 · 맞닿은 곡선이 남기는 조각은 시트 프레임 사이에서만 생기기도 한다
+    /// 스프링 값 0 → 최대값을 촘촘히 훑어 칠한 모양(구멍 없이)이 여러 조각으로 갈라지는 구간 (이어진 구간 하나로 보고).
+    /// 주 외곽선과 부분 1 을 함께 그리는 순간만 본다: 둘은 각각 닫힌 경로 하나라, 갈라진다면 서로 떨어진 것이다.
+    /// 둘이 만나는 위쪽 띠(부분 1 · 목 아래끝 + 4pt)만 1배로 칠해(스프링 값 0.001 간격) 칠한 픽셀(절반 이상)이 이어진 덩어리를 센다
+    /// (목이 띠 안에 있어 띠 안의 주 외곽선은 한 덩어리다)
     static func denseFragments(from: IslandLayout, to: IslandLayout, maxValue: Double, timeline: SnapshotTimeline) -> [String] {
-        let step = 0.0005
+        let step = 0.001
         var reports: [String] = []
         var run: (start: Double, last: Double, count: Int)?
         func close() {
             guard let open = run else { return }
             let ms0 = timeline.time(forValue: min(open.start, 1))
             let ms1 = timeline.time(forValue: min(open.last, 1))
-            reports.append(String(format: "v %.4f…%.4f (≈%.0f…%.0fms) 경로 조각 %d개", open.start, open.last, ms0, ms1, open.count))
+            reports.append(String(format: "v %.4f…%.4f (≈%.0f…%.0fms) 모양 조각 %d개", open.start, open.last, ms0, ms1, open.count))
             run = nil
         }
         var v = 0.0
         while v <= maxValue + step / 2 {
             let layout = SnapshotInterpolation.mix(from, to, v)
-            let count = flatten(IslandShape(spec: layout.shapeSpec).path(in: CGRect(origin: .zero, size: layout.size))).count
+            let frame = CGRect(origin: .zero, size: layout.size)
+            var count = 1
+            if case let .union(main, part1) = IslandShape.drawn(layout.shapeSpec, in: frame) {
+                let band = min(layout.size.height, max(part1.bottom, main.neckBottom) + 4)
+                let path = IslandShape(spec: layout.shapeSpec).path(in: frame)
+                if let raster = SnapshotSeamCheck.rasterize(path, size: CGSize(width: layout.size.width, height: band), scale: 1) {
+                    count = raster.componentCount
+                }
+            }
             if count > 1 {
                 if run == nil { run = (v, v, count) } else { run?.last = v }
             } else {
@@ -1216,7 +1235,7 @@ enum SnapshotAnimationSheet {
             report0.append(contentsOf: hoverCheck.problems.map { "   ✗ 호버 밝힘 순서: \($0)" })
             report.append(contentsOf: hoverCheck.problems.map { "   ✗ 호버 밝힘 순서: \($0)" })
         }
-        let seamSelfTest = (cases: 3, problems: SnapshotSeamCheck.selfTest())
+        let seamSelfTest = (cases: 5, problems: SnapshotSeamCheck.selfTest())
         for (label, check) in [
             ("겹침 감지", SnapshotOverlapCheck.run()), ("세션 요약 자리", SnapshotSummaryCheck.run()), ("이음매 래스터 자체", seamSelfTest),
             ("메뉴바 알약 제목", SnapshotPillCheck.run()), ("노치 아래 띠 요소", SnapshotStripCheck.run()),
@@ -1529,7 +1548,8 @@ private struct SnapshotAnimatedIsland: View {
         }
         .frame(width: layout.size.width, height: layout.size.height, alignment: .topLeading)
         .background {
-            IslandBackground(shape: IslandShape(spec: spec, holes: layout.iconHoles))
+            // 구멍은 패널 기준 자리 (프레임이 움직여도 그대로)
+            IslandBackground(shape: IslandShape(spec: spec), holes: IslandHolesShape(holes: layout.iconHoles, origin: layout.origin))
         }
         .clipShape(IslandShape(spec: spec))
         .offset(x: layout.origin.x, y: layout.origin.y)

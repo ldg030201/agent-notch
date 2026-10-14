@@ -77,8 +77,9 @@ struct IslandContainer: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background {
-            IslandBackground(shape: IslandPanelShape(spec: spec, holes: layout.iconHoles))
+            IslandBackground(shape: shape, holes: IslandHolesShape(holes: layout.iconHoles))
         }
+        // 내용은 구멍 없는 모양으로 자른다 (내용 자리는 구멍을 피해 둔다: 날개 내용은 노치 ~ 첫 구멍, 카드 내용은 메뉴바 아래)
         .clipShape(shape)
         // 클릭 모양: 그린 모양 + 레이아웃 클릭 영역(점 둘레처럼 모양보다 넓힌 자리) − 아이콘 구멍.
         // 패널은 클릭 영역 안에서 클릭을 받으므로(`ScreenManager`) 여기서도 받아야 삼키지 않는다.
@@ -164,19 +165,24 @@ struct IslandContainer: View {
     }
 }
 
-/// 아일랜드 검은 배경 (아이콘 구멍은 `IslandShape.holes` 로 뚫는다)
+/// 아일랜드 검은 배경. 칠한 모양을 "구멍 밖" 모양(넓은 사각형 + 구멍, even-odd)으로 잘라 아이콘 구멍을 뚫는다.
+/// 프레임마다 경로 불리언 연산(모양 − 구멍)을 하지 않고, 구멍은 모양 애니메이션과 관계없이 패널 기준 자리에 머문다.
+/// 구멍 가장자리 안티에일리어싱은 예전 빼기 경로와 같다 (구멍 밖 영역의 덮임 그대로. `destinationOut` 으로 지우면 구멍 모서리가 조금 밝아진다)
 struct IslandBackground<S: Shape>: View {
     let shape: S
+    var holes = IslandHolesShape()
 
     var body: some View {
         shape
             .fill(Palette.background)
+            .clipShape(holes.outside, style: FillStyle(eoFill: true))
             .accessibilityHidden(true)
     }
 }
 
 /// 클릭을 받는 모양: 아일랜드 모양 + 클릭 영역(`IslandLayout.hitRects`)에서 클릭 통과 영역(아이콘 구멍)을 뺀 것.
-/// 클릭 영역 · 통과 영역은 애니메이션하지 않고 지금 레이아웃 값 그대로다 (`ScreenManager` 의 클릭 판정과 같다)
+/// 클릭 영역 · 통과 영역은 애니메이션하지 않고 지금 레이아웃 값 그대로다 (`ScreenManager` 의 클릭 판정과 같다).
+/// 모양과 클릭 영역은 하위 경로로 이어 붙이고(nonzero 규칙이라 합집합), 불리언 연산은 통과 영역을 뺄 때(아이콘 구멍을 쓰는 화면) 한 번만 한다
 struct IslandHitShape: Shape {
     var shape: IslandPanelShape
     /// 클릭 영역 (패널 기준)
@@ -197,14 +203,12 @@ struct IslandHitShape: Shape {
 
     func path(in rect: CGRect) -> Path {
         var base = shape.path(in: rect)
-        if !hitRects.isEmpty {
-            var extra = Path()
-            for hit in hitRects { extra.addRect(hit) }
-            base = base.union(extra)
-        }
-        guard !cutouts.isEmpty else { return base }
+        for hit in hitRects { base.addRect(hit) }
+        let bounds = base.boundingRect
+        let cut = cutouts.filter { $0.intersects(bounds) }
+        guard !cut.isEmpty else { return base }
         var holes = Path()
-        for cutout in cutouts { holes.addRect(cutout) }
+        for cutout in cut { holes.addRect(cutout) }
         return base.subtracting(holes)
     }
 }

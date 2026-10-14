@@ -3,7 +3,7 @@ import SwiftUI
 
 // 이음매 검사: 목(메뉴바 띠)과 몸통이 이어지는 곳이 끊기거나 물리는지 (전환 시트 · 정지 장면이 함께 돌린다).
 // - 래스터: 모양(구멍 · 내용 없이, 실제와 같은 IslandShape 경로)을 2배로 칠해
-//   열마다 띠 ↔ 몸통 사이 틈, 쪽마다 바깥 윤곽이 안으로 물린 곳(위아래보다 안쪽)을 찾는다.
+//   칠한 덩어리 수(모양이 여러 조각으로 갈라짐), 열마다 띠 ↔ 몸통 사이 틈, 쪽마다 바깥 윤곽이 안으로 물린 곳(위아래보다 안쪽)을 찾는다.
 // - 치수: 목 끝과 몸통 끝이 1–6pt 로 거의 겹친 이음매
 //   · 두 모서리가 하나의 S 곡선으로 이어지지 않음 (사이에 턱이 남거나 볼록 · 볼록이 맞물림)
 //   · 카드를 펼치고 접는 중에 목(노치 화면의 띠 · 메뉴바 알약) 끝이 움직이며 몸통 끝과 맞닿음
@@ -14,7 +14,7 @@ import SwiftUI
 @MainActor
 enum SnapshotSeamCheck {
     /// 래스터 배율 (스냅숏과 같은 2배)
-    static let scale: CGFloat = 2
+    nonisolated static let scale: CGFloat = 2
     /// 목 끝 · 몸통 끝이 이 범위로 가까우면 "거의 겹친 이음매"로 본다 (pt)
     static let nearJoint: ClosedRange<CGFloat> = 1...6
     /// 목 끝이 양 끝 상태 값에서 이보다 멀면 움직이는 중으로 본다 (pt)
@@ -65,6 +65,52 @@ enum SnapshotSeamCheck {
         func x(_ col: Int) -> CGFloat { (CGFloat(col) + 0.5) / scale - pad }
         func y(_ row: Int) -> CGFloat { (CGFloat(row) + 0.5) / scale - pad }
         func row(_ y: CGFloat) -> Int { Int(((y + pad) * scale).rounded(.down)) }
+
+        /// 칠한 픽셀이 위아래 · 옆으로 이어진 덩어리 수 (줄마다 칠한 구간을 찾아 윗줄 구간과 겹치면 한 덩어리로 묶는다)
+        var componentCount: Int {
+            var parent: [Int] = []
+            func find(_ id: Int) -> Int {
+                var id = id
+                while parent[id] != id {
+                    parent[id] = parent[parent[id]]
+                    id = parent[id]
+                }
+                return id
+            }
+            var previous: [(start: Int, end: Int, id: Int)] = []
+            var current: [(start: Int, end: Int, id: Int)] = []
+            pixels.withUnsafeBufferPointer { buffer in
+                for row in 0..<height {
+                    current.removeAll(keepingCapacity: true)
+                    let base = row * width
+                    var col = 0
+                    while col < width {
+                        guard buffer[base + col] >= 128 else {
+                            col += 1
+                            continue
+                        }
+                        let start = col
+                        while col < width, buffer[base + col] >= 128 { col += 1 }
+                        let id = parent.count
+                        parent.append(id)
+                        current.append((start, col - 1, id))
+                    }
+                    var first = 0
+                    for run in current {
+                        while first < previous.count, previous[first].end < run.start { first += 1 }
+                        var index = first
+                        while index < previous.count, previous[index].start <= run.end {
+                            let a = find(run.id)
+                            let b = find(previous[index].id)
+                            if a != b { parent[a] = b }
+                            index += 1
+                        }
+                    }
+                    swap(&previous, &current)
+                }
+            }
+            return parent.indices.reduce(0) { $0 + (find($1) == $1 ? 1 : 0) }
+        }
     }
 
     /// 레이아웃의 모양 (구멍 없이)
@@ -72,7 +118,7 @@ enum SnapshotSeamCheck {
         rasterize(IslandShape(spec: layout.shapeSpec).path(in: CGRect(origin: .zero, size: layout.size)), size: layout.size)
     }
 
-    static func rasterize(_ path: Path, size: CGSize) -> Raster? {
+    nonisolated static func rasterize(_ path: Path, size: CGSize, scale: CGFloat = SnapshotSeamCheck.scale) -> Raster? {
         let pad: CGFloat = 2
         let width = Int(((size.width + pad * 2) * scale).rounded(.up))
         let height = Int(((size.height + pad * 2) * scale).rounded(.up))
@@ -104,6 +150,9 @@ enum SnapshotSeamCheck {
     /// - originX: 보고에 쓸 프레임 왼쪽의 패널 기준 x
     static func rasterIssues(_ raster: Raster, outline o: IslandOutline, originX: CGFloat) -> [String] {
         var issues: [String] = []
+        // 0) 칠한 모양이 여러 덩어리 (주 외곽선과 부분 1 이 떨어짐 등)
+        let pieces = raster.componentCount
+        if pieces > 1 { issues.append("모양 조각 \(pieces)개") }
         let ear = max(o.earL, o.earR)
         let earRowEnd = raster.row(o.top + ear + 0.75)
         let topRow = raster.row(o.top + 0.5)
@@ -209,6 +258,20 @@ enum SnapshotSeamCheck {
         bite.addRoundedRect(in: CGRect(x: 20, y: 35, width: 160, height: 45), cornerSize: CGSize(width: 6, height: 6))
         if let raster = rasterize(bite, size: size), !rasterIssues(raster, outline: o, originX: 0).contains(where: { $0.contains("물림") }) {
             problems.append("볼록 · 볼록 물림을 못 찾음")
+        }
+        // 옆으로 떨어진 두 덩어리 (세로로는 겹치지 않아 열 틈으로는 안 보임)
+        var apart = Path()
+        apart.addRect(CGRect(x: 20, y: 0, width: 60, height: 40))
+        apart.addRect(CGRect(x: 120, y: 0, width: 60, height: 40))
+        if let raster = rasterize(apart, size: size), !rasterIssues(raster, outline: o, originX: 0).contains(where: { $0.contains("조각 2개") }) {
+            problems.append("떨어진 두 덩어리를 못 찾음")
+        }
+        // 겹친 두 하위 경로(주 외곽선 + 부분 1 처럼)는 한 덩어리
+        var overlapped = Path()
+        overlapped.addRoundedRect(in: CGRect(x: 20, y: 0, width: 160, height: 80), cornerSize: CGSize(width: 12, height: 12))
+        overlapped.addRoundedRect(in: CGRect(x: 40, y: 0, width: 120, height: 30), cornerSize: CGSize(width: 8, height: 8))
+        if let raster = rasterize(overlapped, size: size), !rasterIssues(raster, outline: o, originX: 0).isEmpty {
+            problems.append("겹친 두 하위 경로를 문제로 봄")
         }
         // 이어진 모양은 문제 없음
         var whole = Path()

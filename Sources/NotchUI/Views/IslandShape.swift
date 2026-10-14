@@ -165,8 +165,6 @@ extension IslandShapeSpec: VectorArithmetic {
 /// 빠르게 다시 누르거나(스프링 재조준) 프레임이 밀려도 부분 1 이 옆으로 밀리거나 넓어져 보이지 않는다
 struct IslandPanelShape: Shape {
     var spec: IslandShapeSpec
-    /// 메뉴바 아이콘 구멍 (패널 기준)
-    var holes: [CGRect] = []
 
     var animatableData: IslandShapeSpec {
         get { spec }
@@ -174,7 +172,44 @@ struct IslandPanelShape: Shape {
     }
 
     func path(in rect: CGRect) -> Path {
-        IslandShape(spec: spec, holes: holes).path(in: IslandShape.frame(spec, in: rect))
+        IslandShape(spec: spec).path(in: IslandShape.frame(spec, in: rect))
+    }
+}
+
+/// 메뉴바 아이콘 구멍 (둥근 사각형). 아일랜드 배경(`IslandBackground`)이 칠한 검정을 구멍 밖 모양(`outside`)으로 잘라 뚫는다.
+/// 구멍은 패널 기준 자리에 고정이라 애니메이션하지 않는다 (모양이 커지고 줄어드는 동안에도 진짜 아이콘 자리).
+/// 구멍끼리는 겹치지 않는다 (`WingCutouts.merge`) — even-odd 로 그려도 겹친 곳이 다시 칠해지지 않게
+struct IslandHolesShape: Shape {
+    /// 구멍 (패널 기준)
+    var holes: [CGRect] = []
+    /// 그리는 사각형 왼쪽 위의 패널 기준 위치 (패널 전체에 그리면 0)
+    var origin: CGPoint = .zero
+    /// 구멍 밖 전체: 그리는 사각형을 넉넉히 넓힌 사각형 + 구멍 (even-odd 로 칠하면 구멍만 빈다)
+    var inverted = false
+
+    /// 구멍 밖 모양 (`IslandBackground` 가 even-odd 로 자른다). 모양이 노치 보호로 프레임 밖까지 조금 나가도 자르지 않게 넓힌다
+    var outside: IslandHolesShape {
+        var shape = self
+        shape.inverted = true
+        return shape
+    }
+
+    /// `outside` 의 사각형을 그리는 사각형보다 넓히는 폭
+    static let outsideMargin: CGFloat = 64
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        if inverted { path.addRect(rect.insetBy(dx: -Self.outsideMargin, dy: -Self.outsideMargin)) }
+        let corner = CGSize(width: WingCutouts.cornerRadius, height: WingCutouts.cornerRadius)
+        for hole in holes {
+            path.addRoundedRect(in: hole.offsetBy(dx: rect.minX - origin.x, dy: rect.minY - origin.y), cornerSize: corner, style: .continuous)
+        }
+        return path
+    }
+
+    /// 칠한 모양(`IslandShape`)에서 구멍을 뺀 자리가 점을 덮는지 (검사용. 둘 다 같은 사각형 기준)
+    static func covers(_ filled: Path, holes: Path, _ point: CGPoint) -> Bool {
+        filled.contains(point) && !holes.contains(point)
     }
 }
 
@@ -211,17 +246,11 @@ struct IslandOutline: Equatable {
     /// 경로 가로 범위 (귀는 목 밖으로 나간다)
     var minX: CGFloat { min(nx0 - earL, bx0) }
     var maxX: CGFloat { max(nx1 + earR, bx1) }
-
-    /// 몸통이 폭 0 으로 좁아져 넓이가 없는지 (부분 2 가 부분 1 아래 모서리 안쪽으로 다 숨음, `IslandShape.emergeLimit`)
-    var hidesBody: Bool { !isEmpty && bx1 - bx0 < Self.hiddenBodyWidth }
-    /// 이보다 좁은 몸통은 넓이 0 (부동소수 오차)
-    static let hiddenBodyWidth: CGFloat = 0.01
 }
 
+/// 아일랜드 검은 모양 (구멍 없이). 아이콘 구멍은 배경(`IslandBackground`)이 칠한 모양을 `IslandHolesShape.outside` 로 잘라 뚫는다
 struct IslandShape: Shape {
     var spec: IslandShapeSpec
-    /// 검은 배경에 뚫을 메뉴바 아이콘 구멍 (패널 기준). 애니메이션하지 않고 늘 진짜 아이콘 자리에 둔다
-    var holes: [CGRect] = []
 
     var animatableData: IslandShapeSpec {
         get { spec }
@@ -232,22 +261,10 @@ struct IslandShape: Shape {
     static let minRadius: CGFloat = 0.5
 
     func path(in rect: CGRect) -> Path {
-        let path = Self.filledPath(spec, in: rect)
-        guard !holes.isEmpty, !path.isEmpty else { return path }
-        // 구멍은 패널 기준 → 지금(애니메이션 중간값) 프레임 위치만큼 옮겨 뺀다
-        var cutouts = Path()
-        for hole in holes {
-            let local = hole.offsetBy(dx: rect.minX - spec.originX, dy: rect.minY - spec.originY)
-            cutouts.addRoundedRect(
-                in: local,
-                cornerSize: CGSize(width: WingCutouts.cornerRadius, height: WingCutouts.cornerRadius),
-                style: .continuous
-            )
-        }
-        return path.subtracting(cutouts)
+        Self.filledPath(spec, in: rect)
     }
 
-    /// 무엇을 그리는지: 부분 1 만 (접힌 상태) · 주 외곽선만 (부분 1 없음) · 둘을 합친 것 (펼친 카드 · 펼치고 접는 중)
+    /// 무엇을 그리는지: 부분 1 만 (접힌 상태) · 주 외곽선만 (부분 1 없음) · 둘을 함께 (펼친 카드 · 펼치고 접는 중)
     enum Drawn {
         case part1(IslandOutline)
         case main(IslandOutline)
@@ -266,12 +283,7 @@ struct IslandShape: Shape {
         guard let part1 = part1Outline(spec, in: rect), !part1.isEmpty else { return .main(main) }
         // 접힌 상태 (주 외곽선 = 부분 1, 접힌 상태끼리 바뀌는 중 포함): 부분 1 만
         if main.isEmpty || spec.isSameShape(as: spec.part1, frame: rect) { return .part1(part1) }
-        // 부분 2 가 폭 0 으로 숨은 순간도 부분 1 만: 점처럼 아래 변이 없는 부분 1 은 몸통이 아래 모서리 안쪽에 숨을 폭이 없어
-        // (`emergeLimit` 의 `narrow` = 목 폭 절반) 몸통이 넓이 0 인 바늘로 부분 1 아래에 매달린다 (펼치기 시작 · 접히기 끝,
-        // 스프링이 목표를 지나쳐 주 외곽선이 부분 1 보다 작아진 순간 포함). 남은 목 + 오목 모서리는 부분 1 안이라 그릴 것이 없고,
-        // 합치면 바늘 · 부분 1 과 맞닿은 둥근 위 변이 넓이 0 인 경로 조각으로 남는다
-        if main.hidesBody { return .part1(part1) }
-        // 부분 1 은 그대로 그리고, 주 외곽선(목 + 부분 2)을 합친다
+        // 부분 1 은 그대로 그리고, 주 외곽선(목 + 부분 2)을 함께 그린다
         return .union(main: main, part1: part1)
     }
 
@@ -280,73 +292,21 @@ struct IslandShape: Shape {
         CGRect(x: panel.minX + spec.originX, y: panel.minY + spec.originY, width: spec.frameWidth, height: spec.frameHeight)
     }
 
-    /// 칠할 모양 (구멍 없이)
+    /// 칠할 모양 (구멍 없이).
+    /// 주 외곽선과 부분 1 은 같은 방향으로 도는 닫힌 경로라, 한 경로에 하위 경로 둘로 넣고 기본(nonzero) 규칙으로 칠하면
+    /// 겹친 곳도 한 번만 칠해져 합집합과 같다 (불리언 연산 없음 · 이음매 없음). 부분 2 가 폭 0 으로 숨은 순간(점 같은 부분 1 아래의
+    /// 넓이 0 인 바늘)이나 부분 1 안에 들어간 목 · 오목 모서리는 칠할 넓이가 없어 아무것도 그리지 않는다.
+    /// 주 외곽선은 부분 1 과 겹치는 목 위끝 곡선(귀 · 둥근 위 모서리)을 빼고 그린다 (`path(_:underPart1:)`: 같은 곡선을 두 번 칠하지 않게)
     static func filledPath(_ spec: IslandShapeSpec, in rect: CGRect) -> Path {
         switch drawn(spec, in: rect) {
         case let .part1(o), let .main(o):
             return o.isEmpty ? Path() : path(o)
         case let .union(main, part1):
             // `drawn` 은 주 외곽선이 비면 `.part1` 을 돌려주므로 여기선 늘 둘 다 있다
-            return removingSlivers(path(main).union(path(part1)))
+            var filled = path(main, underPart1: true)
+            filled.addPath(path(part1))
+            return filled
         }
-    }
-
-    /// 이보다 좁거나 낮은 하위 경로는 넓이 없는 조각으로 본다 (레티나 한 픽셀의 1/5)
-    static let sliverSize: CGFloat = 0.1
-
-    /// 합친 경로에서 넓이 없는 하위 경로를 뺀다.
-    /// 주 외곽선의 목은 부분 1 위 조각과 같은 자리라 둥근 위 변이 겹치고, 목 아래 볼록 모서리가 부분 1 의 둥근 옆면과 한 점에서
-    /// 맞닿는다. 이렇게 겹치거나 맞닿은 곡선에서 CG 불리언 연산이 크기 0 에 가까운 하위 경로를 덧붙일 때가 있다
-    /// (메뉴바 아래 작은 알약 ↔ 카드처럼 옆면 곧은 구간이 없는 부분 1). 보이지 않지만 모양이 여러 조각이 되므로 뺀다.
-    /// 뺄 조각이 없으면 받은 경로 그대로 (다시 만들면 안티에일리어싱이 미세하게 달라진다)
-    static func removingSlivers(_ path: Path) -> Path {
-        var result = Path()
-        var dropped = false
-        var elements: [Path.Element] = []
-        var lo = CGPoint(x: CGFloat.infinity, y: CGFloat.infinity)
-        var hi = CGPoint(x: -CGFloat.infinity, y: -CGFloat.infinity)
-        func include(_ points: CGPoint...) {
-            for point in points {
-                lo = CGPoint(x: min(lo.x, point.x), y: min(lo.y, point.y))
-                hi = CGPoint(x: max(hi.x, point.x), y: max(hi.y, point.y))
-            }
-        }
-        /// 모은 하위 경로를 (넓이가 있으면) 결과에 옮긴다
-        func flush() {
-            defer {
-                elements = []
-                lo = CGPoint(x: CGFloat.infinity, y: CGFloat.infinity)
-                hi = CGPoint(x: -CGFloat.infinity, y: -CGFloat.infinity)
-            }
-            guard !elements.isEmpty else { return }
-            guard hi.x - lo.x >= sliverSize, hi.y - lo.y >= sliverSize else {
-                dropped = true
-                return
-            }
-            for element in elements {
-                switch element {
-                case let .move(to: point): result.move(to: point)
-                case let .line(to: point): result.addLine(to: point)
-                case let .quadCurve(to: point, control: control): result.addQuadCurve(to: point, control: control)
-                case let .curve(to: point, control1: c1, control2: c2): result.addCurve(to: point, control1: c1, control2: c2)
-                case .closeSubpath: result.closeSubpath()
-                }
-            }
-        }
-        path.forEach { element in
-            switch element {
-            case let .move(to: point):
-                flush()
-                include(point)
-            case let .line(to: point): include(point)
-            case let .quadCurve(to: point, control: control): include(point, control)
-            case let .curve(to: point, control1: c1, control2: c2): include(point, c1, c2)
-            case .closeSubpath: break
-            }
-            elements.append(element)
-        }
-        flush()
-        return dropped ? result : path
     }
 
     /// 부분 1 외곽선 (지금 프레임 기준). 부분 1 이 없으면 nil
@@ -489,13 +449,25 @@ struct IslandShape: Shape {
         return o
     }
 
-    static func path(_ o: IslandOutline) -> Path {
+    /// 외곽선 경로 (시계 방향: 위 변 왼쪽 → 오른쪽, 오른쪽 변, 아래 변, 왼쪽 변).
+    /// - underPart1: 부분 1 과 함께 그리는 주 외곽선. 목 위끝 모서리는 부분 1 위 조각과 같은 자리 · 같은(또는 작은) 곡선이라
+    ///   곡선을 그리지 않는다: 귀는 빼고(목 옆면 바깥 → 부분 1 귀 안), 둥근 위 모서리는 현으로 깎는다(부분 1 의 같은 모서리 안).
+    ///   같은 곡선을 하위 경로 둘로 겹쳐 칠하면 SwiftUI 래스터가 가장자리 덮임을 더해 곡선 가장자리가 진해진다
+    ///   (합집합 모양은 같다: 뺀 귀 · 깎은 모서리는 부분 1 안)
+    static func path(_ o: IslandOutline, underPart1: Bool = false) -> Path {
         let eps = minRadius
         let top = o.top
         var path = Path()
 
         // 위쪽 변 (왼쪽 → 오른쪽)
-        if o.earL > eps {
+        if underPart1 {
+            let chamferL = o.earL > eps || o.topRL <= eps ? 0 : o.topRL
+            let chamferR = o.earR > eps || o.topRR <= eps ? 0 : o.topRR
+            path.move(to: CGPoint(x: o.nx0, y: top + chamferL))
+            if chamferL > 0 { path.addLine(to: CGPoint(x: o.nx0 + chamferL, y: top)) }
+            path.addLine(to: CGPoint(x: o.nx1 - chamferR, y: top))
+            if chamferR > 0 { path.addLine(to: CGPoint(x: o.nx1, y: top + chamferR)) }
+        } else if o.earL > eps {
             path.move(to: CGPoint(x: o.nx0 - o.earL, y: top))
         } else if o.topRL > eps {
             path.move(to: CGPoint(x: o.nx0, y: top + o.topRL))
@@ -503,7 +475,9 @@ struct IslandShape: Shape {
         } else {
             path.move(to: CGPoint(x: o.nx0, y: top))
         }
-        if o.earR > eps {
+        if underPart1 {
+            // 위에서 이미 오른쪽 목 옆면 위끝까지 왔다
+        } else if o.earR > eps {
             path.addLine(to: CGPoint(x: o.nx1 + o.earR, y: top))
             path.addQuadCurve(to: CGPoint(x: o.nx1, y: top + o.earR), control: CGPoint(x: o.nx1, y: top))
         } else if o.topRR > eps {
@@ -522,7 +496,7 @@ struct IslandShape: Shape {
         corner(&path, CGPoint(x: o.bx0, y: o.bottom), CGPoint(x: o.bx0, y: top), o.bottomR)
         corner(&path, CGPoint(x: o.bx0, y: o.stepL), CGPoint(x: o.nx0, y: o.stepL), o.bodyTopL)
         corner(&path, CGPoint(x: o.nx0, y: o.stepL), CGPoint(x: o.nx0, y: top), o.shoulderL)
-        if o.earL > eps {
+        if !underPart1, o.earL > eps {
             path.addLine(to: CGPoint(x: o.nx0, y: top + o.earL))
             path.addQuadCurve(to: CGPoint(x: o.nx0 - o.earL, y: top), control: CGPoint(x: o.nx0, y: top))
         }
