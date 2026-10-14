@@ -67,6 +67,13 @@ public final class AppPreferences {
         static let checksForUpdates = "checksForUpdates"
         static let notchStyle = "notchStyle"
         static let restoresRecentSessions = "restoresRecentSessions"
+
+        /// 설정 초기화가 지우는 키 (설정을 더하면 여기와 `resetToDefaults` 에도 넣는다)
+        static let all = [
+            displayPolicy, fullscreenBehavior, peekOnEdit, peekDuration, completionDisplayDuration, showStreamingText,
+            permissionTimeout, staleSessionTimeout, passthroughWhenTerminalFrontmost, externalDisplayStyle,
+            compactOverlapStyle, checksForUpdates, notchStyle, restoresRecentSessions,
+        ]
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -154,5 +161,29 @@ public final class AppPreferences {
         compactOverlapStyle = defaults.string(forKey: Key.compactOverlapStyle).flatMap(CompactOverlapStyle.init(rawValue:)) ?? .belowNotch
         checksForUpdates = defaults.object(forKey: Key.checksForUpdates) as? Bool ?? true
         restoresRecentSessions = defaults.object(forKey: Key.restoresRecentSessions) as? Bool ?? true
+    }
+
+    /// 모든 설정을 처음 값으로 되돌린다. 훅 설치 · 로그인 시 실행은 이 설정 밖(settings.json · 시스템)이라 그대로 둔다.
+    /// 저장된 값은 지워 둔다: 나중 버전에서 처음 값이 바뀌면 그 값을 따른다
+    public func resetToDefaults() {
+        for key in Key.all { defaults.removeObject(forKey: key) }
+        // 키를 지운 뒤 읽으면 처음 값이다
+        let fresh = AppPreferences(defaults: defaults)
+        displayPolicy = fresh.displayPolicy
+        fullscreenBehavior = fresh.fullscreenBehavior
+        peekOnEdit = fresh.peekOnEdit
+        peekDuration = fresh.peekDuration
+        completionDisplayDuration = fresh.completionDisplayDuration
+        showStreamingText = fresh.showStreamingText
+        permissionTimeout = fresh.permissionTimeout
+        staleSessionTimeout = fresh.staleSessionTimeout
+        passthroughWhenTerminalFrontmost = fresh.passthroughWhenTerminalFrontmost
+        externalDisplayStyle = fresh.externalDisplayStyle
+        notchStyle = fresh.notchStyle
+        compactOverlapStyle = fresh.compactOverlapStyle
+        restoresRecentSessions = fresh.restoresRecentSessions
+        checksForUpdates = fresh.checksForUpdates
+        // 위 대입의 didSet 이 처음 값을 다시 적었으므로 한 번 더 지운다
+        for key in Key.all { defaults.removeObject(forKey: key) }
     }
 }

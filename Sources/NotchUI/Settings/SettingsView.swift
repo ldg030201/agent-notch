@@ -52,6 +52,8 @@ final class SettingsModel {
     var deferredUpgradeReady = false
     /// 교체 중 강제 종료 확인 단계
     var confirmingForceQuit = false
+    /// 설정 초기화 확인 단계 (버튼 자리에 취소 · 초기화가 나온다)
+    var confirmingReset = false
 
     /// 값은 설정 창을 열 때 `refresh()` 로 읽는다
     init(provider: SettingsProvider, now: @escaping () -> Date = Date.init) {
@@ -290,7 +292,32 @@ struct SettingsView: View {
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                 }
+                SettingsDivider()
+                SettingsRow(title: "설정 초기화", note: "이 창의 설정을 처음 값으로 되돌려요. 훅 설치와 로그인 시 실행은 그대로예요") {
+                    resetControl
+                }
             }
+        }
+    }
+
+    /// 초기화 버튼. 한 번 누르면 취소 · 초기화로 바뀌어 한 번 더 확인한다
+    @ViewBuilder
+    private var resetControl: some View {
+        if model.confirmingReset {
+            HStack(spacing: 6) {
+                Button("취소") { model.confirmingReset = false }
+                    .buttonStyle(SettingsButtonStyle())
+                Button("초기화") {
+                    preferences.resetToDefaults()
+                    model.confirmingReset = false
+                }
+                .buttonStyle(SettingsButtonStyle(prominent: true, destructive: true))
+            }
+            .fixedSize()
+        } else {
+            Button("초기화…") { model.confirmingReset = true }
+                .buttonStyle(SettingsButtonStyle())
+                .fixedSize()
         }
     }
 
@@ -450,6 +477,7 @@ final class SettingsWindowController {
         if let section { model.selectedSection = section }
         model.deferredUpgradeReady = false
         model.confirmingForceQuit = false
+        model.confirmingReset = false
         let window = self.window ?? makeWindow()
         self.window = window
         // 메뉴바 앱(액세서리)이라 창을 앞으로 가져오려면 앱 활성화가 필요하다

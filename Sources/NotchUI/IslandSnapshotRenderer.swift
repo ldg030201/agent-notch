@@ -133,6 +133,7 @@ enum SnapshotScenario: String, CaseIterable {
     case menubarBelowPermission = "menubar-below-permission"
     case settings
     case settingsVersion = "settings-version"
+    case settingsGeneral = "settings-general"
 
     /// 메뉴바 안 알약 장면은 style 과 관계없이 노치 없는 화면으로 그린다
     var forcesMenuBar: Bool {
@@ -143,7 +144,7 @@ enum SnapshotScenario: String, CaseIterable {
         }
     }
 
-    var isSettings: Bool { self == .settings || self == .settingsVersion }
+    var isSettings: Bool { self == .settings || self == .settingsVersion || self == .settingsGeneral }
 
     /// 노치 없는 화면 표시 방식 (메뉴바 아래 장면만 명시하고 나머지는 기본값: 메뉴바 안)
     var externalStyle: ExternalDisplayStyle {
@@ -598,7 +599,7 @@ enum SnapshotStage {
             }
             showCompact()
             presentation.toggleExpanded(on: screenID)
-        case .settings, .settingsVersion:
+        case .settings, .settingsVersion, .settingsGeneral:
             break
         }
         return SnapshotSetup(bar: bar, presentation: presentation, world: world, uptime: uptime)
@@ -614,10 +615,15 @@ enum SnapshotStage {
         let model = SettingsModel(provider: SnapshotSettingsProvider(), now: { now })
         model.refresh()
         model.updateProvider = SnapshotUpdateProvider(now: now)
-        if scene == .settings {
+        switch scene {
+        case .settings:
             model.selectedSection = .display
             presentation.setNotchConflicts([1: "NotchDemo"])
-        } else {
+        case .settingsGeneral:
+            model.selectedSection = .general
+            // 초기화 확인 단계 (취소 · 초기화 버튼)
+            model.confirmingReset = true
+        default:
             model.selectedSection = .version
         }
         let size = CGSize(width: 720, height: 700)
