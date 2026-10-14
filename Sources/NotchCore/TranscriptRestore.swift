@@ -114,6 +114,24 @@ public enum TranscriptTail {
 
     static let interruptedPrefix = "[Request interrupted by user"
 
+    /// 대화 기록 끝부분에 적힌 마지막 브랜치 (`gitBranch`). 기록이 없거나 브랜치가 없으면 nil.
+    /// 보호 폴더(`ProtectedLocations`)에 있는 프로젝트의 `.git` 을 직접 읽지 않으려고 쓴다 (기록은 `~/.claude` 아래)
+    public static func lastGitBranch(atPath path: String, tailBytes: Int = 64 * 1024) -> String? {
+        guard let handle = FileHandle(forReadingAtPath: path) else { return nil }
+        defer { try? handle.close() }
+        guard let size = try? handle.seekToEnd() else { return nil }
+        let offset = size > UInt64(tailBytes) ? size - UInt64(tailBytes) : 0
+        guard (try? handle.seek(toOffset: offset)) != nil, let data = try? handle.readToEnd() else { return nil }
+        let lines = String(decoding: data, as: UTF8.self).split(separator: "\n", omittingEmptySubsequences: true)
+        for line in lines.reversed() where line.contains("\"gitBranch\"") {
+            guard let value = try? JSONValue.parse(Data(line.utf8)),
+                  let branch = TextUtils.nonEmpty(value["gitBranch"]?.stringValue)
+            else { continue }
+            return branch
+        }
+        return nil
+    }
+
     /// 사용자 입력 글자 (문자열, 또는 text 블록). 툴 결과만 있는 줄이면 nil
     private static func userText(_ content: JSONValue?) -> String? {
         if let text = content?.stringValue { return text }

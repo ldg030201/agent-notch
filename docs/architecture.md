@@ -476,6 +476,10 @@ Claude 의 객관식 질문과 계획 승인을 다이얼로그 대신 노치에
 - 훅 헬퍼는 **화이트리스트 환경변수만** 전달한다 (`NotchWire.forwardedEnvironmentKeys`).
 - 소켓 디렉터리 0700, 소켓 0600, 연결 시 `getpeereid` 로 같은 사용자만 허용.
 - 프롬프트·코드·응답 내용을 디스크에 기록하지 않는다. 메모리에만 두고 오래된 세션은 정리한다.
+- macOS 보호 폴더(데스크탑 · 문서 · 다운로드 · iCloud Drive · 클라우드 저장소 · `/Volumes`, `ProtectedLocations`)의 파일은
+  자동으로 읽지 않는다. 읽기만 해도 "AgentNotch 가 '문서' 폴더에 접근하려고 합니다" 창이 뜨고, ad-hoc 서명이라 빌드 · 업데이트마다 다시 묻는다.
+  이런 곳의 프로젝트 브랜치는 `.git` 대신 Claude Code 대화 기록 끝부분의 `gitBranch` 로 보여준다 (`SessionStore.lookupBranch`).
+  사용자가 직접 누른 "파일 열기" 만 그 파일을 확인한다.
 - 앱을 켤 때만 최근 Claude Code 대화 기록 끝부분을 **읽는다** (세션 되살리기, 설정에서 끌 수 있음). 쓰지 않고, 상태 · 툴 요약만 메모리에 둔다.
   디버그 로그는 `os.Logger` + `privacy: .private`. 레이아웃 변화 로그(`Presentation`)만 숫자 · 모드 종류 · 자리 종류를 `.public` 으로 남긴다.
 - 네트워크 통신은 **업데이트 확인 하나뿐** — 하루 한 번 GitHub 의 `docs/changelog.json` (raw) 을 받는다. 설정에서 끌 수 있다.

@@ -195,7 +195,7 @@ public final class SessionStore {
                 id: item.id,
                 cwd: item.cwd,
                 projectName: TextUtils.projectName(forCwd: item.cwd),
-                gitBranch: item.gitBranch ?? GitInfo.branch(forDirectory: item.cwd),
+                gitBranch: item.gitBranch ?? Self.lookupBranch(cwd: item.cwd, transcriptPath: nil),
                 startedAt: item.lastEventAt,
                 lastEventAt: item.lastEventAt,
                 // 턴을 본 세션으로 둔다 (끝난 세션이면 백그라운드 서브에이전트 규칙이 적용되게)
@@ -407,7 +407,7 @@ public final class SessionStore {
         if !isNew, payload.string("source") == "compact" { return nil }
         if !isNew, !session.cwd.isEmpty {
             session.projectName = TextUtils.projectName(forCwd: session.cwd)
-            session.gitBranch = GitInfo.branch(forDirectory: session.cwd)
+            refreshBranch(&session)
         }
         session.phase = .idle
         session.currentActivity = nil
@@ -441,7 +441,7 @@ public final class SessionStore {
             ))
         }
         if !session.cwd.isEmpty {
-            session.gitBranch = GitInfo.branch(forDirectory: session.cwd)
+            refreshBranch(&session)
         }
     }
 
@@ -824,13 +824,36 @@ public final class SessionStore {
 
     // MARK: - 세션 헬퍼
 
+    // MARK: - 브랜치
+
+    /// 세션 브랜치를 다시 찾는다. 보호 폴더 프로젝트에서 대화 기록에 아직 브랜치가 없으면 알던 값을 그대로 둔다
+    private func refreshBranch(_ session: inout AgentSession) {
+        let branch = Self.lookupBranch(cwd: session.cwd, transcriptPath: session.transcriptPath)
+        if branch != nil || !ProtectedLocations.contains(session.cwd) {
+            session.gitBranch = branch
+        }
+    }
+
+    /// 작업 폴더의 git 브랜치.
+    /// - 보통은 `.git` 을 직접 읽는다 (`GitInfo`, 정확하고 빠름).
+    /// - 작업 폴더가 macOS 보호 폴더(문서 · 데스크탑 · 다운로드 · iCloud 등, `ProtectedLocations`)면 읽지 않는다:
+    ///   읽기만 해도 "AgentNotch 가 '문서' 폴더에 접근하려고 합니다" 창이 뜨고, ad-hoc 서명이라 빌드 · 업데이트마다 다시 묻는다.
+    ///   대신 Claude Code 대화 기록(`~/.claude`) 끝부분에 적힌 `gitBranch` 를 쓴다
+    static func lookupBranch(cwd: String, transcriptPath: String?, home: String? = nil) -> String? {
+        guard !cwd.isEmpty else { return nil }
+        let home = home ?? FileManager.default.homeDirectoryForCurrentUser.path
+        guard ProtectedLocations.contains(cwd, home: home) else { return GitInfo.branch(forDirectory: cwd) }
+        guard let transcriptPath, !ProtectedLocations.contains(transcriptPath, home: home) else { return nil }
+        return TranscriptTail.lastGitBranch(atPath: transcriptPath)
+    }
+
     private func makeSession(id: String, payload: HookPayload, now: Date) -> AgentSession {
         let cwd = payload.string("cwd") ?? ""
         return AgentSession(
             id: id,
             cwd: cwd,
             projectName: TextUtils.projectName(forCwd: cwd),
-            gitBranch: cwd.isEmpty ? nil : GitInfo.branch(forDirectory: cwd),
+            gitBranch: Self.lookupBranch(cwd: cwd, transcriptPath: payload.string("transcript_path")),
             startedAt: now,
             lastEventAt: now
         )
@@ -843,16 +866,16 @@ public final class SessionStore {
         now: Date
     ) {
         session.lastEventAt = now
+        if let path = payload.string("transcript_path") { session.transcriptPath = path }
         if let cwd = payload.string("cwd"), cwd != session.cwd {
             // 프로젝트명은 처음 알게 된 cwd 기준 (Claude 가 하위 폴더로 cd 해도 유지, SessionStart 에서 갱신)
             let hadCwd = !session.cwd.isEmpty
             session.cwd = cwd
             if !hadCwd {
                 session.projectName = TextUtils.projectName(forCwd: cwd)
-                session.gitBranch = GitInfo.branch(forDirectory: cwd)
+                refreshBranch(&session)
             }
         }
-        if let path = payload.string("transcript_path") { session.transcriptPath = path }
         if let mode = payload.string("permission_mode") { session.permissionMode = mode }
         if let model = payload.string("model")
             ?? TextUtils.nonEmpty(payload["model"]?["id"]?.stringValue)
