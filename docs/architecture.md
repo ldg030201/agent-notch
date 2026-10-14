@@ -73,13 +73,13 @@ Claude Code (CLI · 데스크톱 앱)
 | 이벤트 | 처리 |
 |---|---|
 | `SessionStart` | 세션 생성(이미 있으면 갱신), phase `idle`, 신호 `sessionStarted` |
-| `UserPromptSubmit` | phase `thinking`, 턴 요약 초기화, `lastPrompt`(200자 제한), `streamingText` 초기화, 미확인 완료 해제 |
+| `UserPromptSubmit` | phase `thinking`, 턴 요약 초기화, `lastPrompt`(200자 제한), 스트리밍 텍스트 초기화, 미확인 완료 해제 |
 | `PreToolUse` | phase `runningTool`, `currentActivity` 생성(툴 요약), 타임라인 추가. `AskUserQuestion` · `ExitPlanMode` 면 `waitingInput` + `needsInput`. 헬퍼가 답을 기다리고(지금 훅 설정) 노치에서 답할 수 있는 입력이면 요청 대기열에 넣고 요청 ID 반환 (질문 · 계획 승인 카드, 아래 "질문 · 계획 승인 카드") |
 | `PostToolUse` | 해당 `tool_use_id` 활동 성공 처리, diff 계산(Edit/MultiEdit/Write/NotebookEdit/Bash `bashEditDiff`) → `lastDiff`, 턴 요약 누적, 신호 `edited` |
 | `PostToolUseFailure` | 활동 실패 처리, phase `thinking` |
 | `PermissionRequest` | `PermissionRequestInfo` 생성 → 대기열, phase `waitingPermission`, 신호 `permissionRequested`, 요청 ID 반환. 단 `AskUserQuestion` / `ExitPlanMode` 는 대기열에 넣지 않고 바로 결정 없음(Claude Code 가 `updatedInput` 없는 allow 를 무시하므로) → 입력 대기 카드 |
 | `Notification` | `lastNotification` 갱신. `elicitation_dialog`/`agent_needs_input` → `waitingInput` + `needsInput`. `permission_prompt` 인데 해당 세션의 훅 대기 요청이 없으면 `waitingPermission` + `needsInput` (단 노치에서 "터미널로" 넘긴 질문 · 계획 승인 다이얼로그면 무시). `idle_prompt` → 작업 중 · 훅 대기 없는 승인 대기 · 입력 대기를 `idle` 로 정리 (터미널에서 거부/Esc 한 경우 약 60초 뒤 복구) |
-| `MessageDisplay` | `delta` 를 `streamingText` 뒤에 붙임(최근 2000자 유지) |
+| `MessageDisplay` | `delta` 를 세션과 따로 둔 `SessionStore.streamingTexts` 뒤에 붙임(최근 2000자 유지). 세션 · 포커스는 건드리지 않아 delta 마다 모든 화면이 다시 계산되지 않는다 (글을 보여주는 미리보기 · 완료 · 펼친 상세만 갱신) |
 | `Stop` | phase `completed`, `lastAssistantMessage`, 미확인 완료 표시, 신호 `completed`, 해당 세션 남은 권한 대기 정리. `background_tasks` 로 백그라운드 작업 수(서브에이전트 포함)를 맞춤 |
 | `StopFailure` | phase `failed`, `errorMessage`, 신호 `failed` |
 | `SubagentStart` / `SubagentStop` | `activeSubagents` 증감. `SubagentStop` 의 `background_tasks` 로 셸 · 기타 백그라운드 수를 맞춤 |
@@ -135,7 +135,7 @@ Claude Code (CLI · 데스크톱 앱)
    (작업 중 세션끼리 자동 전환으로 인한 깜빡임 방지).
 4. 작업 중인 세션도 없으면 가장 최근 이벤트가 있었던 세션.
 
-`rankedSessions` 정렬: 끼어들기 대상(위 우선순위) → 고정 → 작업 중(최근순) → 나머지(최근순). 종료된 세션 제외.
+`rankedSessions` 정렬: 끼어들기 대상(위 우선순위) → 고정 → 작업 중(최근순) → 나머지(최근순). (SessionEnd 를 받은 세션은 목록에서 지운다)
 
 ## 6. 아일랜드 표시 모드
 
@@ -217,7 +217,7 @@ Claude Code (CLI · 데스크톱 앱)
     (8-1 "검증: 스냅숏 렌더링").
 - 다른 세션 상태 요약 (`SessionStatusSummary`, `SessionSummaryChips`):
   - 묶음: **기다리는 중**(주황, 권한 · 입력 대기 · 실패) → **진행 중**(초록, 추론 · 툴 실행 · 압축) → **끝남**(회색, 완료 · 유휴).
-    0 인 묶음은 빼고, 종료된 세션은 세지 않는다.
+    0 인 묶음은 뺀다.
   - 모양: 묶음마다 `● N` (6pt 점은 묶음 색, 숫자는 11pt 고정폭 보조 글자색 — `+N −M` 과 헷갈리지 않게). 늘 통째로 그린다.
   - 무엇을 세는지: 접힌 working 은 지금 보여주는 세션을 뺀 나머지, idle 과 펼친 머리는 모든 세션
     (펼친 목록은 세션이 다 보이므로 합계가 "세션 N" 과 같다).
