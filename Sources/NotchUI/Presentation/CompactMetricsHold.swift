@@ -24,6 +24,14 @@ struct CompactMetricsHold {
     /// 다음에 줄일 수 있는 시각 (붙잡은 값이 지금 값보다 클 때만)
     private(set) var releaseAt: TimeInterval?
 
+    /// 지금 붙잡은 상태로 `measured` 를 안정화한 값. 상태는 바꾸지 않는다 (레이아웃 계산용 — 상태는 커밋에서 `stabilize` 로 옮긴다)
+    func value(for measured: CompactMetrics, key: String, now: TimeInterval) -> CompactMetrics {
+        var next = self
+        return next.stabilize(measured, key: key, now: now)
+    }
+
+    /// `value(for:key:now:)` 와 같은 값을 계산하고 붙잡은 상태를 그 값으로 옮긴다
+    @discardableResult
     mutating func stabilize(_ measured: CompactMetrics, key: String, now: TimeInterval) -> CompactMetrics {
         guard let held, self.key == key, held.isAttention == measured.isAttention else {
             self.key = key

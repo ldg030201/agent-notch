@@ -35,6 +35,17 @@ final class SnapshotClock {
     }
 }
 
+/// 표시 상태의 시계 (부팅 후 초, `PresentationController.uptime`). 스냅숏은 렌더링이 느려도 같은 그림이 되도록 멈춰 두고
+/// 필요할 때만 앞으로 돌린다 (접히는 동안 붙잡은 카드 띠를 놓을 시각이 지남 등)
+@MainActor
+final class SnapshotUptime {
+    private(set) var now: TimeInterval = 1000
+
+    func advance(by seconds: TimeInterval) {
+        now += seconds
+    }
+}
+
 /// 아무것도 하지 않는 동작 (렌더링 전용). 권한 결정만 검사용으로 받아 볼 수 있다
 @MainActor
 final class SnapshotActions: IslandActions {

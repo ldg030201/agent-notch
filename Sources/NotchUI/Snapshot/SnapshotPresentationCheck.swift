@@ -10,8 +10,9 @@ import NotchShared
 
 // MARK: - 승인 대기
 
-/// 요청이 카드에 보인 지 `PresentationController.shortcutSettleDelay` 가 지나야 승인(허용 · 항상 허용 · 계획 승인 · 답)을 전달하는지.
-/// 시간은 표시 상태의 시계(`uptime`)를 돌려서 잰다
+/// 요청 카드가 보인 지 `PresentationController.shortcutSettleDelay` 가 지나야 승인(허용 · 항상 허용 · 계획 승인 · 답)을 전달하는지.
+/// 승인 대기는 모드가 바뀐 때가 아니라 아일랜드 뷰가 내용 교체를 끝내 그 요청 카드가 나타난 때부터 잰다.
+/// 시간은 표시 상태의 시계(`uptime`)를 돌려서 재고, 내용 교체는 실제 패널의 `IslandViewState` 를 `IslandContainer` 순서대로 돌린다
 @MainActor
 enum SnapshotDecisionCheck {
     /// 결정을 받아 스토어에 적용하는 표시 상태 하나 (노치 화면 1개)
@@ -22,6 +23,12 @@ enum SnapshotDecisionCheck {
         let screenID: ScreenID
         var now: TimeInterval = 1000
         var delivered: [(id: UUID, decision: PermissionDecision)] = []
+        /// 패널 뷰 상태와 마지막으로 그린 내용 (모드 · 레이아웃 · 구조)
+        private let view = IslandViewState()
+        private var shownKey: IslandContentKey?
+        private var current: IslandShownContent?
+        /// 흐리는 중인 교체 (끝나면 보일 내용 구조 · 흐리기 시작한 시각 · 교체 지연)
+        private var pendingSwap: (key: IslandContentKey, start: TimeInterval, delay: TimeInterval)?
 
         init?() {
             guard let defaults = MemoryDefaults() else { return nil }
@@ -41,13 +48,59 @@ enum SnapshotDecisionCheck {
                 self.delivered.append((id, decision))
                 store.resolvePermission(id: id, decision: decision)
             }
+            // 처음 붙은 패널: 지금 내용(접힌 상태)이 바로 보인다
+            _ = render(finishing: true)
         }
 
-        /// 지금 카드에 보이는 요청 (렌더 한 번)
-        func shown() -> PermissionRequestInfo? {
-            if case let .permission(request, _) = presentation.mode(for: screenID) { return request }
+        /// 렌더 한 번 (`IslandContainer`): 관찰 패스를 돌리고, 내용 구조가 바뀌었으면 이전 내용을 흐리기 시작한다.
+        /// `finishing` 이면 교체 지연(`contentDelay`)만큼 시계를 돌려 새 내용이 나타나게 한다
+        func render(finishing: Bool) -> PermissionRequestInfo? {
+            let frame = presentation.commitScreens()[screenID]
+            let mode = frame?.mode ?? .hidden
+            let layout = frame?.layout ?? IslandLayout(size: .zero, origin: .zero, shape: IslandShapeSpec())
+            let key = IslandContentKey(mode: mode, layout: layout)
+            current = IslandShownContent(mode: mode, layout: layout)
+            _ = view.outgoingContent(current: mode, layout: layout, reduceMotion: false)
+            if key != shownKey {
+                let first = shownKey == nil
+                shownKey = key
+                pendingSwap = nil
+                presentation.contentWillChange(on: screenID)
+                if first {
+                    presentation.contentDidAppear(key, on: screenID)
+                } else {
+                    switch view.beginSwap(to: key, reduceMotion: false) {
+                    case .none, .restore:
+                        presentation.contentDidAppear(key, on: screenID)
+                    case .fadeOut:
+                        let delay = view.contentDelay(to: key).components
+                        pendingSwap = (key, now, Double(delay.seconds) + Double(delay.attoseconds) / 1e18)
+                    }
+                }
+            }
+            if finishing { finishSwap() }
+            if case let .permission(request, _) = mode { return request }
             return nil
         }
+
+        /// 지금 카드에 보이는 요청 (렌더 한 번 · 내용 교체가 끝날 때까지)
+        func shown() -> PermissionRequestInfo? {
+            render(finishing: true)
+        }
+
+        /// 흐리는 중인 교체를 끝낸다: 흐리기 시작한 뒤 교체 지연까지 시계가 흐르고 새 내용이 나타난다
+        func finishSwap() {
+            guard let swap = pendingSwap else { return }
+            pendingSwap = nil
+            now = max(now, swap.start + swap.delay)
+            view.finishSwap()
+            // 교체가 끝나면 다음 렌더부터 지금 내용을 그린다
+            if let current { _ = view.outgoingContent(current: current.mode, layout: current.layout, reduceMotion: false) }
+            presentation.contentDidAppear(swap.key, on: screenID)
+        }
+
+        /// 내용 교체 지연 (흐리기 시작 → 새 내용이 나타날 때까지, 초). 교체 중이 아니면 0
+        var swapDelay: TimeInterval { pendingSwap?.delay ?? 0 }
 
         /// api-server 의 Bash 권한 요청 (예시 명령)
         func apiServerAsks(_ command: String, at seconds: TimeInterval) {
@@ -84,16 +137,33 @@ enum SnapshotDecisionCheck {
         h.now += 0.5
         expect("첫 요청 0.6초 뒤 허용 클릭", h, delivered: true) { h.presentation.resolve(first, decision: .allow) }
 
-        // 다음 요청이 같은 카드 자리에 바뀌어 들어옴 → 두 번째 클릭(더블클릭)은 새 요청을 승인하지 않는다
-        guard let second = h.shown(), second.id != first.id else { return (cases + 1, problems + ["다음 권한 요청 카드가 안 보임"]) }
+        // 다음 요청이 같은 카드 자리에 바뀌어 들어옴 → 두 번째 클릭(더블클릭)은 새 요청을 승인하지 않는다.
+        // 이전 요청 카드가 흐려지는 동안(내용 교체 중)과 새 카드가 나타난 직후 모두
+        guard let second = h.render(finishing: false), second.id != first.id else {
+            return (cases + 1, problems + ["다음 권한 요청 카드가 안 보임"])
+        }
         cases += 1
         if IslandContentKey(mode: .permission(first, queueCount: 2), layout: IslandLayout(size: .zero, origin: .zero, shape: IslandShapeSpec()))
             == IslandContentKey(mode: .permission(second, queueCount: 1), layout: IslandLayout(size: .zero, origin: .zero, shape: IslandShapeSpec())) {
             problems.append("다음 요청으로 바뀌어도 카드 내용 구조가 같음 (제자리에서 글자만 바뀜)")
         }
+        let changedAt = h.now
+        let swapDelay = h.swapDelay
+        cases += 1
+        if swapDelay < 0.1 { problems.append("다음 요청으로 바뀔 때 이전 카드를 흐리지 않음 (교체 지연 \(swapDelay)초)") }
         h.now += 0.1
-        expect("다음 요청으로 바뀐 직후 허용 클릭", h, delivered: false) { h.presentation.resolve(second, decision: .allow) }
+        expect("다음 요청으로 바뀌고 이전 카드가 흐려지는 중 허용 클릭", h, delivered: false) { h.presentation.resolve(second, decision: .allow) }
+        h.finishSwap()
+        h.now += 0.1
+        expect("다음 요청 카드가 나타난 직후 허용 클릭", h, delivered: false) { h.presentation.resolve(second, decision: .allow) }
         expect("바뀐 직후 이전 요청 버튼", h, delivered: false) { h.presentation.resolve(first, decision: .allow) }
+        // 요청이 바뀐 지는 대기 시간(0.5초)이 지났지만 새 카드가 나타난 지는 그보다 짧다 → 아직 받지 않는다
+        // (예전처럼 모드가 바뀐 때부터 재면 내용 교체 지연만큼 막는 시간이 줄었다)
+        let late = PresentationController.shortcutSettleDelay + 0.05
+        h.now = changedAt + late
+        expect(String(format: "요청이 바뀐 지 %.2f초 · 카드가 나타난 지 %.2f초 허용 클릭", late, late - swapDelay), h, delivered: false) {
+            h.presentation.resolve(second, decision: .allow)
+        }
 
         // 열린 메뉴에 가렸다가 다시 보이면 처음부터 다시 잰다
         h.now += 0.5
@@ -187,7 +257,7 @@ enum SnapshotLayoutHistoryCheck {
     private static func hiddenToCard(_ cases: inout Int, _ problems: inout [String]) throws {
         let setup = try SnapshotStage.prepare(.workingBackgroundStrip, style: .notch)
         let id = setup.screenID
-        let before = setup.layout
+        let before = setup.draw()
         cases += 1
         guard before.hasTwoLineStrip else {
             problems.append("숨김 → 카드: 숨기기 전 접힌 상태가 두 줄 띠가 아님 (검사 장면이 맞지 않음)")
@@ -199,11 +269,12 @@ enum SnapshotLayoutHistoryCheck {
             problems.append("숨김 → 카드: 풀스크린 \"알림만\" 에서 접힌 상태가 숨지 않음")
             return
         }
-        _ = setup.layout
+        // 숨긴 상태를 커밋한다 (접힌 모양 이력을 지움)
+        setup.draw()
         var world = setup.world
         world.store.dismiss(sessionID: SnapshotWorld.apiServer.id)
         world.webAppAsksPermission()
-        let card = setup.layout
+        let card = setup.draw()
         let expected = fresh(setup, fullscreen: [id])
         cases += 1
         guard case .permission = setup.mode, expected.compact == nil else {
@@ -219,11 +290,12 @@ enum SnapshotLayoutHistoryCheck {
         }
     }
 
-    /// 카드를 연 채 화면이 빠졌다가(덮개 닫기 등) 같은 ScreenID 로 돌아와 접힌 상태가 되면 예전 카드 띠를 붙잡지 않는다
+    /// 카드를 연 채 화면이 빠졌다가(덮개 닫기 등) 같은 ScreenID 로 돌아와 접힌 상태가 되면 예전 카드 띠를 붙잡지 않는다.
+    /// 실제 앱처럼 화면 구성이 바뀔 때마다 관찰 패스를 돌린다 (사라진 화면 이력은 커밋이 지운다)
     private static func screenReturns(_ cases: inout Int, _ problems: inout [String]) throws {
         func cardThenResolve() throws -> SnapshotSetup {
             let setup = try SnapshotStage.prepare(.permission, style: .notch, environment: .working)
-            _ = setup.layout
+            setup.draw()
             if let request = setup.world.store.pendingPermissions.first {
                 setup.world.store.resolvePermission(id: request.id, decision: .allow)
             }
@@ -232,12 +304,13 @@ enum SnapshotLayoutHistoryCheck {
         }
         // 화면이 그대로면 접히는 동안 카드 띠를 붙잡는다 (이 장면에서 붙잡은 모양이 새 접힌 모양과 달라야 검사가 뜻이 있다)
         let kept = try cardThenResolve()
-        let held = kept.layout
+        let held = kept.draw()
         let removed = try cardThenResolve()
         removed.presentation.updateScreens([])
+        removed.presentation.commitScreens()
         removed.presentation.updateScreens([removed.bar.geometry])
         removed.presentation.setActiveScreen(removed.screenID)
-        let returned = removed.layout
+        let returned = removed.draw()
         let expected = fresh(removed)
         cases += 1
         if same(held, expected) {

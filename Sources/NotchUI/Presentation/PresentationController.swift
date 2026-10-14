@@ -62,9 +62,10 @@ final class PresentationController {
     /// needsInput 신호로 받은 메시지 (세션별 최신)
     private var inputMessages: [String: String] = [:]
 
-    /// 지금 카드에 보이는 권한 요청과 보이기 시작한 시각(부팅 후 초). 카드가 가려지거나 접히면 지운다.
+    /// 카드 내용이 화면에 보이기 시작한 권한 요청 · 그 화면 · 보이기 시작한 시각(부팅 후 초).
+    /// 아일랜드 뷰가 내용 교체를 끝내 그 요청 카드가 나타날 때 기록하고(`contentDidAppear`), 그 화면 내용이 바뀌기 시작하면 지운다.
     /// 막 보인 요청은 승인하지 않는다 (`acceptsDecision`)
-    @ObservationIgnored private var displayedPermission: (id: UUID, since: TimeInterval)?
+    @ObservationIgnored private var displayedPermission: (id: UUID, screen: ScreenID, since: TimeInterval)?
     /// 질문 카드에서 고르는 중인 답 (요청 ID → 답). 요청이 대기열에서 빠지면 지운다
     @ObservationIgnored private var questionDrafts: [UUID: QuestionDraft] = [:]
     /// 권한 · 질문 카드 내용 (요청 · 카드 폭마다 한 번 계산해 레이아웃 · 뷰 · 단축키가 함께 쓴다). 요청이 대기열에서 빠지면 지운다
@@ -76,69 +77,29 @@ final class PresentationController {
     }
     /// 요청이 카드에 보이고 나서 승인(허용 · 항상 허용 · 계획 승인 · 답 보내기)을 받기 시작할 때까지의 시간 (클릭 · 단축키 모두)
     static let shortcutSettleDelay: TimeInterval = 0.5
-    /// 지금 시각 (부팅 후 초). 스냅숏 검사가 시간을 돌려 승인 대기를 확인한다
+    /// 지금 시각 (부팅 후 초). 승인 대기 · 접힌 폭 안정화 · 접히는 동안 붙잡은 띠가 함께 쓴다.
+    /// 스냅숏은 멈춘 시계를 넣어 렌더링 속도와 관계없이 같은 그림을 만들고, 검사는 시간을 돌려 승인 대기를 확인한다
     @ObservationIgnored var uptime: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
 
     @ObservationIgnored private var transientTask: Task<Void, Never>?
 
-    /// 접힌 상태 폭 안정화 (툴 이름 · `+N −M` 폭이 이벤트마다 바뀌어도 날개가 출렁이지 않게)
+    /// 접힌 상태 폭 안정화 (툴 이름 · `+N −M` 폭이 이벤트마다 바뀌어도 날개가 출렁이지 않게). 커밋에서만 옮긴다
     @ObservationIgnored private var compactHold = CompactMetricsHold()
-    /// 붙잡아 둔 접힌 폭을 줄이거나 접히는 동안 붙잡은 카드 띠를 놓을 때가 되면 올려서 레이아웃을 다시 계산하게 한다
+    /// 붙잡아 둔 접힌 폭을 줄이거나 접히는 동안 붙잡은 카드 띠를 놓을 때가 되면 올려서 다시 계산 · 커밋하게 한다
     private var holdRevision = 0
     @ObservationIgnored private var compactHoldTask: (task: Task<Void, Never>, deadline: TimeInterval)?
-    /// 피크 카드 본문 높이: 피크가 이어지는 동안엔 커지기만 한다 (diff 줄 수마다 카드가 출렁이지 않게)
+    /// 피크 카드 본문 높이: 피크가 이어지는 동안엔 커지기만 한다 (diff 줄 수마다 카드가 출렁이지 않게). 커밋에서만 키운다
     @ObservationIgnored private var peekBodyHold: CGFloat = 0
 
-    /// 화면 하나의 배치 이력 · 카드 띠 · 붙잡은 띠 · 로그 기록. 화면이 사라지면 통째로 지운다 (`forgetScreen`)
-    private struct ScreenHistory {
-        /// 직전 접힌 날개 (아이콘이 조금 밀려도 날개 끝을 붙잡는 데 쓴다)
-        var wings: WingsSpec?
-        /// 직전에 그린 부분 1 (접힌 모양 또는 열린 카드 위의 접힌 모양). 카드를 펼치고 접는 동안 부분 1 을 그대로 두는 데 쓴다
-        var part1: IslandLayout?
-        /// 직전 메뉴바 알약 (노치 없는 화면). 펼친 카드가 같은 알약을 부분 1 로 쓴다
-        var pill: CompactPlacement?
-        /// 직전에 그린 접힌 내용 (폭 측정값). 펼친 카드는 지금 접힌 내용이 아니라 이 내용으로 부분 1 을 그린다:
-        /// 카드를 여는 순간 · 열린 동안 접힌 내용이 바뀌어도(완료 확인 · 권한 요청 · 보여주는 세션 · 요약 · 툴) 부분 1 은 직전 접힌 모양 그대로.
-        /// 접힌 상태를 그리지 않고(숨김) 카드를 열었으면 처음 계산한 내용을 카드가 열린 동안 쓴다
-        var compactContent: CompactContent?
-        /// 지금 열린 카드의 띠 · 목 알약 자리 (`IslandLayoutEngine.cardBand`). 카드가 접히기 시작하면 `collapseHold` 로 넘긴다
-        var cardBand: CompactPlacement?
-        /// 접히는 동안 붙잡는 카드 띠와 놓을 시각 (부팅 후 초).
-        /// 카드가 열려 있는 동안 접힌 내용(다른 세션 요약 · 보여주는 세션 · 작업 중 ↔ 쉬는 중)이 바뀌었어도
-        /// 접히는 동안엔 띠가 그대로이고, 모양이 자리 잡은 뒤 접힌 상태 안의 변화로 새 띠가 된다
-        var collapseHold: (band: CompactPlacement, until: TimeInterval)?
-        var collapseHoldTask: Task<Void, Never>?
-        /// 마지막으로 로그에 남긴 레이아웃 (바뀔 때만 남긴다)
-        var loggedLayout: LayoutLogEntry?
-
-        /// 접힌 상태 배치 이력(직전 부분 1 · 날개 · 알약 · 접힌 내용)을 지운다. 다음 접힌 상태 · 카드는 지금 내용으로 새로 계산한다
-        mutating func forgetCompact() {
-            wings = nil
-            part1 = nil
-            pill = nil
-            compactContent = nil
-        }
-
-        /// 붙잡은 카드 띠를 바로 놓는다
-        mutating func releaseCollapseHold() {
-            collapseHold = nil
-            collapseHoldTask?.cancel()
-            collapseHoldTask = nil
-        }
-
-        /// 다른 표시 상태의 배치 이력(부분 1 · 날개 · 알약 · 카드 띠 · 접힌 내용)을 가져온다. 붙잡은 띠 · 로그 기록은 그대로
-        mutating func adoptLayout(from other: ScreenHistory) {
-            wings = other.wings
-            part1 = other.part1
-            pill = other.pill
-            compactContent = other.compactContent
-            cardBand = other.cardBand
-        }
-    }
-
-    @ObservationIgnored private var history: [ScreenID: ScreenHistory] = [:]
+    /// 화면마다 커밋한 배치 이력 (`commit` 만 바꾼다)
+    @ObservationIgnored private var histories: [ScreenID: LayoutHistory] = [:]
+    /// 접히는 동안 붙잡은 카드 띠를 놓을 때 다시 계산하게 하는 예약 (화면마다)
+    @ObservationIgnored private var collapseHoldTasks: [ScreenID: Task<Void, Never>] = [:]
+    /// 마지막으로 로그에 남긴 레이아웃 (화면마다, 바뀔 때만 남긴다)
+    @ObservationIgnored private var loggedLayouts: [ScreenID: LayoutLogEntry] = [:]
     /// 접히는 동안 카드 띠를 붙잡는 시간: 접히는 모양(resize 스프링)이 다 자리 잡을 때까지 (`IslandMotion.settleDelay`)
     static let collapseHoldDuration: Duration = IslandMotion.settleDelay
+
     @ObservationIgnored private var lastSignalSeq: Int?
     @ObservationIgnored private var observing = false
     /// stop/start 를 반복해도 관찰 루프가 겹치지 않게 하는 세대 번호
@@ -196,7 +157,7 @@ final class PresentationController {
     func updateScreens(_ list: [NotchGeometry]) {
         let map = Dictionary(list.map { ($0.screenID, $0) }, uniquingKeysWith: { first, _ in first })
         let order = list.map(\.screenID)
-        for id in geometries.keys where map[id] == nil { forgetScreen(id) }
+        // 사라진 화면의 배치 이력은 다음 커밋이 지운다 (화면 구성을 바꾸면 관찰 패스가 바로 다시 계산 · 커밋한다)
         if map != geometries { geometries = map }
         if order != screenOrder { screenOrder = order }
         if let expanded = expandedScreenID, map[expanded] == nil { expandedScreenID = nil }
@@ -299,14 +260,8 @@ final class PresentationController {
         let occluded = occludedScreenIDs.contains(id)
 
         if isTarget, !(fullscreen && behavior == .hide), let alert = alertMode() {
-            if occluded {
-                noteDisplayed(nil)
-                return compactMode(for: id)
-            }
-            noteDisplayed(alert)
-            return alert
+            return occluded ? compactMode(for: id) : alert
         }
-        if isTarget { noteDisplayed(nil) }
         // 사용자가 직접 연 펼침은 풀스크린 설정보다 우선
         if expandedScreenID == id { return .expanded }
         if fullscreen && behavior != .showAll { return .hidden }
@@ -316,7 +271,11 @@ final class PresentationController {
 
     /// 열린 메뉴가 접힌 아일랜드에 닿아 투명하게 숨기는 중인지 (알림이 대기 중이면 숨기지 않음)
     func isConcealed(_ id: ScreenID) -> Bool {
-        guard concealedScreenIDs.contains(id), mode(for: id).isCompact else { return false }
+        isConcealed(id, mode: mode(for: id))
+    }
+
+    private func isConcealed(_ id: ScreenID, mode: IslandMode) -> Bool {
+        guard concealedScreenIDs.contains(id), mode.isCompact else { return false }
         return !(id == transientTargetScreenID && alertMode() != nil)
     }
 
@@ -403,12 +362,133 @@ final class PresentationController {
         sessionID + "\u{1F}" + message
     }
 
-    // MARK: - 레이아웃
+    // MARK: - 레이아웃 (순수 계산)
 
+    // 모드 · 레이아웃 · 접힌 내용은 스토어 · 설정 · 화면 정보 · 시각과 화면마다 커밋한 배치 이력(`LayoutHistory`)만으로 정해진다.
+    // 계산은 아무 상태도 바꾸지 않아서, 뷰 · 관찰 패스 · 겹침 감시가 어떤 순서로 몇 번 불러도 같은 값이다.
+    // 배치 이력은 관찰 패스(`ScreenManager`)가 모든 화면을 한 번에 계산한 뒤 `commit` 에서만 옮긴다
+
+    /// 화면 하나의 배치 이력: 직전에 그린 접힌 모양 · 열린 카드 띠 · 접히는 동안 붙잡는 띠 (`commit` 만 바꾼다).
+    /// - 접힌 상태 → 카드: 카드는 직전 접힌 모양(부분 1 · 날개 · 알약 · 접힌 내용)으로 부분 1 을 그리고, 열린 동안 그 카드 띠를 기억한다
+    /// - 카드 → 접힌 상태: 카드 띠를 접히는 모양이 자리 잡을 때까지 붙잡는다 (`collapseHold`)
+    /// - 숨김: 접힌 모양 이력을 지운다. 사라진 화면은 통째로 지운다
+    struct LayoutHistory: Equatable {
+        /// 직전 접힌 날개 (아이콘이 조금 밀려도 날개 끝을 붙잡는 데 쓴다). 날개 없이 그렸으면 `.withoutWings`
+        var wings: WingsSpec?
+        /// 직전에 그린 부분 1 (접힌 모양 또는 열린 카드 위의 접힌 모양). 카드를 펼치고 접는 동안 부분 1 을 그대로 두는 데 쓴다
+        var part1: IslandLayout?
+        /// 직전 메뉴바 알약 (노치 없는 화면). 펼친 카드가 같은 알약을 부분 1 로 쓴다
+        var pill: CompactPlacement?
+        /// 직전에 그린 접힌 내용 (폭 측정값). 펼친 카드는 지금 접힌 내용이 아니라 이 내용으로 부분 1 을 그린다:
+        /// 카드를 여는 순간 · 열린 동안 접힌 내용이 바뀌어도(완료 확인 · 권한 요청 · 보여주는 세션 · 요약 · 툴) 부분 1 은 직전 접힌 모양 그대로.
+        /// 접힌 상태를 그리지 않고(숨김) 카드를 열었으면 처음 계산한 내용을 카드가 열린 동안 쓴다
+        var compactContent: CompactContent?
+        /// 지금 열린 카드의 띠 · 목 알약 자리 (`IslandLayoutEngine.cardBand`). 카드가 접히기 시작하면 `collapseHold` 로 넘긴다
+        var cardBand: CompactPlacement?
+        /// 접히는 동안 붙잡는 카드 띠와 놓을 시각 (부팅 후 초, `uptime`).
+        /// 카드가 열려 있는 동안 접힌 내용(다른 세션 요약 · 보여주는 세션 · 작업 중 ↔ 쉬는 중)이 바뀌었어도
+        /// 접히는 동안엔 띠가 그대로이고, 모양이 자리 잡은 뒤 접힌 상태 안의 변화로 새 띠가 된다
+        var collapseHold: CollapseHold?
+
+        struct CollapseHold: Equatable {
+            var band: CompactPlacement
+            var until: TimeInterval
+        }
+
+        /// 접힌 상태 배치 이력(직전 부분 1 · 날개 · 알약 · 접힌 내용)을 지운다. 다음 접힌 상태 · 카드는 지금 내용으로 새로 계산한다
+        mutating func forgetCompact() {
+            wings = nil
+            part1 = nil
+            pill = nil
+            compactContent = nil
+        }
+
+        /// 이번 모드로 계산할 때 쓰는 이력: 모드가 바뀌며 일어날 일을 미리 적용한다 (커밋도 이 값에서 시작한다).
+        /// 카드가 접히기 시작하면 카드 띠를 붙잡고, 숨기거나 다시 펼치면 놓고, 놓을 시각이 지났으면 놓는다
+        /// - Returns: 카드 띠를 이번에 붙잡기 시작했는지
+        mutating func advance(to mode: IslandMode, now: TimeInterval) -> Bool {
+            guard mode.isCompact else {
+                collapseHold = nil
+                if !mode.isOpen { cardBand = nil }
+                return false
+            }
+            if let band = cardBand {
+                cardBand = nil
+                collapseHold = CollapseHold(band: band, until: now + IslandMotion.settleSeconds)
+                return true
+            }
+            if let hold = collapseHold, hold.until <= now { collapseHold = nil }
+            return false
+        }
+    }
+
+    /// 관찰 패스가 화면 하나를 계산한 결과: 그릴 모드 · 레이아웃 · 투명 숨김 · 비켜줄 날개 자리와, 커밋하면 남을 배치 이력
+    struct ScreenFrame {
+        let mode: IslandMode
+        let layout: IslandLayout
+        let concealed: Bool
+        let bands: WingBands
+        /// 커밋하면 이 화면의 배치 이력이 될 값
+        let history: LayoutHistory
+        /// 레이아웃을 고른 접힌 자리 (접힌 상태면 그 자리, 펼친 카드면 카드 뒤의 접힌 자리, 숨김이면 nil. 로그용)
+        let placement: CompactPlacement?
+        /// 카드를 접기 시작해 카드 띠를 이번에 붙잡았는지 (커밋이 놓을 때 다시 계산하게 예약한다)
+        let startsCollapseHold: Bool
+        /// 접힌 폭 안정화에 넣은 측정값 (접힌 작업 중 세션을 그렸을 때. 커밋이 `CompactMetricsHold` 를 한 단계 옮긴다)
+        let measuredCompact: CompactMeasurement?
+        /// 피크 카드 본문 높이 (커밋이 붙잡는다)
+        let peekBody: CGFloat?
+    }
+
+    /// 접힌 상태가 보여주는 세션의 폭 측정값 (안정화 전)
+    struct CompactMeasurement {
+        let metrics: CompactMetrics
+        let session: String
+    }
+
+    /// 화면 하나를 지금 상태로 계산한다 (상태를 바꾸지 않는다)
+    func frame(for id: ScreenID) -> ScreenFrame {
+        let mode = mode(for: id)
+        guard let resolved = resolve(id, mode: mode, now: uptime()) else {
+            return ScreenFrame(
+                mode: mode, layout: Self.emptyLayout, concealed: false, bands: .none, history: LayoutHistory(),
+                placement: nil, startsCollapseHold: false, measuredCompact: nil, peekBody: nil
+            )
+        }
+        return ScreenFrame(
+            mode: mode,
+            layout: resolved.layout,
+            concealed: isConcealed(id, mode: mode),
+            bands: mode.isCompact ? resolved.engine.retractBands(for: resolved.placement ?? .none) : .none,
+            history: resolved.history,
+            placement: resolved.placement,
+            startsCollapseHold: resolved.startsCollapseHold,
+            measuredCompact: resolved.measuredCompact,
+            peekBody: resolved.peekBody
+        )
+    }
+
+    /// 여러 화면을 한 번에 계산한다 (관찰 패스)
+    func frames(for ids: [ScreenID]) -> [ScreenID: ScreenFrame] {
+        Dictionary(ids.map { ($0, frame(for: $0)) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    func layout(for id: ScreenID, mode: IslandMode) -> IslandLayout {
+        resolve(id, mode: mode, now: uptime())?.layout ?? Self.emptyLayout
+    }
+
+    private static let emptyLayout = IslandLayout(size: .zero, origin: .zero, shape: IslandShapeSpec(), compact: nil)
+
+    /// 커밋한 배치 이력으로 만든 레이아웃 엔진 (접힌 자리 · 겹침 감시 영역 계산용. 놓을 시각이 지난 띠는 쓰지 않는다)
     func layoutEngine(for id: ScreenID) -> IslandLayoutEngine? {
         guard let geometry = geometries[id] else { return nil }
-        let past = history[id]
-        return IslandLayoutEngine(
+        var past = histories[id] ?? LayoutHistory()
+        if let hold = past.collapseHold, hold.until <= uptime() { past.collapseHold = nil }
+        return layoutEngine(geometry: geometry, id: id, history: past)
+    }
+
+    private func layoutEngine(geometry: NotchGeometry, id: ScreenID, history past: LayoutHistory) -> IslandLayoutEngine {
+        IslandLayoutEngine(
             geometry: geometry,
             space: spaces[id],
             externalStyle: preferences.externalDisplayStyle,
@@ -416,74 +496,136 @@ final class PresentationController {
             overlapStyle: preferences.compactOverlapStyle,
             notchConflict: notchConflicts[id] != nil,
             retracted: retractedWings[id] ?? [],
-            previousWings: past?.wings,
-            previousPill: past?.pill,
-            collapseHold: past.flatMap(activeCollapseHold),
-            previousPart1: past?.part1
+            previousWings: past.wings,
+            previousPill: past.pill,
+            collapseHold: past.collapseHold?.band,
+            previousPart1: past.part1
         )
     }
 
-    /// 지금 붙잡고 있는 카드 띠 (놓을 시각이 지났으면 nil)
-    private func activeCollapseHold(_ past: ScreenHistory) -> CompactPlacement? {
-        guard let hold = past.collapseHold, hold.until > ProcessInfo.processInfo.systemUptime else { return nil }
-        return hold.band
+    /// 화면 하나를 계산한 값: 레이아웃 · 그때 쓴 엔진 · 접힌 자리와 이 계산을 커밋하면 남을 배치 이력
+    private struct Resolution {
+        var layout: IslandLayout
+        var engine: IslandLayoutEngine
+        var placement: CompactPlacement?
+        var history: LayoutHistory
+        var startsCollapseHold: Bool
+        var measuredCompact: CompactMeasurement?
+        var peekBody: CGFloat?
     }
 
-    /// 카드가 접히기 시작하면(펼친 카드 → 접힌 상태) 카드 띠를 접히는 모양이 자리 잡을 때까지 붙잡는다.
-    /// 숨기거나 다시 펼치면 놓는다
-    private func updateCollapseHold(for id: ScreenID, mode: IslandMode) {
-        let now = ProcessInfo.processInfo.systemUptime
-        guard mode.isCompact else {
-            if history[id]?.collapseHold != nil { history[id]?.releaseCollapseHold() }
-            if !mode.isOpen { history[id]?.cardBand = nil }
-            return
-        }
-        if let band = history[id]?.cardBand {
-            var past = history[id] ?? ScreenHistory()
-            past.cardBand = nil
-            past.collapseHold = (band, now + IslandMotion.settleSeconds)
-            past.collapseHoldTask?.cancel()
-            past.collapseHoldTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: Self.collapseHoldDuration + .milliseconds(20))
-                guard !Task.isCancelled, let self else { return }
-                self.history[id]?.collapseHoldTask = nil
-                self.history[id]?.collapseHold = nil
-                self.holdRevision &+= 1
+    /// 모드 `mode` 의 레이아웃 (커밋한 배치 이력 + 모드가 바뀌며 일어날 일). 상태는 바꾸지 않는다
+    private func resolve(_ id: ScreenID, mode: IslandMode, now: TimeInterval) -> Resolution? {
+        // 붙잡은 폭 · 띠를 놓을 때가 되면 다시 계산한다
+        _ = holdRevision
+        guard let geometry = geometries[id] else { return nil }
+        var history = histories[id] ?? LayoutHistory()
+        let startsHold = history.advance(to: mode, now: now)
+        let engine = layoutEngine(geometry: geometry, id: id, history: history)
+        let resolved = resolvedLayout(for: mode, engine: engine, history: history)
+        let result = resolved.layout
+        let placement = resolved.placement
+
+        // 커밋하면 남길 배치 이력
+        if mode.isCompact {
+            history.part1 = result
+            history.compactContent = resolved.content
+            // 날개 없이 그렸으면(노치 아래 띠 · 선 · 알약) 그것도 기억한다 (날개로 다시 바꿀 때도 이력을 적용하게)
+            if case let .wings(spec)? = result.compact {
+                history.wings = spec
+            } else {
+                history.wings = .withoutWings
             }
-            history[id] = past
-        } else if let hold = history[id]?.collapseHold, hold.until <= now {
-            history[id]?.collapseHold = nil
+            if case .menuBarPill? = placement { history.pill = placement } else { history.pill = nil }
+        } else if mode.isOpen, let placement {
+            // 펼친 카드의 부분 1 (띠 · 알약)을 접힌 이력으로 기억한다:
+            // 카드가 열려 있는 동안 부분 1 이 그대로이고, 접을 때도 같은 부분 1 에서 시작해(`collapseHold`) 접힌 뒤 이력대로 접힌 모양을 고른다
+            if let part1 = resolved.part1 { history.part1 = part1 }
+            if let content = resolved.content { history.compactContent = content }
+            let band = engine.cardBand(for: placement)
+            history.cardBand = band
+            if engine.geometry.hasNotch {
+                history.wings = engine.cardBandWings(for: placement) ?? .withoutWings
+            } else if case .menuBarPill = band {
+                history.pill = band
+            }
+        } else if mode == .hidden {
+            // 숨겼다가 여는 카드는 그때 내용으로 부분 1 을 새로 그린다: 숨기기 전 접힌 모양(두 줄 띠 등) · 날개 · 알약 이력을 쓰지 않는다
+            // (풀스크린 "알림만" 처럼 알림마다 숨김 → 카드가 되는 화면에서 카드 목이 지금 내용과 다른 높이로 열리지 않게)
+            history.forgetCompact()
         }
-    }
-
-    /// 접히는 동안 붙잡은 카드 띠를 바로 놓는다 (스냅숏: 접힌 뒤 띠가 바뀌는 단계를 따로 그린다)
-    func releaseCollapseHold(on id: ScreenID) {
-        history[id]?.releaseCollapseHold()
-    }
-
-    /// 마우스를 올리면 비켜줄 날개 자리 (패널 기준). 접힌 날개가 아이콘을 덮을 때만 (아이콘 구멍을 쓰면 없음).
-    /// 비켜준 자리의 아이템 메뉴가 열려 투명하게 숨은 동안에도 유지한다 (메뉴가 닫히자마자 다시 덮지 않게).
-    func retractBands(for id: ScreenID, mode: IslandMode) -> WingBands {
-        guard mode.isCompact, let engine = layoutEngine(for: id) else { return .none }
-        // 접힌 내용은 엔진이 비켜줄 날개가 있을 수 있을 때만 계산한다
-        return engine.retractBands(for: compactContent(for: mode))
+        return Resolution(
+            layout: result, engine: engine, placement: placement, history: history, startsCollapseHold: startsHold,
+            measuredCompact: resolved.measured, peekBody: resolved.peekBody
+        )
     }
 
     /// 접힌 상태 내용 (레이아웃 선택용 폭 측정).
-    /// 다른 세션 요약 폭도 툴 이름 · `+N −M` 처럼 붙잡아 둬서 개수가 바뀌어도 날개가 출렁이지 않는다
+    /// 다른 세션 요약 폭도 툴 이름 · `+N −M` 처럼 붙잡아 둬서 개수가 바뀌어도 날개가 출렁이지 않는다 (붙잡은 값은 커밋에서 옮긴다)
     func compactContent(for mode: IslandMode) -> CompactContent {
-        if mode == .working, let session = compactSession {
+        if mode == .working, let measured = compactMeasurement() {
             _ = holdRevision
-            let now = ProcessInfo.processInfo.systemUptime
-            let summary = SessionStatusSummary(sessions: store.rankedSessions, excluding: session.id)
-            let stable = compactHold.stabilize(CompactMetrics(session: session, summary: summary), key: session.id, now: now)
-            scheduleCompactHoldRelease(at: compactHold.releaseAt, now: now)
-            return .session(stable)
+            return .session(compactHold.value(for: measured.metrics, key: measured.session, now: uptime()))
         }
         return .idle(content: CompactText.summaryWidth(allSessionsSummary))
     }
 
-    /// 붙잡아 둔 폭을 줄일 수 있는 시각에 레이아웃을 다시 계산하게 한다
+    /// 접힌 상태가 보여주는 세션의 폭 측정값 (안정화 전). 작업 중인 세션이 없으면 nil
+    private func compactMeasurement() -> CompactMeasurement? {
+        guard let session = compactSession else { return nil }
+        let summary = SessionStatusSummary(sessions: store.rankedSessions, excluding: session.id)
+        return CompactMeasurement(metrics: CompactMetrics(session: session, summary: summary), session: session.id)
+    }
+
+    // MARK: - 커밋 (관찰 패스)
+
+    /// 관찰 패스가 계산한 화면들을 커밋한다: 배치 이력 · 접힌 폭 안정화 · 피크 본문 높이를 이 한 곳에서만 옮긴다.
+    /// 화면이 사라졌으면 그 화면 이력을 지운다 (덮개를 닫았다 연 내장 화면처럼 같은 ScreenID 로 돌아온 화면이
+    /// 예전 띠를 붙잡거나 예전 부분 1 을 쓰지 않게). 카드 띠를 붙잡기 시작했거나 붙잡은 폭을 줄일 수 있게 되면
+    /// 그때 다시 계산하도록 예약한다 (`holdRevision`)
+    func commit(_ frames: [ScreenID: ScreenFrame]) {
+        for id in Set(histories.keys).union(collapseHoldTasks.keys).union(loggedLayouts.keys) where geometries[id] == nil {
+            forgetScreen(id)
+        }
+        let now = uptime()
+        var measured: CompactMeasurement?
+        for (id, frame) in frames where geometries[id] != nil {
+            if histories[id] != frame.history { histories[id] = frame.history }
+            if frame.startsCollapseHold {
+                scheduleCollapseHoldRelease(on: id)
+            } else if frame.history.collapseHold == nil, let task = collapseHoldTasks.removeValue(forKey: id) {
+                task.cancel()
+            }
+            if let body = frame.peekBody { peekBodyHold = max(peekBodyHold, body) }
+            if let value = frame.measuredCompact { measured = value }
+            logLayoutChange(id, mode: frame.mode, layout: frame.layout, placement: frame.placement)
+        }
+        if let measured {
+            compactHold.stabilize(measured.metrics, key: measured.session, now: now)
+            scheduleCompactHoldRelease(at: compactHold.releaseAt, now: now)
+        }
+    }
+
+    /// 지금 화면 정보로 모든 화면을 계산해 커밋한다 (관찰 패스 한 번. 스냅숏이 실제 앱의 패스 대신 부른다)
+    @discardableResult
+    func commitScreens() -> [ScreenID: ScreenFrame] {
+        let frames = frames(for: screenOrder.filter { geometries[$0] != nil })
+        commit(frames)
+        return frames
+    }
+
+    /// 접히는 동안 붙잡은 카드 띠를 놓을 시각에 다시 계산하게 한다 (계산이 놓을 시각이 지난 띠를 쓰지 않고, 커밋이 지운다)
+    private func scheduleCollapseHoldRelease(on id: ScreenID) {
+        collapseHoldTasks[id]?.cancel()
+        collapseHoldTasks[id] = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.collapseHoldDuration + .milliseconds(20))
+            guard !Task.isCancelled, let self else { return }
+            self.collapseHoldTasks[id] = nil
+            self.holdRevision &+= 1
+        }
+    }
+
+    /// 붙잡아 둔 폭을 줄일 수 있는 시각에 다시 계산하게 한다
     private func scheduleCompactHoldRelease(at deadline: TimeInterval?, now: TimeInterval) {
         guard let deadline else { return }
         if let pending = compactHoldTask, pending.deadline <= deadline + 0.01 { return }
@@ -498,52 +640,11 @@ final class PresentationController {
         compactHoldTask = (task, deadline)
     }
 
-    func layout(for id: ScreenID, mode: IslandMode) -> IslandLayout {
-        _ = holdRevision
-        updateCollapseHold(for: id, mode: mode)
-        guard let engine = layoutEngine(for: id) else {
-            return IslandLayout(size: .zero, origin: .zero, shape: IslandShapeSpec(), compact: nil)
-        }
-        let resolved = resolvedLayout(for: mode, engine: engine, on: id)
-        let result = resolved.layout
-        let placement = resolved.placement
-        var past = history[id] ?? ScreenHistory()
-        if mode.isCompact {
-            past.part1 = result
-            past.compactContent = resolved.content
-            // 날개 없이 그렸으면(노치 아래 띠 · 선 · 알약) 그것도 기억한다 (날개로 다시 바꿀 때도 이력을 적용하게)
-            if case let .wings(spec)? = result.compact {
-                past.wings = spec
-            } else {
-                past.wings = .withoutWings
-            }
-            if case .menuBarPill? = placement { past.pill = placement } else { past.pill = nil }
-        } else if mode.isOpen, let placement {
-            // 펼친 카드의 부분 1 (띠 · 알약)을 접힌 이력으로 기억한다:
-            // 카드가 열려 있는 동안 부분 1 이 그대로이고, 접을 때도 같은 부분 1 에서 시작해(`collapseHold`) 접힌 뒤 이력대로 접힌 모양을 고른다
-            if let part1 = resolved.part1 { past.part1 = part1 }
-            if let content = resolved.content { past.compactContent = content }
-            let band = engine.cardBand(for: placement)
-            past.cardBand = band
-            if engine.geometry.hasNotch {
-                past.wings = engine.cardBandWings(for: placement) ?? .withoutWings
-            } else if case .menuBarPill = band {
-                past.pill = band
-            }
-        } else if mode == .hidden {
-            // 숨겼다가 여는 카드는 그때 내용으로 부분 1 을 새로 그린다: 숨기기 전 접힌 모양(두 줄 띠 등) · 날개 · 알약 이력을 쓰지 않는다
-            // (풀스크린 "알림만" 처럼 알림마다 숨김 → 카드가 되는 화면에서 카드 목이 지금 내용과 다른 높이로 열리지 않게)
-            past.forgetCompact()
-        }
-        history[id] = past
-        logLayoutChange(id, mode: mode, layout: result, placement: placement)
-        return result
-    }
-
-    /// 사라진 화면의 배치 이력 · 카드 띠 · 붙잡은 띠 · 로그 기록을 모두 지운다.
-    /// 덮개를 닫았다 연 내장 화면처럼 같은 ScreenID 로 돌아온 화면이 예전 띠를 붙잡거나 예전 부분 1 을 쓰지 않게
+    /// 사라진 화면의 배치 이력 · 붙잡은 띠 · 로그 기록을 모두 지운다
     private func forgetScreen(_ id: ScreenID) {
-        history.removeValue(forKey: id)?.collapseHoldTask?.cancel()
+        histories.removeValue(forKey: id)
+        collapseHoldTasks.removeValue(forKey: id)?.cancel()
+        loggedLayouts.removeValue(forKey: id)
     }
 
     /// 로그에 남기는 레이아웃 값 (숫자 · 모드 종류 · 자리 종류만, 세션 이름 · 내용 없음)
@@ -559,8 +660,8 @@ final class PresentationController {
         let entry = LayoutLogEntry(
             mode: mode.kind, frame: layout.panelRect, part1: layout.shape.part1.rect, placement: placement?.kindName ?? "none"
         )
-        guard history[id]?.loggedLayout != entry else { return }
-        history[id, default: ScreenHistory()].loggedLayout = entry
+        guard loggedLayouts[id] != entry else { return }
+        loggedLayouts[id] = entry
         let f = entry.frame
         let p = entry.part1
         logger.debug("""
@@ -574,33 +675,45 @@ final class PresentationController {
     }
 
     /// 레이아웃과 그때 쓴 접힌 자리 (접힌 상태면 그 자리, 펼친 카드면 카드 뒤의 접힌 자리, 숨김이면 nil),
-    /// 펼친 카드의 부분 1, 접힌 자리를 고른 접힌 내용 (접힌 상태 · 펼친 카드)
+    /// 펼친 카드의 부분 1, 접힌 자리를 고른 접힌 내용 (접힌 상태 · 펼친 카드), 접힌 폭 안정화에 넣은 측정값, 피크 본문 높이
     private func resolvedLayout(
         for mode: IslandMode,
         engine: IslandLayoutEngine,
-        on id: ScreenID
-    ) -> (layout: IslandLayout, placement: CompactPlacement?, part1: IslandLayout?, content: CompactContent?) {
+        history: LayoutHistory
+    ) -> (
+        layout: IslandLayout, placement: CompactPlacement?, part1: IslandLayout?, content: CompactContent?,
+        measured: CompactMeasurement?, peekBody: CGFloat?
+    ) {
         typealias M = IslandMetrics
         let contentWidth: (CGFloat) -> CGFloat = { $0 - M.bodyPadding * 2 }
 
         func card(
-            _ width: CGFloat, radius: CGFloat, body: @escaping (CGFloat) -> CGFloat
-        ) -> (IslandLayout, CompactPlacement?, IslandLayout?, CompactContent?) {
+            _ width: CGFloat, radius: CGFloat, peekBody: CGFloat? = nil, body: @escaping (CGFloat) -> CGFloat
+        ) -> (IslandLayout, CompactPlacement?, IslandLayout?, CompactContent?, CompactMeasurement?, CGFloat?) {
             // 부분 1 은 직전에 그린 접힌 내용으로 (지금 접힌 내용이 바뀌었어도 카드가 열린 동안 그대로)
-            let content = history[id]?.compactContent ?? compactContent(for: compactSession == nil ? .idle : .working)
+            var measured: CompactMeasurement?
+            let content: CompactContent
+            if let past = history.compactContent {
+                content = past
+            } else {
+                let compactMode: IslandMode = compactSession == nil ? .idle : .working
+                content = compactContent(for: compactMode)
+                if compactMode == .working { measured = compactMeasurement() }
+            }
             let compact = engine.compactPlacement(for: content)
             let part1 = engine.cardPart1(for: compact, content: content)
-            return (engine.cardLayout(preferredWidth: width, radius: radius, part1: part1, bodyHeight: body), compact, part1, content)
+            let layout = engine.cardLayout(preferredWidth: width, radius: radius, part1: part1, bodyHeight: body)
+            return (layout, compact, part1, content, measured, peekBody)
         }
 
         switch mode {
         case .hidden:
-            return (engine.hiddenLayout(), nil, nil, nil)
+            return (engine.hiddenLayout(), nil, nil, nil, nil, nil)
 
         case .idle, .working:
             let content = compactContent(for: mode)
             let compact = engine.compactLayoutAndPlacement(for: content)
-            return (compact.layout, compact.placement, nil, content)
+            return (compact.layout, compact.placement, nil, content, mode == .working ? compactMeasurement() : nil, nil)
 
         case let .peek(sessionID, diff):
             let rows = DiffPresentation.visibleLines(diff).count
@@ -609,8 +722,7 @@ final class PresentationController {
                 + (hasText ? 8 + M.lineHeight : 0) + M.bodyBottom
             // 피크가 이어지는 동안엔 줄이지 않는다 (내용은 위쪽 정렬이라 아래가 조금 빈다)
             let body = max(measured, peekBodyHold)
-            peekBodyHold = body
-            return card(M.peekWidth, radius: 22) { _ in body }
+            return card(M.peekWidth, radius: 22, peekBody: body) { _ in body }
 
         case let .permission(request, _):
             switch request.kind {
@@ -936,20 +1048,31 @@ final class PresentationController {
         return true
     }
 
-    /// 대상 화면 카드에 보이는 권한 요청이 바뀌면 그 시각을 기록한다 (`mode(for:)` 에서 호출).
-    /// 요청 카드가 아니면(가려짐 · 접음 · 다른 알림) 지워서, 다시 보일 때 승인 대기를 처음부터 잰다
-    private func noteDisplayed(_ mode: IslandMode?) {
-        guard case let .permission(request, _)? = mode else {
-            if displayedPermission != nil { displayedPermission = nil }
-            return
-        }
-        guard displayedPermission?.id != request.id else { return }
-        displayedPermission = (request.id, uptime())
+    // MARK: - 승인 대기 시계 (아일랜드 뷰가 알린다)
+
+    /// 화면의 내용 구조가 바뀌기 시작했다 (`IslandContainer`: 이전 내용이 흐려지기 시작 · 바로 바뀜).
+    /// 그 화면에 보이던 요청 카드의 승인 대기를 지워서, 다시 보일 때 처음부터 잰다
+    func contentWillChange(on screen: ScreenID) {
+        if displayedPermission?.screen == screen { displayedPermission = nil }
     }
 
-    /// 이 요청이 카드에 이어서 보인 지 `shortcutSettleDelay` 이상 지났는지
+    /// 화면에 내용이 보이기 시작했다 (`IslandContainer`: 내용 교체가 끝나 새 내용이 나타남 · 교체 없이 바로 보임 · 패널이 붙음).
+    /// 요청 카드(권한 · 질문 · 계획)면 이때부터 승인 대기(`shortcutSettleDelay`)를 잰다: 모드가 바뀐 때가 아니라
+    /// 그 요청 내용이 실제로 나타난 때부터라, 내용 교체 지연이 길어져도 승인을 막는 시간이 줄지 않는다
+    func contentDidAppear(_ key: IslandContentKey, on screen: ScreenID) {
+        guard let request = key.request else {
+            if displayedPermission?.screen == screen { displayedPermission = nil }
+            return
+        }
+        if let shown = displayedPermission, shown.id == request, shown.screen == screen { return }
+        displayedPermission = (request, screen, uptime())
+    }
+
+    /// 이 요청 카드가 보인 지 `shortcutSettleDelay` 이상 지났고, 그 화면이 아직 이 요청을 보여주는지
     private func isSettled(_ request: PermissionRequestInfo) -> Bool {
-        guard let shown = displayedPermission, shown.id == request.id else { return false }
+        guard let shown = displayedPermission, shown.id == request.id,
+              case let .permission(current, _) = mode(for: shown.screen), current.id == request.id
+        else { return false }
         return uptime() - shown.since >= Self.shortcutSettleDelay
     }
 
@@ -996,11 +1119,18 @@ final class PresentationController {
         }
     }
 
-    /// 다른 표시 상태가 기억한 배치 이력(직전 접힌 날개 · 열린 카드 목 자리)을 가져온다
-    /// (스냅숏 전환 시트용: 전 상태를 그린 앱이 후 상태를 계산하는 것과 같게)
+    /// 다른 표시 상태가 커밋한 배치 이력(부분 1 · 날개 · 알약 · 접힌 내용 · 열린 카드 띠)으로 이 표시 상태의 이력을 채운다.
+    /// 붙잡은 띠는 그대로 (스냅숏 전환 시트용: 전 · 후 상태를 다른 가짜 세계로 만들어서, 전 상태를 그린 앱이 후 상태를 계산하는 것과 같게)
     func adoptLayoutHistory(from other: PresentationController) {
-        for id in Set(history.keys).union(other.history.keys) {
-            history[id, default: ScreenHistory()].adoptLayout(from: other.history[id] ?? ScreenHistory())
+        for id in Set(histories.keys).union(other.histories.keys) {
+            let source = other.histories[id] ?? LayoutHistory()
+            var target = histories[id] ?? LayoutHistory()
+            target.wings = source.wings
+            target.part1 = source.part1
+            target.pill = source.pill
+            target.compactContent = source.compactContent
+            target.cardBand = source.cardBand
+            histories[id] = target
         }
     }
 

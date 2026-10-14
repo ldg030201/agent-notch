@@ -423,16 +423,24 @@ private struct SnapshotIslandCanvas: View {
 
 // MARK: - 렌더링
 
-/// 장면 하나를 그릴 준비가 끝난 상태 (가짜 메뉴바 · 표시 상태 · 가짜 데이터)
+/// 장면 하나를 그릴 준비가 끝난 상태 (가짜 메뉴바 · 표시 상태 · 가짜 데이터 · 표시 상태의 시계)
 @MainActor
 struct SnapshotSetup {
     let bar: SnapshotMenuBar
     let presentation: PresentationController
     let world: SnapshotWorld
+    let uptime: SnapshotUptime
 
     var screenID: ScreenID { bar.geometry.screenID }
     var mode: IslandMode { presentation.mode(for: screenID) }
+    /// 지금 레이아웃 (계산만, 화면 상태는 그대로)
     var layout: IslandLayout { presentation.layout(for: screenID, mode: mode) }
+
+    /// 실제 앱의 관찰 패스처럼 화면을 계산해 커밋하고 그 레이아웃을 돌려준다 (그린 것을 배치 이력으로 남김)
+    @discardableResult
+    func draw() -> IslandLayout {
+        presentation.commitScreens()[screenID]?.layout ?? layout
+    }
 }
 
 @MainActor
@@ -446,8 +454,8 @@ enum SnapshotStage {
             return try renderSettings(scene, world: world, preferences: preferences, presentation: presentation)
         }
         let setup = try prepare(scene, style: style)
-        // 정지 장면도 이음매 검사 (목 ↔ 몸통 끊김 · 물림 · 거의 겹친 이음매)
-        let seam = SnapshotSeamCheck.check(layout: setup.layout)
+        // 관찰 패스를 한 번 돌린 뒤(커밋) 그린다. 정지 장면도 이음매 검사 (목 ↔ 몸통 끊김 · 물림 · 거의 겹친 이음매)
+        let seam = SnapshotSeamCheck.check(layout: setup.draw())
         print("== \(scene.rawValue) (\(style.rawValue)): 이음매 검사: 위반 \(seam.count)"
             + seam.map { "\n   ✗ \($0)" }.joined())
         let canvas = SnapshotIslandCanvas(bar: setup.bar, presentation: setup.presentation)
@@ -481,6 +489,8 @@ enum SnapshotStage {
         if env == .workingMinimal { preferences.compactOverlapStyle = .minimal }
         preferences.externalDisplayStyle = env.externalStyle
         let presentation = PresentationController(store: world.store, preferences: preferences, actions: SnapshotActions())
+        let uptime = SnapshotUptime()
+        presentation.uptime = { uptime.now }
 
         let style: IslandSnapshotRenderer.Style = env.forcesMenuBar || scene.forcesMenuBar ? .menuBar : style
         let bar = SnapshotMenuBar(style: style, crowding: env.crowding, measuresItems: env.measuresMenuBarItems, iconShift: iconShift)
@@ -490,9 +500,9 @@ enum SnapshotStage {
         presentation.setSpaces([screenID: bar.space])
 
         let api = SnapshotWorld.apiServer.id
-        /// 카드를 열기 전 접힌 상태를 한 번 그린다 (실제 앱처럼 카드 띠 · 알약이 직전 접힌 모양을 이어받게)
+        /// 카드를 열기 전 접힌 상태에서 관찰 패스를 한 번 돌린다 (실제 앱처럼 커밋한 접힌 모양을 카드 띠 · 알약이 이어받게)
         func showCompact() {
-            _ = presentation.layout(for: screenID, mode: presentation.mode(for: screenID))
+            presentation.commitScreens()
         }
         switch scene {
         case .idle, .idleWings:
@@ -644,7 +654,7 @@ enum SnapshotStage {
         case .settings, .settingsVersion:
             break
         }
-        return SnapshotSetup(bar: bar, presentation: presentation, world: world)
+        return SnapshotSetup(bar: bar, presentation: presentation, world: world, uptime: uptime)
     }
 
     private static func renderSettings(

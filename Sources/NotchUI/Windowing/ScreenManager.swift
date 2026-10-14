@@ -153,19 +153,14 @@ final class ScreenManager {
         panel.makeKeyAndOrderFront(nil)
     }
 
-    // MARK: - 모드 변화 감시 (키 윈도우 반납, 클릭 영역 갱신)
+    // MARK: - 모드 변화 감시 (화면 상태 커밋, 키 윈도우 반납, 클릭 영역 갱신)
 
-    /// 화면별 표시 상태 (모드 · 레이아웃 · 투명 숨김 · 비켜줄 날개 자리)
-    private struct ScreenState {
-        var mode: IslandMode
-        var layout: IslandLayout
-        var concealed: Bool
-        var bands: WingBands
-    }
+    private typealias ScreenFrame = PresentationController.ScreenFrame
 
-    /// 화면별 표시 상태를 읽어 적용하고, 그중 하나라도 바뀌면 다시 건다.
+    /// 관찰 패스: 모든 화면의 표시 상태(모드 · 레이아웃 · 투명 숨김 · 비켜줄 날개 자리)를 한 번에 계산해 커밋 · 적용하고,
+    /// 그중 하나라도 바뀌면 다시 건다. 화면 상태(배치 이력 · 붙잡은 띠 · 접힌 폭 안정화)는 여기서 커밋할 때만 바뀐다.
     /// 화면 구성(`geometries`)도 함께 읽어, 패널이 하나도 없을 때(하나뿐인 모니터를 끔 · 덮개를 닫고 외부 모니터를 뺌 ·
-    /// 화면 없이 실행)도 화면이 다시 생기면 깨어난다. 화면이 바뀌면 `rebuildPanels` 뒤에 바로 다시 건다
+    /// 화면 없이 실행)도 화면이 다시 생기면 깨어난다. 화면이 바뀌면 `rebuildPanels` 뒤에 바로 다시 건다 (사라진 화면 이력도 이때 지운다)
     private func armModeObservation() {
         guard running else { return }
         modeObservationSeq &+= 1
@@ -173,15 +168,7 @@ final class ScreenManager {
         let current = modeObservationSeq
         let states = withObservationTracking {
             _ = presentation.geometries
-            return Dictionary(uniqueKeysWithValues: ids.map { id -> (ScreenID, ScreenState) in
-                let mode = presentation.mode(for: id)
-                return (id, ScreenState(
-                    mode: mode,
-                    layout: presentation.layout(for: id, mode: mode),
-                    concealed: presentation.isConcealed(id),
-                    bands: presentation.retractBands(for: id, mode: mode)
-                ))
-            })
+            return presentation.frames(for: ids)
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 // 그 사이 새로 걸었으면(화면 변경 · stop/start) 이 관찰은 끝 (관찰 루프가 겹치지 않게)
@@ -189,10 +176,11 @@ final class ScreenManager {
                 self.armModeObservation()
             }
         }
+        presentation.commit(states)
         applyModes(states)
     }
 
-    private func applyModes(_ states: [ScreenID: ScreenState]) {
+    private func applyModes(_ states: [ScreenID: ScreenFrame]) {
         var becameCompact = false
         var bands: [ScreenID: WingRetractTracker.Bands] = [:]
         let now = ProcessInfo.processInfo.systemUptime
@@ -318,7 +306,7 @@ final class ScreenManager {
     }
 
     /// 패널 기준 사각형(클릭 영역 · 클릭 통과 영역) → Cocoa 전역 좌표. 숨김 · 투명 숨김이면 빈 배열.
-    private static func globalRects(_ rects: [CGRect], _ state: ScreenState, geometry: NotchGeometry?) -> [CGRect] {
+    private static func globalRects(_ rects: [CGRect], _ state: ScreenFrame, geometry: NotchGeometry?) -> [CGRect] {
         guard let geometry, state.mode != .hidden, !state.concealed else { return [] }
         return rects.map(geometry.screenRect(fromPanel:))
     }
@@ -463,7 +451,7 @@ final class ScreenManager {
     }
 
     /// 화면의 감시 영역 (Cocoa 전역). 아일랜드를 숨겼으면 nil
-    private func overlapTarget(_ id: ScreenID, _ state: ScreenState, geometry: NotchGeometry?) -> OverlapScanner.Target? {
+    private func overlapTarget(_ id: ScreenID, _ state: ScreenFrame, geometry: NotchGeometry?) -> OverlapScanner.Target? {
         guard let geometry, state.mode != .hidden, let zones = presentation.overlapZones(for: id, layout: state.layout) else { return nil }
         return OverlapScanner.Target(
             id: id,

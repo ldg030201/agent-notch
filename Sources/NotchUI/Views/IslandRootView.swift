@@ -103,8 +103,13 @@ struct IslandContainer: View {
             if !over { viewState.pointerLeft() }
         }
         .onAppear {
-            // 패널이 다시 붙었을 때 기억한 내용이 다른 구조면 교체를 시작한다 (onChange 는 처음 값엔 불리지 않음)
-            if viewState.needsSwap(current: contentKey) { beginContentSwap(to: contentKey, reduceMotion: reduceMotion) }
+            // 패널이 다시 붙었을 때 기억한 내용이 다른 구조면 교체를 시작한다 (onChange 는 처음 값엔 불리지 않음).
+            // 아니면 지금 내용이 바로 보인다 (요청 카드면 승인 대기를 이때부터 잰다)
+            if viewState.needsSwap(current: contentKey) {
+                beginContentSwap(to: contentKey, reduceMotion: reduceMotion)
+            } else {
+                presentation.contentDidAppear(contentKey, on: screenID)
+            }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("AgentNotch")
@@ -133,11 +138,15 @@ struct IslandContainer: View {
         }
     }
 
-    /// 내용 구조가 바뀌면: 이전 내용을 흐리고, 모양이 거의 자리 잡은 뒤(`IslandViewState.contentDelay`) 새 내용을 나타낸다
+    /// 내용 구조가 바뀌면: 이전 내용을 흐리고, 모양이 거의 자리 잡은 뒤(`IslandViewState.contentDelay`) 새 내용을 나타낸다.
+    /// 표시 상태에 내용이 바뀌기 시작함 · 새 내용이 보이기 시작함을 알린다 (요청 카드의 승인 대기는 새 내용이 나타난 때부터 잰다)
     private func beginContentSwap(to key: IslandContentKey, reduceMotion: Bool) {
         let state = viewState
+        let presentation = presentation
+        let screenID = screenID
         state.swapTask?.cancel()
         state.swapTask = nil
+        presentation.contentWillChange(on: screenID)
         // 마우스가 위에 있는 채로 펼치거나 접혔으면 나갔다 들어올 때까지 밝히지 않는다
         if presentation.hoveredScreenID == screenID { state.blockHover() }
         switch state.beginSwap(to: key, reduceMotion: reduceMotion) {
@@ -145,9 +154,11 @@ struct IslandContainer: View {
             if !state.contentVisible {
                 withAnimation(reduceMotion ? nil : IslandMotion.contentFadeIn) { state.contentVisible = true }
             }
+            presentation.contentDidAppear(key, on: screenID)
         case .restore:
             // 전환 중 원래 종류로 돌아왔다: 흐리던 내용을 다시 보인다
             withAnimation(IslandMotion.contentFadeIn) { state.contentVisible = true }
+            presentation.contentDidAppear(key, on: screenID)
         case .fadeOut:
             withAnimation(IslandMotion.contentFadeOut) { state.contentVisible = false }
             let delay = state.contentDelay(to: key)
@@ -160,6 +171,7 @@ struct IslandContainer: View {
                 transaction.disablesAnimations = true
                 withTransaction(transaction) { state.finishSwap() }
                 withAnimation(IslandMotion.contentFadeIn) { state.contentVisible = true }
+                presentation.contentDidAppear(key, on: screenID)
             }
         }
     }
@@ -225,7 +237,7 @@ struct IslandShownContent: Equatable {
 /// 모드 종류가 같아도 표시 방식이 바뀌면(앞 앱 메뉴 길이로 왼쪽 날개 ↔ 노치 아래 띠 등) 내용을 통째로 바꾼다.
 /// 그대로 두면 이전 · 새 내용이 프레임을 따라 200pt 가까이 미끄러지며 겹쳐 보인다.
 /// 권한 요청 · 질문 · 계획 승인 카드는 요청이 바뀌어도(대기열의 다음 요청) 바꾼다: 같은 높이의 카드 글자만 제자리에서
-/// 바뀌면 새 요청이 온 줄 모르고 이어서 누르기 쉽다 (승인은 `PresentationController.shortcutSettleDelay` 뒤부터 받는다)
+/// 바뀌면 새 요청이 온 줄 모르고 이어서 누르기 쉽다 (승인은 새 요청 카드가 나타난 뒤 `PresentationController.shortcutSettleDelay` 가 지나야 받는다)
 struct IslandContentKey: Hashable {
     enum Branch: Hashable {
         /// 펼친 카드 · 숨김
@@ -329,7 +341,7 @@ final class IslandViewState {
 
     /// 흐린 이전 내용 뒤 새 내용을 보일 때까지의 지연.
     /// 모드 종류가 바뀌면 `contentDelay`, 같은 모드에서 표시 방식만 바뀌면 프레임이 멀리 옮겨 가므로 `branchContentDelay`
-    /// (같은 종류의 다음 요청 카드도 `branchContentDelay`: 새 카드가 나타날 무렵 승인을 받기 시작한다)
+    /// (같은 종류의 다음 요청 카드도 `branchContentDelay`. 승인 대기는 교체가 끝나 새 카드가 나타난 때부터 잰다)
     func contentDelay(to key: IslandContentKey) -> Duration {
         outgoing.map { $0.mode.kind == key.kind } == true ? IslandMotion.branchContentDelay : IslandMotion.contentDelay
     }

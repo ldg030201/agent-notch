@@ -782,11 +782,10 @@ struct IslandLayoutEngine {
             + C.holes(rightItems, side: .right, wing: reach.right, bandHeight: band, notchMinX: notchMinX, notchMaxX: notchMaxX)
     }
 
-    /// 넓은 노치에서 마우스를 올리면 비켜줄 날개 자리 (패널 기준).
-    /// 아이콘 위치를 몰라 날개가 아이콘을 덮을 때만 있다 (아이콘 구멍을 쓰면 비켜줄 필요 없음).
-    /// 접힌 내용은 비켜줄 날개가 있을 수 있을 때만 계산한다 (`content`)
-    func retractBands(for content: @autoclosure () -> CompactContent) -> WingBands {
-        guard usesWings, !cutsIconHoles, case let .wings(spec) = compactPlacement(for: content()), spec.arrangement != .strip
+    /// 넓은 노치에서 마우스를 올리면 비켜줄 날개 자리 (패널 기준, 지금 그린 접힌 자리 `placement` 의 날개).
+    /// 아이콘 위치를 몰라 날개가 아이콘을 덮을 때만 있다 (아이콘 구멍을 쓰면 비켜줄 필요 없음)
+    func retractBands(for placement: CompactPlacement) -> WingBands {
+        guard usesWings, !cutsIconHoles, case let .wings(spec) = placement, spec.arrangement != .strip
         else { return .none }
         let ear: CGFloat = 6
         var bands = WingBands()

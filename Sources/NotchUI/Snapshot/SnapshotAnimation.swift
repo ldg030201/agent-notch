@@ -230,25 +230,27 @@ struct SnapshotSequence {
         ]
     }
 
-    /// 같은 단계들을 차례로 밟는 표시 상태. 단계마다 그려서(레이아웃 계산) 배치 이력을 남긴다
+    /// 같은 단계들을 차례로 밟는 표시 상태. 단계마다 관찰 패스를 돌려(계산 · 커밋) 배치 이력을 남긴다
     @MainActor
     private struct Run {
         var setup: SnapshotSetup
         var world: SnapshotWorld
         var layout: IslandLayout
 
-        var current: SnapshotSetup { SnapshotSetup(bar: setup.bar, presentation: setup.presentation, world: world) }
+        var current: SnapshotSetup {
+            SnapshotSetup(bar: setup.bar, presentation: setup.presentation, world: world, uptime: setup.uptime)
+        }
 
         mutating func apply(_ step: Step, draw: Bool = true) {
             step(&world, setup.presentation, setup.screenID)
-            if draw { layout = current.layout }
+            if draw { layout = current.draw() }
         }
     }
 
     /// 단계 `count` 개(접힌 상태 · 열기 · 열린 동안 · 접기)를 밟고 그린 표시 상태
     private func run(steps count: Int, style: IslandSnapshotRenderer.Style, environment: SnapshotScenario) throws -> Run {
         let setup = try SnapshotStage.prepare(.idle, style: style, environment: environment)
-        var run = Run(setup: setup, world: setup.world, layout: setup.layout)
+        var run = Run(setup: setup, world: setup.world, layout: setup.draw())
         let steps: [Step] = [before, open, during ?? { _, _, _ in }, close]
         for step in steps.prefix(count) { run.apply(step) }
         return run
@@ -272,8 +274,8 @@ struct SnapshotSequence {
         let fromLayout = main.layout
         let note = "이어서 계산 · \(name) · \(phase.rawValue)"
         guard let next else {
-            // 붙잡은 띠를 놓는다 (접힌 상태 안의 변화)
-            main.setup.presentation.releaseCollapseHold(on: main.setup.screenID)
+            // 붙잡은 띠를 놓을 시각이 지난다 (접힌 상태 안의 변화)
+            main.setup.uptime.advance(by: SnapshotAnimationSheet.collapseHoldElapsed)
             return (main.current, fromLayout, main.current, note)
         }
         // 전 내용은 같은 단계까지 밟은 다른 표시 상태로 그린다 (후 상태가 이어서 바뀌므로)
@@ -1059,6 +1061,8 @@ enum SnapshotShapeCheck {
 enum SnapshotAnimationSheet {
     /// 한 줄에 놓을 프레임 수
     static let columns = 4
+    /// 접히는 동안 붙잡은 카드 띠를 놓을 시각이 지나도록 표시 상태의 시계를 돌릴 시간 (`IslandMotion.settleSeconds` 보다 조금 더)
+    static let collapseHoldElapsed: TimeInterval = IslandMotion.settleSeconds + 0.05
 
     struct Frame {
         let ms: Double
@@ -1091,19 +1095,19 @@ enum SnapshotAnimationSheet {
             to = prepared.to
             shiftNote = prepared.note
         } else if transition.afterCollapse {
-            // 카드를 그려 카드 띠를 기록 → 접힌 상태가 그 띠를 붙잡음(전) → 띠를 놓음(후). 같은 표시 상태에서 이어서 계산한다
+            // 카드를 그려 카드 띠를 커밋 → 접힌 상태가 그 띠를 붙잡음(전) → 놓을 시각이 지나 띠를 놓음(후). 같은 표시 상태에서 이어서 계산한다
             let card = try SnapshotStage.prepare(transition.from, style: style, environment: transition.environment)
-            _ = card.layout
+            card.draw()
             from = try SnapshotStage.prepare(transition.to, style: style, environment: transition.toEnvironment ?? transition.environment)
             from.presentation.adoptLayoutHistory(from: card.presentation)
-            fromLayout = from.layout
-            from.presentation.releaseCollapseHold(on: from.screenID)
+            fromLayout = from.draw()
+            from.uptime.advance(by: Self.collapseHoldElapsed)
             to = from
             shiftNote = "\(transition.from.rawValue) 카드를 접은 뒤 붙잡은 띠를 놓음"
         } else {
             from = try SnapshotStage.prepare(transition.from, style: style, environment: transition.environment)
-            // 전 상태를 그리면서 배치 이력(직전 접힌 날개 · 열린 카드 띠)이 기록된다
-            fromLayout = from.layout
+            // 전 상태를 그리면서(관찰 패스 · 커밋) 배치 이력(직전 접힌 날개 · 열린 카드 띠)이 남는다
+            fromLayout = from.draw()
             var shift: CGFloat = 0
             if transition.shiftsIcons {
                 let sweep = try iconShiftSweep(transition, style: style, from: from, previous: fromLayout)
@@ -1118,7 +1122,8 @@ enum SnapshotAnimationSheet {
         }
         let fromMode = from.mode
         let toMode = Self.sameRequest(to.mode, as: fromMode)
-        let toLayout = to.layout
+        // 후 상태에서 관찰 패스를 돌린다 (모드가 바뀌며 일어날 일 — 카드 띠를 붙잡는 등 — 을 커밋)
+        let toLayout = to.draw()
         let sameKind = fromMode.kind == toMode.kind
         // 내용 구조(모드 종류 · 접힌 표시 방식)가 같으면 내용을 유지하고, 다르면 교체한다 (IslandContainer 와 같은 규칙)
         let sameKey = IslandContentKey(mode: fromMode, layout: fromLayout) == IslandContentKey(mode: toMode, layout: toLayout)
