@@ -32,7 +32,7 @@ macOS 14 이상과 Homebrew 만 있으면 돼요 (Xcode 불필요).
 
 ## 🚀 시작하기
 
-1. 앱을 실행하면 Claude Code 훅을 설치할지 물어봐요. `~/.claude/settings.json` 을 백업한 뒤 AgentNotch 항목만 추가해요.
+1. 앱을 처음 실행하면 Claude Code 훅 설치와 로그인할 때 자동으로 켜기를 한 번에 물어봐요. 훅은 `~/.claude/settings.json` 을 백업한 뒤 AgentNotch 항목만 추가해요.
 2. 새로 시작하는 Claude Code 세션부터 노치에 나타나요. 훅 없이 먼저 보려면 메뉴바 아이콘 → **데모 재생**.
 
 업데이트는 설정 → **버전** 에서 버튼 하나로 해요.

@@ -74,12 +74,12 @@ VARIANT=test scripts/build.sh     # build/AgentNotch-Test.app 만 만들기
 | `AgentNotch --help` | 인자 목록. 모르는 `--` 인자는 앱을 띄우지 않고 사용법을 보여주며 끝난다 (실수로 두 번째 앱이 떠 "이미 실행 중" 창이 뜨지 않게) |
 
 - 오프스크린 렌더링은 AppKit 기반 컨트롤(Picker, 스위치, ScrollView 등)을 못 그려서 스냅숏에서만 비슷한 SwiftUI 그림으로 대체한다.
-- 권한(손쉬운 사용 · 자동화)이 걸리는 동작은 터미널에서 바이너리를 직접 부르면 TCC 가 터미널 앱에 권한을 물어 결과가 틀린다.
+- 권한(자동화)이 걸리는 동작은 터미널에서 바이너리를 직접 부르면 TCC 가 터미널 앱에 권한을 물어 결과가 틀린다.
   `open -n build/AgentNotch-Test.app --args …` 처럼 번들로 띄워서 확인한다.
 
 ## 서명 인증서
 
-손쉬운 사용 · 자동화(iTerm2 AppleScript) 권한은 **코드 서명 신원**에 묶인다. ad-hoc 서명에는 신원이 없어 macOS 가 바이너리 해시로
+자동화(iTerm2 AppleScript) 권한은 **코드 서명 신원**에 묶인다. ad-hoc 서명에는 신원이 없어 macOS 가 바이너리 해시로
 앱을 알아보는데, 해시는 빌드할 때마다 바뀐다. 그래서 다시 빌드하거나 업데이트하면 허용해 둔 권한이 풀린다.
 
 ```bash
@@ -171,7 +171,10 @@ source scripts/lib.sh && dump_changelog      # 빌드한 뒤 docs/changelog.json
 
 ### 묶음과 갈래
 
-- 기능 단위로 묶는다(`ChangelogGroup`). 묶음 이름은 화면 · 메뉴 이름을 그대로 쓴다 — `권한 요청`, `표시`, `업데이트`.
+- 기능 단위로 묶는다(`ChangelogGroup`). 묶음 이름은 화면 · 메뉴 이름을 그대로 쓴다 — `권한 · 질문`, `표시`, `업데이트`.
+- 묶음마다 `icon` 에 SF Symbol 이름을 단다 (`hand.raised.fill`, `display` 등). 버전 탭이 제목 앞에 그리고, 줄들은 그 아래 왼쪽 세로선으로 묶인다.
+  macOS 14 에 있는 기호만 쓴다. 아이콘이 없는 예전 내역은 점으로 보인다.
+- 줄은 기능 위주로 짧게, 묶음마다 2–3줄. 세부 동작 · 조건은 사용 문서(`docs/usage.md`)에 둔다.
 - 설정 탭 이야기면 `tab` 에 그 탭(`general` / `display` / `version`)을 적는다. 탭에 없는 것(아일랜드 · 메뉴)은 비워 둔다.
 - 항목마다 갈래를 단다: `.new` 신규 · `.improve` 개선 · `.change` 변경 · `.fix` 수정 · `.remove` 제거.
 - **새로 생긴 기능 묶음(`isNew: true`)** 은 무엇이 있는지만 적고(`.new`), 줄 끝에 `추가` 를 붙이지 않는다.
