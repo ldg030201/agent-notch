@@ -144,7 +144,15 @@ public enum ToolSummarizer {
             // 앞뒤 공백 · 줄바꿈만 정리 (실행 내용과 무관). 안쪽 공백 · 줄바꿈은 그대로 드러낸다
             let command = (input.string("command") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             let detail = shown(command, max: maxPermissionCommand, keepLineBreaks: true)
-            return PermissionSummary(title: "Bash 실행 요청", detail: detail.text, isTruncated: detail.truncated)
+            // 승인하면 명령만이 아니라 실행 방식도 같이 허락한다: 샌드박스 해제는 제목과 첫 줄에, 백그라운드는 제목에 드러낸다.
+            // 값이 true 가 아니어도 비어 있지 않으면 켠 것으로 본다 (안 보이는 쪽보다 더 보이는 쪽이 안전)
+            let unsandboxed = isSet(toolInput?["dangerouslyDisableSandbox"])
+            let background = isSet(toolInput?["run_in_background"])
+            var title = "Bash 실행 요청"
+            if unsandboxed { title += " · 샌드박스 해제" }
+            if background { title += " · 백그라운드" }
+            let text = unsandboxed ? "\(sandboxWarning)\n\(detail.text)" : detail.text
+            return PermissionSummary(title: title, detail: text, isTruncated: detail.truncated)
         case "Edit", "Write", "MultiEdit", "NotebookEdit":
             let raw = input.string("file_path") ?? input.string("notebook_path") ?? ""
             let detail = shown(TextUtils.displayPath(raw, cwd: cwd), max: maxPermissionCommand)
@@ -174,7 +182,21 @@ public enum ToolSummarizer {
         }
     }
 
+    /// Bash 권한 카드 첫 줄: 샌드박스 밖에서 실행 (`dangerouslyDisableSandbox`)
+    static let sandboxWarning = "⚠ 샌드박스 밖에서 실행"
+
     // MARK: - 헬퍼
+
+    /// 실행 옵션이 켜졌는지 (JS 처럼 false · 0 · 빈 문자열 · null 만 꺼짐)
+    static func isSet(_ value: JSONValue?) -> Bool {
+        switch value {
+        case nil, .null?: return false
+        case .bool(let flag)?: return flag
+        case .number(let number)?: return number != 0 && !number.isNaN
+        case .string(let text)?: return !text.isEmpty
+        case .array?, .object?: return true
+        }
+    }
 
     /// `mcp__<server>__<tool>` → (server, tool)
     static func mcpParts(_ toolName: String) -> (server: String, tool: String)? {

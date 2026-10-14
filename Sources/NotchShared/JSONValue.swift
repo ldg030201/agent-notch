@@ -43,8 +43,94 @@ public enum JSONValue: Codable, Hashable, Sendable {
 
     // MARK: - 파싱 / 직렬화
 
-    public static func parse(_ data: Data) throws -> JSONValue {
-        try JSONDecoder().decode(JSONValue.self, from: data)
+    /// JSON 바이트 → 값.
+    /// - repairingLoneSurrogates: 해석에 실패하면 짝 없는 UTF-16 서로게이트 이스케이프(`\uD83D` 만 있고 뒤가 없는 것 등)를
+    ///   `�`(�)로 바꿔 한 번 더 해석한다. Node 의 `JSON.stringify` 는 이모지 중간에서 잘린 문자열을 그대로 이스케이프해서 내보내는데,
+    ///   JSONDecoder 는 이런 글자 하나 때문에 payload 전체를 거부한다 (→ 세션 ID 까지 잃는다). 깨진 UTF-8 바이트도 대체 문자로 읽는다
+    public static func parse(_ data: Data, repairingLoneSurrogates: Bool = true) throws -> JSONValue {
+        do {
+            return try JSONDecoder().decode(JSONValue.self, from: data)
+        } catch {
+            guard repairingLoneSurrogates, let repaired = repairedForDecoding(data) else { throw error }
+            return try JSONDecoder().decode(JSONValue.self, from: repaired)
+        }
+    }
+
+    /// 문자열 안의 짝 없는 서로게이트 이스케이프 → `�`, 깨진 UTF-8 → U+FFFD. 고칠 게 없으면 nil.
+    /// 문자열 밖 · `\\u` (역슬래시 글자 + u) 는 건드리지 않는다
+    static func repairedForDecoding(_ data: Data) -> Data? {
+        let bytes = [UInt8](data)
+        var output: [UInt8] = []
+        output.reserveCapacity(bytes.count)
+        var changed = false
+        var inString = false
+        var index = 0
+        let replacement = Array(#"�"#.utf8)
+
+        /// `index` 에서 시작하는 `\uXXXX` 의 코드 유닛 (아니면 nil)
+        func escapedUnit(at index: Int) -> UInt16? {
+            guard index + 6 <= bytes.count, bytes[index] == UInt8(ascii: "\\"), bytes[index + 1] == UInt8(ascii: "u") else { return nil }
+            var value: UInt16 = 0
+            for byte in bytes[(index + 2)..<(index + 6)] {
+                guard let digit = hexValue(byte) else { return nil }
+                value = value << 4 | UInt16(digit)
+            }
+            return value
+        }
+
+        while index < bytes.count {
+            let byte = bytes[index]
+            guard inString else {
+                if byte == UInt8(ascii: "\"") { inString = true }
+                output.append(byte)
+                index += 1
+                continue
+            }
+            if byte == UInt8(ascii: "\"") {
+                inString = false
+                output.append(byte)
+                index += 1
+            } else if byte == UInt8(ascii: "\\"), index + 1 < bytes.count {
+                if let unit = escapedUnit(at: index) {
+                    if (0xD800...0xDBFF).contains(unit),
+                       let low = escapedUnit(at: index + 6), (0xDC00...0xDFFF).contains(low) {
+                        // 올바른 짝: 그대로
+                        output.append(contentsOf: bytes[index..<(index + 12)])
+                        index += 12
+                    } else if (0xD800...0xDFFF).contains(unit) {
+                        output.append(contentsOf: replacement)
+                        changed = true
+                        index += 6
+                    } else {
+                        output.append(contentsOf: bytes[index..<(index + 6)])
+                        index += 6
+                    }
+                } else {
+                    // 다른 이스케이프 (\" \\ \n …): 두 글자를 그대로 넘긴다
+                    output.append(contentsOf: bytes[index...(index + 1)])
+                    index += 2
+                }
+            } else {
+                output.append(byte)
+                index += 1
+            }
+        }
+
+        // 깨진 UTF-8 은 대체 문자로 (디코딩해 보고 바이트가 달라졌으면 고친 것)
+        let text = String(decoding: output, as: UTF8.self)
+        if !text.utf8.elementsEqual(output) {
+            return Data(text.utf8)
+        }
+        return changed ? Data(output) : nil
+    }
+
+    private static func hexValue(_ byte: UInt8) -> UInt8? {
+        switch byte {
+        case UInt8(ascii: "0")...UInt8(ascii: "9"): return byte - UInt8(ascii: "0")
+        case UInt8(ascii: "a")...UInt8(ascii: "f"): return byte - UInt8(ascii: "a") + 10
+        case UInt8(ascii: "A")...UInt8(ascii: "F"): return byte - UInt8(ascii: "A") + 10
+        default: return nil
+        }
     }
 
     public func serialized(sortedKeys: Bool = false) throws -> Data {

@@ -73,8 +73,45 @@ import NotchCore
 
         var restorer = SessionRestorer(projectsDirectory: temp.url)
         restorer.tailBytes = 600
-        let tail = try #require(restorer.readTail(of: url))
+        let tail = try #require(TranscriptTail.readTail(atPath: url.path, maxBytes: restorer.tailBytes))
         #expect(tail.count == 2)
         #expect(restorer.scan(now: now).first?.state == .finished)
+    }
+
+    /// `/clear` 만 있는 새 기록 · `/exit` 로 끝난 기록은 "응답 중" 유령으로 되살리지 않는다
+    @Test func commandOnlyAndExitedSessionsAreSkipped() throws {
+        let temp = try TempDirectory()
+        defer { temp.remove() }
+        let now = Date()
+        let at = Self.iso(now.addingTimeInterval(-60))
+        let project = temp.url.appendingPathComponent("-Users-dev-projects-api-server")
+        let caveat = #""type":"user","isMeta":true,"message":{"role":"user","content":"<local-command-caveat>c</local-command-caveat>"}"#
+        func command(_ name: String) -> String {
+            #""type":"user","message":{"role":"user","content":"<command-name>/\#(name)</command-name>\n<command-message>\#(name)</command-message>\n<command-args></command-args>"}"#
+        }
+        let cleared = #""type":"system","subtype":"local_command","content":"<command-name>/clear</command-name>""#
+        let bye = #""type":"user","message":{"role":"user","content":"<local-command-stdout>Bye!</local-command-stdout>"}"#
+        let prompt = #""type":"user","message":{"role":"user","content":"빌드해줘"}"#
+        let tool = #""type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"swift build"}}]}"#
+
+        try Self.write([caveat, command("clear"), cleared].map { Self.line("cleared", $0, at: at) },
+                       to: project, name: "cleared.jsonl", modified: now)
+        try Self.write([prompt, tool, caveat, command("exit"), bye].map { Self.line("exited", $0, at: at) },
+                       to: project, name: "exited.jsonl", modified: now)
+        try Self.write([prompt, tool].map { Self.line("running", $0, at: at) },
+                       to: project, name: "running.jsonl", modified: now)
+
+        let restored = SessionRestorer(projectsDirectory: temp.url).scan(now: now)
+        #expect(restored.map(\.id) == ["running"])
+    }
+
+    /// 기록 파일 자리에 FIFO 가 있어도 멈추지 않는다
+    @Test(.timeLimit(.minutes(1))) func fifoTranscriptDoesNotBlock() throws {
+        let temp = try TempDirectory()
+        defer { temp.remove() }
+        let project = temp.url.appendingPathComponent("p")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        #expect(mkfifo(project.appendingPathComponent("s.jsonl").path, 0o600) == 0)
+        #expect(SessionRestorer(projectsDirectory: temp.url).scan().isEmpty)
     }
 }

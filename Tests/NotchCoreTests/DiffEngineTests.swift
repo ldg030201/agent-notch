@@ -173,6 +173,85 @@ import NotchShared
         #expect(updated.snippet?.lines.isEmpty == true)
     }
 
+    // MARK: - 정밀 diff 예산
+
+    /// 줄 수 n 짜리 텍스트 두 개: 첫 줄 · 끝 줄만 달라서 공통 앞/뒤로 줄일 수 없다 (정밀이면 −2 +2, 근사치면 −n +n)
+    private func edgeChanged(_ count: Int) -> (old: String, new: String) {
+        var lines = (0..<count).map { "line \($0)" }
+        let old = lines.joined(separator: "\n")
+        lines[0] = "first changed"
+        lines[count - 1] = "last changed"
+        return (old, lines.joined(separator: "\n"))
+    }
+
+    /// 표준 라이브러리 diff 는 macOS 14 · 15 에서 메모리가 (바뀐 줄 수)² 에 비례한다 (18,000 대 200 줄 ≈ 1.4 GB).
+    /// 메인 액터에서 도는 정밀 diff 는 양쪽 합 `maxDiffedLines` 줄까지만 (최악 ≈ 4 바이트 × 줄 수² ≤ 40 MB)
+    @Test func preciseDiffIsBounded() {
+        #expect(DiffEngine.maxDiffedLines <= 3_000)
+        #expect(4 * DiffEngine.maxDiffedLines * DiffEngine.maxDiffedLines <= 40 * 1024 * 1024)
+
+        // 예산 안: 정밀
+        let half = DiffEngine.maxDiffedLines / 2
+        let within = edgeChanged(half)
+        let precise = DiffEngine.diffTexts(old: within.old, new: within.new)
+        #expect(precise.removed == 2)
+        #expect(precise.added == 2)
+        #expect(precise.preview.map(\.kind) == [.removed, .added, .removed, .added])
+        // 예산 밖: 근사치 (정밀 diff 를 돌리지 않는다)
+        let over = edgeChanged(half + 1)
+        let approximate = DiffEngine.diffTexts(old: over.old, new: over.new, wholeFile: true)
+        #expect(approximate.removed == half + 1)
+        #expect(approximate.added == half + 1)
+        #expect(approximate.startLine == 1)
+        #expect(approximate.preview.isEmpty)
+
+        // 리뷰에서 문제가 된 모양 (18,000 대 200 줄, 대부분 같은 줄): 정밀 diff 였다면 −17,802 +2
+        let old = (0..<18_000).map { "row \($0)" }
+        var new = (0..<200).map { old[$0 * 90] }
+        new[0] = "head"
+        new[199] = "tail"
+        let big = DiffEngine.diffTexts(old: old.joined(separator: "\n"), new: new.joined(separator: "\n"))
+        #expect(big.removed == 18_000)
+        #expect(big.added == 200)
+    }
+
+    /// MultiEdit 는 편집 전체가 한 예산을 나눠 쓴다 (편집이 많아도 정밀 diff 총량이 묶인다)
+    @Test func multiEditSharesDiffBudget() throws {
+        let one = edgeChanged(DiffEngine.maxDiffedLines / 4)
+        let edits = JSONValue.array(Array(repeating: JSONValue.object(["old_string": .string(one.old), "new_string": .string(one.new)]), count: 3))
+        let result = try #require(DiffEngine.outcome(
+            toolName: "MultiEdit", toolInput: .object(["file_path": .string(path), "edits": edits]), toolResponse: nil
+        ))
+        // 앞의 두 편집은 정밀(−2 +2), 세 번째는 남은 예산이 모자라 근사치(−n +n)
+        let n = DiffEngine.maxDiffedLines / 4
+        #expect(result.removed == 2 + 2 + n)
+        #expect(result.added == 2 + 2 + n)
+    }
+
+    /// 한쪽이 비면 diff 없이 바로 센다: 큰 NotebookEdit 셀도 정확하고 빠르다
+    @Test func oneSidedDiffSkipsMyers() throws {
+        let source = (1...50_000).map { "x = \($0)" }.joined(separator: "\n")
+        let result = try #require(DiffEngine.outcome(
+            toolName: "NotebookEdit", toolInput: .object(["notebook_path": .string("/x/n.ipynb"), "new_source": .string(source)]), toolResponse: nil
+        ))
+        #expect(result.added == 50_000)
+        #expect(result.removed == 0)
+        #expect(result.snippet?.lines.count == DiffSnippet.maxStoredLines)
+        #expect(result.snippet?.lines.first == DiffLine(kind: .added, text: "x = 1"))
+
+        // 파일 끝에 많이 붙이기 / 많이 지우기
+        let base = (1...10).map { "l\($0)" }.joined(separator: "\n") + "\n"
+        let appended = DiffEngine.diffTexts(old: base, new: base + String(repeating: "new\n", count: 20_000), wholeFile: true)
+        #expect(appended.added == 20_000)
+        #expect(appended.removed == 0)
+        #expect(appended.startLine == 11)
+        let removed = DiffEngine.diffTexts(old: base + String(repeating: "old\n", count: 20_000), new: base, wholeFile: true)
+        #expect(removed.removed == 20_000)
+        #expect(removed.preview.first == DiffLine(kind: .removed, text: "old"))
+        // 줄 내용이 같고 끝 줄바꿈만 다르면 바뀐 줄 없음
+        #expect(DiffEngine.diffTexts(old: "a\n", new: "a", wholeFile: true) == DiffEngine.ParsedDiff())
+    }
+
     // MARK: - CRLF (#11)
 
     @Test func crlfLines() throws {

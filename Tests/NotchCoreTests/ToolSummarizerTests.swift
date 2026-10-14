@@ -88,6 +88,46 @@ import NotchShared
         #expect(missing.title == "Tool")
     }
 
+    /// Bash 권한 카드: 명령과 함께 승인되는 실행 방식(샌드박스 해제 · 백그라운드)을 드러낸다
+    @Test func bashPermissionShowsExecutionModifiers() {
+        func summary(_ input: String) -> PermissionSummary {
+            ToolSummarizer.permissionSummary(toolName: "Bash", toolInput: json(input), cwd: projectCwd)
+        }
+        let unsandboxed = summary(#"{"command":"npm test","dangerouslyDisableSandbox":true}"#)
+        #expect(unsandboxed.title == "Bash 실행 요청 · 샌드박스 해제")
+        #expect(unsandboxed.detail == ToolSummarizer.sandboxWarning + "\nnpm test")
+        #expect(!unsandboxed.isTruncated)
+
+        // 백그라운드는 제목에만 (카드 높이 그대로)
+        let background = summary(#"{"command":"npm run dev","run_in_background":true}"#)
+        #expect(background.title == "Bash 실행 요청 · 백그라운드")
+        #expect(background.detail == "npm run dev")
+
+        let both = summary(#"{"command":"make","run_in_background":true,"dangerouslyDisableSandbox":true}"#)
+        #expect(both.title == "Bash 실행 요청 · 샌드박스 해제 · 백그라운드")
+        #expect(both.detail.hasPrefix(ToolSummarizer.sandboxWarning + "\n"))
+
+        // 꺼져 있으면 예전과 같다 (추가 줄 없음)
+        for input in [#"{"command":"ls"}"#, #"{"command":"ls","dangerouslyDisableSandbox":false,"run_in_background":false}"#,
+                      #"{"command":"ls","dangerouslyDisableSandbox":null,"run_in_background":0}"#] {
+            let plain = summary(input)
+            #expect(plain.title == "Bash 실행 요청", "\(input)")
+            #expect(plain.detail == "ls", "\(input)")
+        }
+        // true 가 아닌 값이라도 켠 것으로 볼 수 있으면 드러낸다
+        #expect(summary(#"{"command":"ls","dangerouslyDisableSandbox":"true"}"#).title.contains("샌드박스 해제"))
+        #expect(summary(#"{"command":"ls","dangerouslyDisableSandbox":1}"#).title.contains("샌드박스 해제"))
+
+        // 잘림 표시는 명령 기준 그대로
+        let long = ToolSummarizer.permissionSummary(
+            toolName: "Bash",
+            toolInput: .object(["command": .string(String(repeating: "x", count: 1_500)), "dangerouslyDisableSandbox": .bool(true)]),
+            cwd: projectCwd
+        )
+        #expect(long.isTruncated)
+        #expect(long.detail.count == ToolSummarizer.sandboxWarning.count + 1 + ToolSummarizer.maxPermissionCommand)
+    }
+
     @Test func mcpParts() {
         #expect(ToolSummarizer.mcpParts("mcp__server__tool")?.server == "server")
         #expect(ToolSummarizer.mcpParts("mcp__server__tool__x")?.tool == "tool__x")

@@ -11,7 +11,7 @@ public struct SessionRestorer: Sendable {
     public var projectsDirectory: URL
     public var activeWindow: TimeInterval
     public var finishedWindow: TimeInterval
-    /// 파일마다 끝에서 읽을 최대 바이트
+    /// 파일마다 끝에서 읽을 최대 바이트 (`TranscriptTail.readTail`)
     public var tailBytes: Int
     /// 최근에 바뀐 순으로 최대 몇 개 파일까지 볼지
     public var maxFiles: Int
@@ -39,7 +39,9 @@ public struct SessionRestorer: Sendable {
     /// 되살릴 세션 목록 (최근 것부터)
     public func scan(now: Date = Date()) -> [RestoredSession] {
         recentTranscripts(now: now).compactMap { file -> RestoredSession? in
-            guard let lines = readTail(of: file.url), let restored = TranscriptTail.restore(lines: lines) else { return nil }
+            guard let lines = TranscriptTail.readTail(atPath: file.url.path, maxBytes: tailBytes),
+                  let restored = TranscriptTail.restore(lines: lines)
+            else { return nil }
             if case .finished = restored.state {
                 return now.timeIntervalSince(restored.lastEventAt) <= finishedWindow ? restored : nil
             }
@@ -73,19 +75,5 @@ public struct SessionRestorer: Sendable {
             }
         }
         return Array(found.sorted { $0.modified > $1.modified }.prefix(maxFiles))
-    }
-
-    /// 파일 끝 `tailBytes` 를 줄 단위로. 중간부터 읽었으면 잘린 첫 줄은 버린다
-    func readTail(of url: URL) -> [Substring]? {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
-        defer { try? handle.close() }
-        guard let size = try? handle.seekToEnd() else { return nil }
-        let offset = size > UInt64(tailBytes) ? size - UInt64(tailBytes) : 0
-        guard (try? handle.seek(toOffset: offset)) != nil, let data = try? handle.readToEnd() else { return nil }
-        // 중간부터 읽으면 첫 글자가 잘릴 수 있다: 깨진 바이트는 대체 문자로 읽는다 (그 첫 줄은 어차피 버린다)
-        let text = String(decoding: data, as: UTF8.self)
-        var lines = text.split(separator: "\n", omittingEmptySubsequences: true)
-        if offset > 0, !lines.isEmpty { lines.removeFirst() }
-        return lines
     }
 }

@@ -28,8 +28,11 @@ public struct DiffOutcome: Hashable, Sendable {
 public enum DiffEngine {
     /// 이보다 큰 텍스트는 줄 수만 센다 (미리보기 없음)
     static let maxTextBytes = 2 * 1024 * 1024
-    /// 공통 앞/뒤를 잘라낸 뒤에도 이 줄 수를 넘으면 정밀 diff 대신 근사치
-    static let maxDiffedLines = 20_000
+    /// 정밀 diff(`CollectionDifference`)에 넣을 수 있는 줄 수 (공통 앞/뒤를 잘라낸 뒤 양쪽 합, 한 번의 계산에서 편집 전체 합).
+    /// 넘으면 근사치. 표준 라이브러리 diff(Myers)는 시간이 (줄 수 × 바뀐 줄 수)이고, macOS 14 · 15 런타임(Swift 6.2 이하)은
+    /// 단계마다 배열을 남겨 메모리도 (바뀐 줄 수)² 에 비례한다 (18,000 대 200 줄이면 약 1.4 GB). 메인 액터에서 돌므로
+    /// 최악(모든 줄이 다름)이 약 36 MB · 수십 ms 안에 끝나도록 묶는다
+    static let maxDiffedLines = 3_000
 
     public static func outcome(toolName: String, toolInput: JSONValue?, toolResponse: JSONValue?) -> DiffOutcome? {
         let input = HookPayload(toolInput ?? .null)
@@ -64,8 +67,9 @@ public enum DiffEngine {
                 return single(path: path, parsed: parsed, isNewFile: false)
             }
             var total = ParsedDiff()
+            var budget = maxDiffedLines
             for edit in edits {
-                total.merge(diffTexts(old: edit.old, new: edit.new))
+                total.merge(diffTexts(old: edit.old, new: edit.new, budget: &budget))
             }
             return single(path: path, parsed: total, isNewFile: false)
 
@@ -271,6 +275,13 @@ public enum DiffEngine {
     /// 두 텍스트의 줄 단위 diff (CollectionDifference).
     /// `wholeFile` 이면 두 텍스트가 파일 전체라서 첫 변경 줄 번호(`startLine`)도 알 수 있다.
     static func diffTexts(old: String, new: String, wholeFile: Bool = false) -> ParsedDiff {
+        var budget = maxDiffedLines
+        return diffTexts(old: old, new: new, wholeFile: wholeFile, budget: &budget)
+    }
+
+    /// - budget: 정밀 diff 에 쓸 수 있는 남은 줄 수. 정밀 diff 를 하면 그만큼 줄어든다
+    ///   (MultiEdit 처럼 여러 편집을 한 번에 계산할 때 전체를 묶어서, 편집이 많아도 메인 액터가 오래 멈추지 않게)
+    static func diffTexts(old: String, new: String, wholeFile: Bool = false, budget: inout Int) -> ParsedDiff {
         var result = ParsedDiff()
         guard old != new else { return result }
         let tooLarge = old.utf8.count > maxTextBytes || new.utf8.count > maxTextBytes
@@ -288,13 +299,30 @@ public enum DiffEngine {
         let oldMiddle = Array(oldLines[prefix..<(oldLines.count - suffix)])
         let newMiddle = Array(newLines[prefix..<(newLines.count - suffix)])
 
-        if tooLarge || oldMiddle.count + newMiddle.count > maxDiffedLines {
+        if tooLarge {
             // 큰 파일: 줄 수만 (근사치)
             result.removed = oldMiddle.count
             result.added = newMiddle.count
             if wholeFile, result.added + result.removed > 0 { result.startLine = prefix + 1 }
             return result
         }
+        if oldMiddle.isEmpty || newMiddle.isEmpty {
+            // 한쪽이 비면 diff 가 필요 없다: 전부 추가 또는 전부 삭제 (NotebookEdit 새 셀 등. 줄 수와 상관없이 정확하고 빠름)
+            result.removed = oldMiddle.count
+            result.added = newMiddle.count
+            if wholeFile, result.added + result.removed > 0 { result.startLine = prefix + 1 }
+            for line in oldMiddle.prefix(DiffSnippet.maxStoredLines) { result.appendPreview(.removed, line) }
+            for line in newMiddle.prefix(DiffSnippet.maxStoredLines) { result.appendPreview(.added, line) }
+            return result
+        }
+        guard oldMiddle.count + newMiddle.count <= budget else {
+            // 정밀 diff 예산 초과: 줄 수만 (근사치)
+            result.removed = oldMiddle.count
+            result.added = newMiddle.count
+            if wholeFile { result.startLine = prefix + 1 }
+            return result
+        }
+        budget -= oldMiddle.count + newMiddle.count
 
         let difference = newMiddle.difference(from: oldMiddle)
         var removedOffsets = Set<Int>()
@@ -345,10 +373,11 @@ public enum DiffEngine {
         guard !edits.isEmpty, !edits.contains(where: { $0.old.isEmpty }) else { return nil }
         if original.utf8.count > maxTextBytes || TextUtils.countLines(original) > maxDiffedLines {
             var total = ParsedDiff()
+            var budget = maxDiffedLines
             for edit in edits {
                 let count = edit.replaceAll ? occurrences(of: edit.old, in: original) : 1
                 guard count > 0 else { return nil }
-                var one = diffTexts(old: edit.old, new: edit.new)
+                var one = diffTexts(old: edit.old, new: edit.new, budget: &budget)
                 one.added *= count
                 one.removed *= count
                 total.merge(one)
