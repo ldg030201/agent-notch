@@ -57,7 +57,7 @@ struct IdleCompactView: View {
 
 // MARK: - working
 
-/// 접힌 상태로 포커스 세션 표시. 다른 세션이 있으면 상태 요약("● 2")을 레이아웃이 정한 자리에 함께 둔다.
+/// 접힌 상태로 포커스 세션 표시. 세션이 여럿이면 모든 세션 상태 요약("● 2")을 레이아웃이 정한 자리에 함께 둔다.
 /// - 양쪽 날개: 왼쪽 = 상태 + 프로젝트명 (+ 요약), 오른쪽 = (노치 쪽에 고정한 요약 …) 현재 툴 + `+N −M`
 /// - 한쪽 날개: 상태 + (프로젝트) + (요약) + (툴) + `+N −M` 을 노치 옆에 모은다
 /// - 노치 아래 띠: 알약과 같은 요소 (상태 + 프로젝트 · 툴 이름 + `+N −M` + 배지 + 요약, 한 줄에 안 들어가면 배지 · 요약은 둘째 줄)
@@ -65,7 +65,7 @@ struct IdleCompactView: View {
 /// 툴은 어디서나 짧은 이름만 (`IslandFormat.shortToolTitle`, 예: "Bash")
 struct CompactSessionView: View {
     let session: AgentSession?
-    /// 이 세션을 뺀 다른 세션 요약
+    /// 모든 세션 요약 (펼친 목록 머리와 같은 값. 세션이 이 세션 하나뿐이면 비어 있다)
     var summary: SessionStatusSummary = .empty
     let layout: IslandLayout
     let reduceMotion: Bool
@@ -204,9 +204,9 @@ struct CompactSessionView: View {
         }
     }
 
-    static let summaryPrefix = "다른 세션 "
+    static let summaryPrefix = "전체 세션 "
 
-    /// 레이아웃이 요약 자리를 줬고 다른 세션이 있을 때만 요약 칩 (앞 내용과 간격 `summaryLead` 를 맞추는 여백 포함)
+    /// 레이아웃이 요약 자리를 줬고 요약이 있을 때만 요약 칩 (앞 내용과 간격 `summaryLead` 를 맞추는 여백 포함)
     @ViewBuilder
     private func summaryChips(_ items: CompactItems, leading: CGFloat = 0) -> some View {
         if items.contains(.summary), !summary.isEmpty {

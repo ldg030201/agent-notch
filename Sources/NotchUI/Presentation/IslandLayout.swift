@@ -138,7 +138,7 @@ struct CompactMetrics: Equatable {
         self.isAttention = isAttention
     }
 
-    /// - summary: 지금 보여주는 세션을 뺀 다른 세션 요약
+    /// - summary: 접힌 상태의 세션 상태 요약 (`PresentationController.compactSummary`)
     @MainActor
     init(session: AgentSession, summary: SessionStatusSummary = .empty) {
         let attention = CompactText.attentionText(session)

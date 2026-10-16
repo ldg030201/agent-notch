@@ -254,7 +254,7 @@ struct SessionDot: View {
 /// 점만 색을 쓰고 숫자는 보조 글자색이라 `+N −M` 과 헷갈리지 않는다. 늘 통째로 그린다 (줄어들지 않음 — 자리는 레이아웃이 잡는다).
 struct SessionSummaryChips: View {
     let summary: SessionStatusSummary
-    /// 읽어 줄 때 앞에 붙일 말 (예: "다른 세션 ")
+    /// 읽어 줄 때 앞에 붙일 말 (예: "전체 세션 ")
     var spokenPrefix = ""
 
     var body: some View {

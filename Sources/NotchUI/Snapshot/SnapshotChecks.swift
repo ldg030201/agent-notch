@@ -3,7 +3,7 @@ import NotchCore
 
 // 전환 시트(`--render-island anim-*`)가 함께 돌리는 순수 계산 검사.
 // - 열린 메뉴 · 팝오버 겹침 감지 (`OverlapScanner` · `OverlapMonitor.classify`): 잠깐 뜬 창 · 화면 테두리에 깜빡이지 않는지
-// - 다른 세션 상태 요약 자리 (`IslandLayoutEngine`): 개수가 한 자리 안에서 바뀌어도 폭이 같고, 흔한 메뉴바에서 요약이 빠지지 않는지
+// - 세션 상태 요약 자리 (`IslandLayoutEngine`): 개수가 한 자리 안에서 바뀌어도 폭이 같고, 흔한 메뉴바에서 요약이 빠지지 않는지
 
 // MARK: - 겹침 감지
 
@@ -151,7 +151,7 @@ enum SnapshotOverlapCheck {
     }
 }
 
-// MARK: - 다른 세션 상태 요약 자리
+// MARK: - 세션 상태 요약 자리
 
 @MainActor
 enum SnapshotSummaryCheck {

@@ -289,9 +289,18 @@ final class PresentationController {
         session.phase.isWorking || session.phase.needsAttention || session.hasUnseenCompletion
     }
 
-    /// 접힌 상태의 세션 상태 요약: 접힌 상태가 보여주는 세션을 뺀 나머지 (보여주는 세션이 없으면 전부)
+    /// 접힌 상태의 세션 상태 요약: 펼친 목록 머리와 같은 모든 세션 요약 (`compactSummary(showing:)`)
     var compactSummary: SessionStatusSummary {
-        SessionStatusSummary(sessions: store.rankedSessions, excluding: compactSession?.id)
+        compactSummary(showing: compactSession)
+    }
+
+    /// 접힌 상태의 세션 상태 요약. 보여주는 세션도 함께 센다: 예전처럼 빼고 세면 같은 순간 펼친 머리("● 2")와
+    /// 접힌 상태("● 1")의 개수가 달라 보였고, 보여주는 세션이 바뀔 때마다 개수가 바뀌었다.
+    /// 세션이 보여주는 세션 하나뿐이면 비운다 (그 세션이 이미 보이므로)
+    private func compactSummary(showing session: AgentSession?) -> SessionStatusSummary {
+        let sessions = store.rankedSessions
+        if session != nil, sessions.count <= 1 { return .empty }
+        return SessionStatusSummary(sessions: sessions)
     }
 
     /// 펼친 목록 머리의 요약: 모든 세션 (목록에 다 있으므로)
@@ -573,7 +582,7 @@ final class PresentationController {
     /// 접힌 상태가 보여주는 세션의 폭 측정값 (안정화 전). 작업 중인 세션이 없으면 nil
     private func compactMeasurement() -> CompactMeasurement? {
         guard let session = compactSession else { return nil }
-        let summary = SessionStatusSummary(sessions: store.rankedSessions, excluding: session.id)
+        let summary = compactSummary(showing: session)
         return CompactMeasurement(metrics: CompactMetrics(session: session, summary: summary), session: session.id)
     }
 
