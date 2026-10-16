@@ -9,7 +9,6 @@ import SwiftUI
 //   · 카드를 펼치고 접는 중에 목(노치 화면의 띠 · 메뉴바 알약) 끝이 움직이며 몸통 끝과 맞닿음
 //     (띠가 날개처럼 펼쳐지는 순간 바깥 끝이 잘렸다 붙어 보임. 접힌 띠 ↔ 접힌 띠는 몸통 = 띠라 보지 않음)
 //   시트 프레임 사이도 스프링 값을 촘촘히 훑는다.
-// 아이콘 구멍은 일부러 뚫은 창이라 빼고 칠한다. 귀(목 위 바깥으로 휘는 모서리)는 화면 위 끝에 붙은 모양이라 틈으로 보지 않는다.
 
 @MainActor
 enum SnapshotSeamCheck {
@@ -153,11 +152,7 @@ enum SnapshotSeamCheck {
         // 0) 칠한 모양이 여러 덩어리 (주 외곽선과 부분 1 이 떨어짐 등)
         let pieces = raster.componentCount
         if pieces > 1 { issues.append("모양 조각 \(pieces)개") }
-        let ear = max(o.earL, o.earR)
-        let earRowEnd = raster.row(o.top + ear + 0.75)
-        let topRow = raster.row(o.top + 0.5)
-
-        // 1) 열마다 검은 구간이 둘 이상이면 띠 ↔ 몸통 사이가 끊긴 것 (귀 아래는 제외)
+        // 1) 열마다 검은 구간이 둘 이상이면 띠 ↔ 몸통 사이가 끊긴 것
         var gaps: [(col: Int, from: CGFloat, to: CGFloat)] = []
         for col in 0..<raster.width {
             var runs: [(start: Int, end: Int)] = []
@@ -172,12 +167,6 @@ enum SnapshotSeamCheck {
             }
             if let s = start { runs.append((s, raster.height - 1)) }
             guard runs.count >= 2 else { continue }
-            let x = raster.x(col)
-            // 귀: 목 옆면 바깥, 화면 위 끝에서 시작해 귀 반경 안에서 끝나는 구간
-            if (x < o.nx0 || x > o.nx1), runs[0].start <= topRow + 1, runs[0].end <= earRowEnd {
-                runs.removeFirst()
-            }
-            guard runs.count >= 2 else { continue }
             gaps.append((col, raster.y(runs[0].end) + 0.25, raster.y(runs[1].start) - 0.25))
         }
         for group in groups(gaps.map(\.col)) {
@@ -190,8 +179,8 @@ enum SnapshotSeamCheck {
             ))
         }
 
-        // 2) 쪽마다 바깥 윤곽: 귀 아래에서 위 · 아래 줄보다 안쪽으로 들어간 줄이 있으면 물림
-        let firstRow = max(0, earRowEnd + 1)
+        // 2) 쪽마다 바깥 윤곽: 위 · 아래 줄보다 안쪽으로 들어간 줄이 있으면 물림 (맨 위 줄 · 위 모서리 반경 아래부터)
+        let firstRow = max(0, raster.row(o.top + 0.75) + 1)
         var left: [Int?] = Array(repeating: nil, count: raster.height)
         var right: [Int?] = Array(repeating: nil, count: raster.height)
         for row in firstRow..<raster.height {

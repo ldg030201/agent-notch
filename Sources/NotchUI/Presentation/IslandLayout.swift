@@ -48,7 +48,7 @@ struct HeaderSlot: Equatable {
 
 /// 아일랜드 위치 · 크기 · 모양. SwiftUI 뷰와 클릭 영역 계산이 같은 값을 쓴다.
 struct IslandLayout: Equatable {
-    /// 프레임 크기 (귀 포함)
+    /// 프레임 크기
     var size: CGSize
     /// 패널(화면 맨 위, 화면 전체 폭) 기준 프레임 왼쪽 위
     var origin: CGPoint
@@ -81,7 +81,7 @@ struct IslandLayout: Equatable {
 
     /// 본문 시작 y (상단 행 바로 아래)
     var contentTop: CGFloat { header.top + header.height }
-    /// 본문 왼쪽/오른쪽 여백 (부분 1 · 귀 때문에 프레임이 몸통보다 넓을 때)
+    /// 본문 왼쪽/오른쪽 여백 (부분 1 때문에 프레임이 몸통보다 넓을 때)
     var contentLeftInset: CGFloat { header.leftInset }
     var contentRightInset: CGFloat { header.rightInset }
 
@@ -546,8 +546,8 @@ struct IslandLayoutEngine {
         var layout = layout
         let part1 = IslandPart1Spec(rect: layout.panelRect, shape: layout.shape)
         layout.shape.part1 = part1
-        // 두 조각(노치 아래 띠)이면 위 조각(띠) 아래 볼록 모서리, 한 조각이면 아래 모서리
-        layout.shape.capRadius = part1.isTwoPiece ? layout.shape.shoulderRadius : layout.shape.bottomRadius
+        // 부분 2 는 부분 1 아래 모서리 안쪽에서 나온다
+        layout.shape.capRadius = layout.shape.bottomRadius
         return layout
     }
 
@@ -760,8 +760,8 @@ struct IslandLayoutEngine {
     }
 
     /// 부분 1(접힌 모양) 아래로 부분 2(몸통)를 내린 카드.
-    /// - 부분 1 은 접힌 모양 그대로 (`IslandShapeSpec.part1`). 주 외곽선의 목은 부분 1 의 위 조각(띠 · 알약 · 점)과 같은 자리 ·
-    ///   같은 귀 · 위 반경, 목 아래끝은 부분 1 아래끝(두 조각이면 띠 아래끝)이다.
+    /// - 부분 1 은 접힌 모양 그대로 (`IslandShapeSpec.part1`). 주 외곽선의 목은 부분 1(띠 · 알약 · 점)과 같은 자리 ·
+    ///   같은 위 반경, 목 아래끝은 부분 1 아래끝이다.
     /// - 몸통은 메뉴바 아래에서만 목보다 넓어지고(쪽마다 `bodySnap` 이상), 만나는 곳은 오목하게 잇는다.
     /// - 상단 행 · 본문은 모두 몸통 안, 부분 1 아래에 둔다
     private func attachedCard(
@@ -772,12 +772,11 @@ struct IslandLayoutEngine {
         bodyHeight: (CGFloat) -> CGFloat
     ) -> IslandLayout {
         let piece = p1.shape.part1
-        let twoPiece = piece.isTwoPiece
         let top = p1.origin.y
-        // 부분 1 위 조각 가로 자리 (귀 제외)
+        // 부분 1 위 조각 가로 자리
         let attachMin = p1.origin.x + piece.neckLeft
         let attachMax = p1.origin.x + p1.size.width - piece.neckRight
-        let neckBottom = top + (twoPiece ? piece.neckHeight : p1.size.height)
+        let neckBottom = top + p1.size.height
         let part1Bottom = p1.panelRect.maxY
         let barBottom = geometry.hasNotch ? neckHeight : (menuBarVisible ? menuBarHeight : 0)
         // 몸통이 넓어지는 높이 · 상단 행 높이 (부분 1 아래)
@@ -796,7 +795,7 @@ struct IslandLayoutEngine {
         var shape = IslandShapeSpec(
             neckLeft: attachMin - frameMinX, neckRight: frameMaxX - attachMax, neckHeight: neckBottom - top,
             bodyLeft: bodyLeft, bodyRight: bodyRight,
-            leftEar: piece.leftEar, rightEar: piece.rightEar, topRadius: piece.topRadius,
+            topRadius: piece.topRadius,
             bodyTopRadius: Self.bodyTopRadius, shoulderRadius: cardShoulderRadius, bottomRadius: radius
         )
         shape.capRadius = p1.shape.capRadius

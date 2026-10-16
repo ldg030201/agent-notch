@@ -707,7 +707,7 @@ enum SnapshotShapeCheck {
         // 거의 오버슈트 없는 스프링이 지나치는 만큼(변화량의 0.3%)은 정상
         let fields: [(String, KeyPath<IslandShapeSpec, CGFloat>)] = [
             ("neckLeft", \.neckLeft), ("neckRight", \.neckRight), ("neckHeight", \.neckHeight),
-            ("bodyLeft", \.bodyLeft), ("bodyRight", \.bodyRight), ("leftEar", \.leftEar), ("rightEar", \.rightEar),
+            ("bodyLeft", \.bodyLeft), ("bodyRight", \.bodyRight),
             ("topRadius", \.topRadius), ("bodyTopRadius", \.bodyTopRadius), ("shoulderRadius", \.shoulderRadius),
             ("bottomRadius", \.bottomRadius),
         ]
@@ -728,8 +728,6 @@ enum SnapshotShapeCheck {
             }
         }
         outside("아래반경", o.bottomR, a.bottomR, b.bottomR)
-        outside("귀L", o.earL, a.earL, b.earL)
-        outside("귀R", o.earR, a.earR, b.earR)
         outside("위반경L", o.topRL, a.topRL, b.topRL)
         outside("위반경R", o.topRR, a.topRR, b.topRR)
         // 목 → 몸통 계단은 쪽마다 양 끝값 사이에서만 움직여야 한다 (좁은 몸통 → 넓은 몸통이면 0 을 한 번 지난다)
@@ -921,8 +919,7 @@ enum SnapshotShapeCheck {
             to.origin.x - from.origin.x, to.origin.y - from.origin.y,
             to.shape.neckLeft - from.shape.neckLeft, to.shape.neckRight - from.shape.neckRight,
             to.shape.neckHeight - from.shape.neckHeight, to.shape.bodyLeft - from.shape.bodyLeft,
-            to.shape.bodyRight - from.shape.bodyRight, to.shape.leftEar - from.shape.leftEar,
-            to.shape.rightEar - from.shape.rightEar, to.shape.topRadius - from.shape.topRadius,
+            to.shape.bodyRight - from.shape.bodyRight, to.shape.topRadius - from.shape.topRadius,
             to.shape.bodyTopRadius - from.shape.bodyTopRadius, to.shape.shoulderRadius - from.shape.shoulderRadius,
             to.shape.bottomRadius - from.shape.bottomRadius,
         ]
@@ -949,7 +946,7 @@ enum SnapshotShapeCheck {
                 ("목왼쪽", o.nx0), ("목오른쪽", o.nx1), ("목높이", o.neckBottom), ("아래", o.bottom),
                 ("계단L", o.stepL), ("계단R", o.stepR),
                 ("몸통왼쪽", o.bx0), ("몸통오른쪽", o.bx1),
-                ("귀L", o.earL), ("귀R", o.earR), ("위반경L", o.topRL), ("위반경R", o.topRR),
+                ("위반경L", o.topRL), ("위반경R", o.topRR),
                 ("아래반경", o.bottomR), ("어깨L", o.shoulderL), ("어깨R", o.shoulderR),
                 ("몸통위L", o.bodyTopL), ("몸통위R", o.bodyTopR),
             ]
@@ -1249,9 +1246,9 @@ enum SnapshotAnimationSheet {
     private static func describe(_ layout: IslandLayout) -> String {
         let s = layout.shape
         let text = String(
-            format: "프레임 (%.1f,%.1f) %.1f×%.1f · 목 L%.1f R%.1f H%.1f · 몸통 L%.1f R%.1f · 귀 %.0f/%.0f · 위 %.0f · 몸통위 %.0f · 어깨 %.0f · 아래 %.0f",
+            format: "프레임 (%.1f,%.1f) %.1f×%.1f · 목 L%.1f R%.1f H%.1f · 몸통 L%.1f R%.1f · 위 %.0f · 몸통위 %.0f · 어깨 %.0f · 아래 %.0f",
             layout.origin.x, layout.origin.y, layout.size.width, layout.size.height,
-            s.neckLeft, s.neckRight, s.neckHeight, s.bodyLeft, s.bodyRight, s.leftEar, s.rightEar,
+            s.neckLeft, s.neckRight, s.neckHeight, s.bodyLeft, s.bodyRight,
             s.topRadius, s.bodyTopRadius, s.shoulderRadius, s.bottomRadius
         )
         return text

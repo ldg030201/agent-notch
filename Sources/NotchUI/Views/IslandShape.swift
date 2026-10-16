@@ -9,7 +9,6 @@ import SwiftUI
 ///   - 몸통이 낮을 때(펼치기 시작 · 접히기 끝)는 부분 1 아래 모서리 안쪽에서 나오고 그리로 들어간다 (`capRadius`):
 ///     몸통이 목과 옆면을 맞댄 채 늘어나 부분 1 이 커져 보이지 않게.
 ///   - 접힌 상태는 몸통 높이 0 (부분 1 만 그린다).
-/// - 노치 화면은 목 위쪽 모서리에 바깥으로 휘는 "귀"를 둬서 하드웨어 노치와 자연스럽게 잇는다.
 /// - 노치 화면은 어떤 중간 프레임에서도 하드웨어 노치를 다 덮는다 (`notchMinX` · `notchWidth` · `notchHeight`).
 struct IslandShapeSpec: Equatable {
     /// 프레임 왼쪽/오른쪽 끝에서 목 옆면까지 거리
@@ -20,10 +19,7 @@ struct IslandShapeSpec: Equatable {
     /// 프레임 왼쪽/오른쪽 끝에서 몸통 옆면까지 거리 (목보다 넓거나 좁을 수 있음)
     var bodyLeft: CGFloat = 0
     var bodyRight: CGFloat = 0
-    /// 목 위쪽 바깥으로 휘는 귀 반경 (노치 화면)
-    var leftEar: CGFloat = 0
-    var rightEar: CGFloat = 0
-    /// 목 위쪽 모서리 반경 (귀가 없는 쪽, 알약)
+    /// 목 위쪽 모서리 반경 (알약)
     var topRadius: CGFloat = 0
     /// 몸통이 목보다 넓을 때 몸통 위쪽 바깥 모서리 반경 (좁을 때는 목과 만나는 오목한 모서리)
     var bodyTopRadius: CGFloat = 0
@@ -55,7 +51,7 @@ extension IslandShapeSpec {
         let pairs: [(CGFloat, CGFloat)] = [
             (p.minX, originX), (p.minY, originY), (p.width, rect.width), (p.height, rect.height),
             (p.neckLeft, neckLeft), (p.neckRight, neckRight), (p.neckHeight, neckHeight),
-            (p.bodyLeft, bodyLeft), (p.bodyRight, bodyRight), (p.leftEar, leftEar), (p.rightEar, rightEar),
+            (p.bodyLeft, bodyLeft), (p.bodyRight, bodyRight),
             (p.topRadius, topRadius), (p.bodyTopRadius, bodyTopRadius), (p.shoulderRadius, shoulderRadius),
             (p.bottomRadius, bottomRadius),
         ]
@@ -64,7 +60,7 @@ extension IslandShapeSpec {
 }
 
 /// 부분 1: 접힌 상태 모양 그대로 (자리는 패널 기준, 모양 치수는 그 사각형 기준 — `IslandShapeSpec` 의 같은 이름 값과 같은 뜻).
-/// 아래 조각이 위 조각보다 좁은 두 조각 모양도 그릴 수 있다 (지금 접힌 모양 · 띠 · 알약 · 점은 모두 한 조각)
+/// 접힌 모양(노치 아래 띠 · 알약 · 점)은 모두 한 조각이다
 struct IslandPart1Spec: Equatable {
     var minX: CGFloat = 0
     var minY: CGFloat = 0
@@ -75,8 +71,6 @@ struct IslandPart1Spec: Equatable {
     var neckHeight: CGFloat = 0
     var bodyLeft: CGFloat = 0
     var bodyRight: CGFloat = 0
-    var leftEar: CGFloat = 0
-    var rightEar: CGFloat = 0
     var topRadius: CGFloat = 0
     var bodyTopRadius: CGFloat = 0
     var shoulderRadius: CGFloat = 0
@@ -84,9 +78,6 @@ struct IslandPart1Spec: Equatable {
 
     /// 패널 기준 사각형
     var rect: CGRect { CGRect(x: minX, y: minY, width: width, height: height) }
-
-    /// 아래 조각(노치 아래 띠)이 위 조각보다 좁은 두 조각 모양인지
-    var isTwoPiece: Bool { bodyLeft - neckLeft > 0.5 || bodyRight - neckRight > 0.5 }
 
     /// 접힌 모양 치수 (사각형 기준)로 만든다
     init() {}
@@ -101,8 +92,6 @@ struct IslandPart1Spec: Equatable {
         neckHeight = shape.neckHeight
         bodyLeft = shape.bodyLeft
         bodyRight = shape.bodyRight
-        leftEar = shape.leftEar
-        rightEar = shape.rightEar
         topRadius = shape.topRadius
         bodyTopRadius = shape.bodyTopRadius
         shoulderRadius = shape.shoulderRadius
@@ -113,7 +102,7 @@ struct IslandPart1Spec: Equatable {
     func shapeSpec(in parent: IslandShapeSpec) -> IslandShapeSpec {
         var spec = IslandShapeSpec(
             neckLeft: neckLeft, neckRight: neckRight, neckHeight: neckHeight,
-            bodyLeft: bodyLeft, bodyRight: bodyRight, leftEar: leftEar, rightEar: rightEar,
+            bodyLeft: bodyLeft, bodyRight: bodyRight,
             topRadius: topRadius, bodyTopRadius: bodyTopRadius, shoulderRadius: shoulderRadius, bottomRadius: bottomRadius
         )
         spec.originX = minX
@@ -129,10 +118,10 @@ struct IslandPart1Spec: Equatable {
 extension IslandShapeSpec: VectorArithmetic {
     private static let fields: [WritableKeyPath<IslandShapeSpec, CGFloat>] = [
         \.neckLeft, \.neckRight, \.neckHeight, \.bodyLeft, \.bodyRight,
-        \.leftEar, \.rightEar, \.topRadius, \.bodyTopRadius, \.shoulderRadius, \.bottomRadius,
+        \.topRadius, \.bodyTopRadius, \.shoulderRadius, \.bottomRadius,
         \.originX, \.originY, \.notchMinX, \.notchWidth, \.notchHeight, \.menuBarBottom, \.capRadius,
         \.part1.minX, \.part1.minY, \.part1.width, \.part1.height, \.part1.neckLeft, \.part1.neckRight, \.part1.neckHeight,
-        \.part1.bodyLeft, \.part1.bodyRight, \.part1.leftEar, \.part1.rightEar, \.part1.topRadius,
+        \.part1.bodyLeft, \.part1.bodyRight, \.part1.topRadius,
         \.part1.bodyTopRadius, \.part1.shoulderRadius, \.part1.bottomRadius,
         \.frameWidth, \.frameHeight,
     ]
@@ -192,8 +181,6 @@ struct IslandOutline: Equatable {
     /// 몸통 옆면
     var bx0: CGFloat = 0
     var bx1: CGFloat = 0
-    var earL: CGFloat = 0
-    var earR: CGFloat = 0
     var topRL: CGFloat = 0
     var topRR: CGFloat = 0
     var bottomR: CGFloat = 0
@@ -206,9 +193,9 @@ struct IslandOutline: Equatable {
     var widenL: CGFloat { nx0 - bx0 }
     var widenR: CGFloat { bx1 - nx1 }
 
-    /// 경로 가로 범위 (귀는 목 밖으로 나간다)
-    var minX: CGFloat { min(nx0 - earL, bx0) }
-    var maxX: CGFloat { max(nx1 + earR, bx1) }
+    /// 경로 가로 범위
+    var minX: CGFloat { min(nx0, bx0) }
+    var maxX: CGFloat { max(nx1, bx1) }
 }
 
 /// 아일랜드 검은 모양
@@ -259,7 +246,7 @@ struct IslandShape: Shape {
     /// 주 외곽선과 부분 1 은 같은 방향으로 도는 닫힌 경로라, 한 경로에 하위 경로 둘로 넣고 기본(nonzero) 규칙으로 칠하면
     /// 겹친 곳도 한 번만 칠해져 합집합과 같다 (불리언 연산 없음 · 이음매 없음). 부분 2 가 폭 0 으로 숨은 순간(점 같은 부분 1 아래의
     /// 넓이 0 인 바늘)이나 부분 1 안에 들어간 목 · 오목 모서리는 칠할 넓이가 없어 아무것도 그리지 않는다.
-    /// 주 외곽선은 부분 1 과 겹치는 목 위끝 곡선(귀 · 둥근 위 모서리)을 빼고 그린다 (`path(_:underPart1:)`: 같은 곡선을 두 번 칠하지 않게)
+    /// 주 외곽선은 부분 1 과 겹치는 목 위끝 곡선(둥근 위 모서리)을 빼고 그린다 (`path(_:underPart1:)`: 같은 곡선을 두 번 칠하지 않게)
     static func filledPath(_ spec: IslandShapeSpec, in rect: CGRect) -> Path {
         switch drawn(spec, in: rect) {
         case let .part1(o), let .main(o):
@@ -340,7 +327,7 @@ struct IslandShape: Shape {
             )
         }
         if capSpec > eps {
-            // 부분 2 는 부분 1 아래끝에서 나온다 (두 조각이면 노치 아래 띠 아래끝. 그 위에서는 부분 1 이 덮는다)
+            // 부분 2 는 부분 1 아래끝에서 나온다 (그 위에서는 부분 1 이 덮는다)
             let part1 = spec.part1
             var emergeTop = o.neckBottom
             if part1.width > 1 {
@@ -371,13 +358,10 @@ struct IslandShape: Shape {
         o.stepL = step(o.widenL)
         o.stepR = step(o.widenR)
 
-        // 귀와 위쪽 모서리 (목 안)
-        let earLimit = min(neckHeight / 2, neckWidth / 4)
-        o.earL = clamp(spec.leftEar, 0, min(o.nx0 - rect.minX, earLimit))
-        o.earR = clamp(spec.rightEar, 0, min(rect.maxX - o.nx1, earLimit))
+        // 위쪽 모서리 (목 안)
         let topLimit = min(neckWidth / 2, neckHeight)
-        o.topRL = o.earL > eps ? 0 : clamp(spec.topRadius, 0, topLimit)
-        o.topRR = o.earR > eps ? 0 : clamp(spec.topRadius, 0, topLimit)
+        o.topRL = clamp(spec.topRadius, 0, topLimit)
+        o.topRR = o.topRL
 
         // 아래 모서리 (몸통 안)
         o.bottomR = clamp(spec.bottomRadius, 0, min((o.bx1 - o.bx0) / 2, bodyHeight))
@@ -386,13 +370,13 @@ struct IslandShape: Shape {
         // 두 반경의 합은 차이를 넘지 않고(비율대로 나눔), 차이가 반경 합보다 작으면 합 = 차이라 하나의 S 곡선이 된다.
         // 목 아래 볼록 모서리와 몸통 위 볼록 모서리는 한쪽에 함께 생기지 않는다 (맞물려 물린 모양 없음).
         // 몸통이 좁을 때 목 쪽 볼록 모서리는 부분 1 아래 모서리(`capRadius`)를 넘지 않는다 (부분 1 이 둥글게 드러난 채)
-        func joint(_ widen: CGFloat, step: CGFloat, ear: CGFloat, topR: CGFloat) -> (shoulder: CGFloat, bodyTop: CGFloat) {
+        func joint(_ widen: CGFloat, step: CGFloat, topR: CGFloat) -> (shoulder: CGFloat, bodyTop: CGFloat) {
             let gap = abs(widen)
             let neckSpec = widen > 0 || capSpec <= eps ? shoulderSpec : capSpec
             let total = neckSpec + bodyTopSpec
             guard gap > eps, total > eps else { return (0, 0) }
             let scale = min(1, gap / total)
-            let above = max(0, step - o.top - max(ear, topR))
+            let above = max(0, step - o.top - topR)
             let below = max(0, o.bottom - step - o.bottomR)
             var shoulder = min(neckSpec * scale, above)
             var bodyTop = min(bodyTopSpec * scale, below)
@@ -407,16 +391,16 @@ struct IslandShape: Shape {
             }
             return (shoulder, bodyTop)
         }
-        (o.shoulderL, o.bodyTopL) = joint(o.widenL, step: o.stepL, ear: o.earL, topR: o.topRL)
-        (o.shoulderR, o.bodyTopR) = joint(o.widenR, step: o.stepR, ear: o.earR, topR: o.topRR)
+        (o.shoulderL, o.bodyTopL) = joint(o.widenL, step: o.stepL, topR: o.topRL)
+        (o.shoulderR, o.bodyTopR) = joint(o.widenR, step: o.stepR, topR: o.topRR)
         return o
     }
 
     /// 외곽선 경로 (시계 방향: 위 변 왼쪽 → 오른쪽, 오른쪽 변, 아래 변, 왼쪽 변).
     /// - underPart1: 부분 1 과 함께 그리는 주 외곽선. 목 위끝 모서리는 부분 1 위 조각과 같은 자리 · 같은(또는 작은) 곡선이라
-    ///   곡선을 그리지 않는다: 귀는 빼고(목 옆면 바깥 → 부분 1 귀 안), 둥근 위 모서리는 현으로 깎는다(부분 1 의 같은 모서리 안).
+    ///   곡선을 그리지 않는다: 둥근 위 모서리는 현으로 깎는다(부분 1 의 같은 모서리 안).
     ///   같은 곡선을 하위 경로 둘로 겹쳐 칠하면 SwiftUI 래스터가 가장자리 덮임을 더해 곡선 가장자리가 진해진다
-    ///   (합집합 모양은 같다: 뺀 귀 · 깎은 모서리는 부분 1 안)
+    ///   (합집합 모양은 같다: 깎은 모서리는 부분 1 안)
     static func path(_ o: IslandOutline, underPart1: Bool = false) -> Path {
         let eps = minRadius
         let top = o.top
@@ -424,14 +408,12 @@ struct IslandShape: Shape {
 
         // 위쪽 변 (왼쪽 → 오른쪽)
         if underPart1 {
-            let chamferL = o.earL > eps || o.topRL <= eps ? 0 : o.topRL
-            let chamferR = o.earR > eps || o.topRR <= eps ? 0 : o.topRR
+            let chamferL = o.topRL <= eps ? 0 : o.topRL
+            let chamferR = o.topRR <= eps ? 0 : o.topRR
             path.move(to: CGPoint(x: o.nx0, y: top + chamferL))
             if chamferL > 0 { path.addLine(to: CGPoint(x: o.nx0 + chamferL, y: top)) }
             path.addLine(to: CGPoint(x: o.nx1 - chamferR, y: top))
             if chamferR > 0 { path.addLine(to: CGPoint(x: o.nx1, y: top + chamferR)) }
-        } else if o.earL > eps {
-            path.move(to: CGPoint(x: o.nx0 - o.earL, y: top))
         } else if o.topRL > eps {
             path.move(to: CGPoint(x: o.nx0, y: top + o.topRL))
             path.addArc(tangent1End: CGPoint(x: o.nx0, y: top), tangent2End: CGPoint(x: o.nx0 + o.topRL, y: top), radius: o.topRL)
@@ -440,9 +422,6 @@ struct IslandShape: Shape {
         }
         if underPart1 {
             // 위에서 이미 오른쪽 목 옆면 위끝까지 왔다
-        } else if o.earR > eps {
-            path.addLine(to: CGPoint(x: o.nx1 + o.earR, y: top))
-            path.addQuadCurve(to: CGPoint(x: o.nx1, y: top + o.earR), control: CGPoint(x: o.nx1, y: top))
         } else if o.topRR > eps {
             path.addLine(to: CGPoint(x: o.nx1 - o.topRR, y: top))
             path.addArc(tangent1End: CGPoint(x: o.nx1, y: top), tangent2End: CGPoint(x: o.nx1, y: top + o.topRR), radius: o.topRR)
@@ -459,10 +438,6 @@ struct IslandShape: Shape {
         corner(&path, CGPoint(x: o.bx0, y: o.bottom), CGPoint(x: o.bx0, y: top), o.bottomR)
         corner(&path, CGPoint(x: o.bx0, y: o.stepL), CGPoint(x: o.nx0, y: o.stepL), o.bodyTopL)
         corner(&path, CGPoint(x: o.nx0, y: o.stepL), CGPoint(x: o.nx0, y: top), o.shoulderL)
-        if !underPart1, o.earL > eps {
-            path.addLine(to: CGPoint(x: o.nx0, y: top + o.earL))
-            path.addQuadCurve(to: CGPoint(x: o.nx0 - o.earL, y: top), control: CGPoint(x: o.nx0, y: top))
-        }
         path.closeSubpath()
         return path
     }

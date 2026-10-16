@@ -2,7 +2,7 @@ import CoreGraphics
 import SwiftUI
 
 // 부분 1 검사: 카드 ↔ 접힌 상태 전환에서 위쪽 접힌 모양(부분 1)이 그대로인지 (전환 시트가 프레임 · 촘촘한 훑기로 돌린다).
-// - 부분 1 = 접힌 상태의 모양. 펼치고 접는 동안 자리 · 폭 · 높이 · 귀 · 위 반경 · 제 아래 모서리가 바뀌면 안 된다 (±0.5pt).
+// - 부분 1 = 접힌 상태의 모양. 펼치고 접는 동안 자리 · 폭 · 높이 · 위 반경 · 제 아래 모서리가 바뀌면 안 된다 (±0.5pt).
 //   그린 부분 1 층(`IslandShape.part1Outline`)을 잰다. 부분 1 층이 없는 모양(예전 모델)은 목 + 목과 맞닿은 몸통을 부분 1 로 본다
 // - 부분 2 를 그리는 주 외곽선의 목은 부분 1 위 조각과 같은 가로 자리여야 한다 (목이 부분 1 밖으로 나오면 부분 1 이 커져 보인다)
 // - 카드 상단 행이 부분 1 안에 있으면 안 된다 (카드 내용은 모두 부분 2)
@@ -23,15 +23,10 @@ enum SnapshotPart1Check {
         var maxX: CGFloat
         var top: CGFloat
         var bottom: CGFloat
-        var earL: CGFloat
-        var earR: CGFloat
         var topRL: CGFloat
         var topRR: CGFloat
         var bottomRL: CGFloat?
         var bottomRR: CGFloat?
-        /// 두 조각(노치 아래 띠)이면 위 조각 아래 볼록 모서리
-        var bandRL: CGFloat?
-        var bandRR: CGFloat?
     }
 
     /// 전환 양 끝: 한쪽은 펼친 카드, 다른 쪽은 접힌 상태 (아니면 nil — 검사하지 않음).
@@ -69,20 +64,15 @@ enum SnapshotPart1Check {
         let x = layout.origin.x
         let y = layout.origin.y
         if let p = IslandShape.part1Outline(layout.shapeSpec, in: CGRect(origin: .zero, size: layout.size)), !p.isEmpty {
-            var g = Geometry(
+            return Geometry(
                 minX: x + p.nx0, maxX: x + p.nx1, top: y + p.top, bottom: y + p.bottom,
-                earL: p.earL, earR: p.earR, topRL: p.topRL, topRR: p.topRR, bottomRL: p.bottomR, bottomRR: p.bottomR
+                topRL: p.topRL, topRR: p.topRR, bottomRL: p.bottomR, bottomRR: p.bottomR
             )
-            if layout.shape.part1.isTwoPiece {
-                g.bandRL = p.shoulderL
-                g.bandRR = p.shoulderR
-            }
-            return g
         }
         let o = SnapshotShapeCheck.outline(layout)
         var g = Geometry(
             minX: x + o.nx0, maxX: x + o.nx1, top: y + o.top, bottom: y + o.neckBottom,
-            earL: o.earL, earR: o.earR, topRL: o.topRL, topRR: o.topRR
+            topRL: o.topRL, topRR: o.topRR
         )
         if abs(o.widenL) < tolerance, abs(o.widenR) < tolerance {
             g.bottom = y + o.bottom
@@ -108,14 +98,10 @@ enum SnapshotPart1Check {
         compare("폭", g.maxX - g.minX, r.maxX - r.minX)
         compare("위", g.top, r.top)
         compare("높이", g.bottom - g.top, r.bottom - r.top)
-        compare("귀L", g.earL, r.earL)
-        compare("귀R", g.earR, r.earR)
         compare("위반경L", g.topRL, r.topRL)
         compare("위반경R", g.topRR, r.topRR)
         compare("아래반경L", g.bottomRL, r.bottomRL)
         compare("아래반경R", g.bottomRR, r.bottomRR)
-        compare("띠 아래반경L", g.bandRL, r.bandRL)
-        compare("띠 아래반경R", g.bandRR, r.bandRR)
         // 부분 1 과 합쳐 그리는 주 외곽선의 목: 부분 1 위 조각과 같은 가로 자리 · 같은 위
         if case let .union(main, part1) = IslandShape.drawn(layout.shapeSpec, in: CGRect(origin: .zero, size: layout.size)) {
             if abs(main.nx0 - part1.nx0) > tolerance || abs(main.nx1 - part1.nx1) > tolerance || abs(main.top - part1.top) > tolerance {
@@ -123,9 +109,6 @@ enum SnapshotPart1Check {
                     format: "목 %.1f…%.1f 이 부분 1 위 조각 %.1f…%.1f 와 어긋남",
                     layout.origin.x + main.nx0, layout.origin.x + main.nx1, layout.origin.x + part1.nx0, layout.origin.x + part1.nx1
                 ))
-            }
-            if main.earL > part1.earL + tolerance || main.earR > part1.earR + tolerance {
-                issues.append(String(format: "목 귀 %.1f/%.1f 가 부분 1 귀 %.1f/%.1f 보다 큼", main.earL, main.earR, part1.earL, part1.earR))
             }
         }
         return issues.isEmpty ? [] : ["부분 1 " + issues.joined(separator: ", ")]
