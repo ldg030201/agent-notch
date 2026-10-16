@@ -471,8 +471,6 @@ struct CardScaffold<Leading: View, Trailing: View, Content: View>: View {
             .padding(.trailing, header.rightInset)
             .padding(.top, header.top)
 
-            Color.clear.frame(height: max(0, layout.contentTop - header.top - header.height))
-
             content
                 .padding(.leading, layout.contentLeftInset)
                 .padding(.trailing, layout.contentRightInset)

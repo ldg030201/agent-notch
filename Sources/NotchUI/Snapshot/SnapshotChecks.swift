@@ -28,7 +28,7 @@ enum SnapshotOverlapCheck {
         func window(
             _ number: Int, _ frame: CGRect, layer: Int = WindowLevels.popUpMenu, alpha: Double = 1, pid: Int = 200
         ) -> WindowSnapshot.Window {
-            WindowSnapshot.Window(number: number, pid: pid, layer: layer, frame: frame, alpha: alpha, ownerName: "다른 앱")
+            WindowSnapshot.Window(number: number, pid: pid, layer: layer, frame: frame, alpha: alpha)
         }
         func scan(_ windows: [WindowSnapshot.Window], includeOwn: Bool = false, target: OverlapScanner.Target = target) -> [OverlapScanner.Candidate] {
             OverlapScanner.scan(
@@ -178,9 +178,9 @@ enum SnapshotSummaryCheck {
             ("끝남 2", SessionStatusSummary(done: 2)),
             ("세 묶음", SessionStatusSummary(waiting: 1, working: 1, done: 2)),
         ]
+        // 노치 화면은 메뉴바 배치와 관계없이 늘 노치 폭 띠라 한 가지만 본다
         let scenes: [(String, IslandSnapshotRenderer.Style, SnapshotMenuBar.Crowding)] = [
-            ("노치 아래 · 넉넉함", .notch, .roomy),
-            ("노치 아래 · 양옆 막힘", .notch, .bothBlocked),
+            ("노치 아래 띠", .notch, .bothBlocked),
             ("메뉴바 알약", .menuBar, .roomy),
         ]
         for (sceneName, style, crowding) in scenes {
@@ -237,7 +237,7 @@ enum SnapshotPillCheck {
             hasNotch: false, notchSize: .zero, isBuiltIn: false, menuBarHeight: 24
         )
         let unmeasured = MenuBarSpace(menuBarVisible: true, menuBarHeight: 24)
-        func engine(_ style: ExternalDisplayStyle, space: MenuBarSpace = unmeasured, geometry: NotchGeometry = geometry) -> IslandLayoutEngine {
+        func engine(_ style: ExternalDisplayStyle, space: MenuBarSpace = unmeasured) -> IslandLayoutEngine {
             IslandLayoutEngine(
                 geometry: geometry, space: space, externalStyle: style
             )
@@ -542,7 +542,7 @@ enum SnapshotMenuBarScanCheck {
             WindowSnapshot.Window(
                 number: number, pid: 300, layer: WindowLevels.mainMenu,
                 frame: CGRect(x: screen.frame.minX, y: screen.frame.maxY - height, width: screen.frame.width, height: height),
-                alpha: 1, ownerName: "Window Server"
+                alpha: 1
             )
         }
         let screens = [builtIn, left, right]

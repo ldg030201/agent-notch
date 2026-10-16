@@ -2,7 +2,7 @@ import AppKit
 import CoreGraphics
 
 /// 화면에 보이는 창 목록 한 번 조회 결과.
-/// 화면 기록 권한 없이 읽히는 정보(경계 · 레이어 · PID · 소유 앱 이름)만 쓴다. 창 제목은 읽지 않는다.
+/// 화면 기록 권한 없이 읽히는 정보(경계 · 레이어 · PID)만 쓴다. 창 제목 · 앱 이름은 읽지 않는다.
 struct WindowSnapshot: Sendable {
     struct Window: Sendable, Hashable {
         var number: Int
@@ -11,7 +11,6 @@ struct WindowSnapshot: Sendable {
         /// Cocoa 전역 좌표 (원점 왼쪽 아래)
         var frame: CGRect
         var alpha: Double
-        var ownerName: String?
     }
 
     var windows: [Window]
@@ -34,8 +33,7 @@ struct WindowSnapshot: Sendable {
                 pid: (info[kCGWindowOwnerPID as String] as? NSNumber)?.intValue ?? -1,
                 layer: layer,
                 frame: cocoaRect(fromGlobalTopLeft: bounds, primaryHeight: primaryHeight),
-                alpha: (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1,
-                ownerName: info[kCGWindowOwnerName as String] as? String
+                alpha: (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1
             ))
         }
         return WindowSnapshot(windows: windows)

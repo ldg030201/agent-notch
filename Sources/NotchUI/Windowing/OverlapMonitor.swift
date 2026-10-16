@@ -20,7 +20,6 @@ enum OverlapScanner {
 
     struct Candidate: Sendable, Hashable {
         var windowNumber: Int
-        var ownerName: String
         var screenID: ScreenID
         /// 우리 앱 창 (우리 메뉴를 여는 동안만 후보가 된다)
         var isOwn: Bool
@@ -66,7 +65,6 @@ enum OverlapScanner {
                 guard overlapsZone || overlapsNotch else { continue }
                 result.append(Candidate(
                     windowNumber: window.number,
-                    ownerName: window.ownerName ?? "알 수 없는 앱",
                     screenID: target.id,
                     isOwn: isOwn,
                     overlapsZone: overlapsZone,
@@ -108,7 +106,8 @@ final class OverlapMonitor {
         var occluded: Set<ScreenID> = []
         /// `occluded` 중 접힌 아일랜드를 투명하게 숨길 화면
         var concealed: Set<ScreenID> = []
-        var notchConflicts: [ScreenID: String] = [:]
+        /// 다른 노치 앱이 노치를 쓰는 화면
+        var notchConflicts: Set<ScreenID> = []
     }
 
     /// 겹친 창 하나 (창 번호 · 화면)
@@ -239,7 +238,7 @@ final class OverlapMonitor {
         let allowsConcealment = Dictionary(targets.map { ($0.id, $0.allowsNewConcealment) }, uniquingKeysWith: { $0 && $1 })
         var next = State()
         // 감시하지 않은 화면의 노치 앱 정보는 유지 (아일랜드가 숨은 동안 깜빡이지 않게)
-        next.notchConflicts = previous.notchConflicts.filter { !screens.contains($0.key) }
+        next.notchConflicts = previous.notchConflicts.subtracting(screens)
 
         let notchNumbers = Set(candidates.filter(\.overlapsNotch).map(\.windowNumber))
         tracking.notchSeen = tracking.notchSeen.filter { notchNumbers.contains($0.key) }
@@ -258,7 +257,7 @@ final class OverlapMonitor {
             if candidate.overlapsNotch, let first = tracking.notchSeen[candidate.windowNumber],
                now.timeIntervalSince(first) >= notchPersistence {
                 // 오래 떠 있는 노치 창 = 다른 노치 앱. 메뉴로 보지 않는다.
-                next.notchConflicts[candidate.screenID] = candidate.ownerName
+                next.notchConflicts.insert(candidate.screenID)
                 continue
             }
             guard candidate.overlapsZone,

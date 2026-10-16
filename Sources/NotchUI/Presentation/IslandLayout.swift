@@ -79,8 +79,6 @@ struct IslandLayout: Equatable {
         return key
     }
 
-    /// 본문 시작 y (상단 행 바로 아래)
-    var contentTop: CGFloat { header.top + header.height }
     /// 본문 왼쪽/오른쪽 여백 (부분 1 때문에 프레임이 몸통보다 넓을 때)
     var contentLeftInset: CGFloat { header.leftInset }
     var contentRightInset: CGFloat { header.rightInset }
@@ -229,8 +227,8 @@ enum CompactText {
 
 /// 접힌 상태가 놓일 자리
 enum CompactPlacement: Equatable {
-    /// 노치 바로 아래 띠 (노치 화면은 늘 이것)
-    case strip(width: CGFloat)
+    /// 노치 바로 아래 띠 (노치 화면은 늘 이것, 폭은 노치 폭)
+    case strip
     case menuBarPill(centerX: CGFloat, width: CGFloat, items: CompactItems)
     case menuBarDot(centerX: CGFloat)
     case belowMenuBarPill(width: CGFloat, items: CompactItems)
@@ -275,7 +273,6 @@ struct IslandLayoutEngine {
     var menuBarVisible: Bool { space?.menuBarVisible ?? true }
     var notchWidth: CGFloat { geometry.notchSize.width }
     var notchMinX: CGFloat { midX - notchWidth / 2 }
-    var notchMaxX: CGFloat { midX + notchWidth / 2 }
     /// 노치 화면 목 높이 (노치와 메뉴바 중 큰 쪽)
     var neckHeight: CGFloat { max(geometry.headerHeight, menuBarHeight) }
 
@@ -302,7 +299,7 @@ struct IslandLayoutEngine {
 
     /// 노치 화면은 늘 노치 바로 아래 띠 (폭은 노치 폭, 메뉴바를 가리지 않는다), 노치 없는 화면은 메뉴바 알약 · 점
     func compactPlacement(for content: CompactContent) -> CompactPlacement {
-        let fresh = geometry.hasNotch ? .strip(width: notchWidth) : externalPlacement(content)
+        let fresh = geometry.hasNotch ? .strip : externalPlacement(content)
         return heldCollapsePlacement(fresh: fresh, content: content) ?? fresh
     }
 
@@ -611,24 +608,20 @@ struct IslandLayoutEngine {
 
     private func compactShape(placement: CompactPlacement, content: CompactContent) -> IslandLayout {
         switch placement {
-        case let .strip(width):
+        case .strip:
+            // 목(노치 높이) + 띠. 목과 띠는 노치 폭으로 같다
             let neck = neckHeight
-            let strip = stripHeight(for: content)
-            let height = neck + strip
-            let inset = ((width - notchWidth) / 2).rounded(.down)
+            let height = neck + stripHeight(for: content)
             var layout = IslandLayout(
-                size: CGSize(width: width, height: height),
-                origin: CGPoint(x: midX - width / 2, y: 0),
+                size: CGSize(width: notchWidth, height: height),
+                origin: CGPoint(x: notchMinX, y: 0),
                 shape: IslandShapeSpec(
-                    neckLeft: inset, neckRight: inset, neckHeight: neck,
+                    neckHeight: neck,
                     bodyTopRadius: 8, shoulderRadius: 6, bottomRadius: M.stripHeight / 2
                 ),
                 compact: .strip(items: stripItems(for: content))
             )
-            layout.hitRects = [
-                CGRect(x: inset, y: 0, width: width - inset * 2, height: neck),
-                CGRect(x: 0, y: neck, width: width, height: strip),
-            ]
+            layout.hitRects = [CGRect(origin: .zero, size: layout.size)]
             return layout
 
         case let .menuBarPill(centerX, width, items):
@@ -777,11 +770,10 @@ struct IslandLayoutEngine {
         let attachMin = p1.origin.x + piece.neckLeft
         let attachMax = p1.origin.x + p1.size.width - piece.neckRight
         let neckBottom = top + p1.size.height
-        let part1Bottom = p1.panelRect.maxY
         let barBottom = geometry.hasNotch ? neckHeight : (menuBarVisible ? menuBarHeight : 0)
-        // 몸통이 넓어지는 높이 · 상단 행 높이 (부분 1 아래)
+        // 몸통이 넓어지는 높이 = 상단 행 위끝 (부분 1 아래, 메뉴바 아래)
         let bodyTop = max(neckBottom, barBottom)
-        let headerTop = max(bodyTop, part1Bottom)
+        let headerTop = bodyTop
         let span = Self.cardBodySpan(
             preferred: preferredWidth, attachMin: attachMin, attachMax: attachMax, centerX: centerX, screenWidth: screenWidth
         )

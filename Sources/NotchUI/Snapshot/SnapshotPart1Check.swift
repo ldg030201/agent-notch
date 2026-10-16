@@ -32,9 +32,8 @@ enum SnapshotPart1Check {
     /// 전환 양 끝: 한쪽은 펼친 카드, 다른 쪽은 접힌 상태 (아니면 nil — 검사하지 않음).
     /// `cardToCard` 면 카드 → 카드 (열린 동안 접힌 내용이 바뀜): 전 카드의 부분 1 이 그대로여야 한다
     struct Ends {
-        /// 기준 모양 (접힌 상태, 카드 → 카드면 전 카드)
-        let compact: IslandLayout
         let card: IslandLayout
+        /// 기준 모양 치수 (접힌 상태, 카드 → 카드면 전 카드)
         let reference: Geometry
         let cardToCard: Bool
 
@@ -43,14 +42,13 @@ enum SnapshotPart1Check {
             let toCard = to.compact == nil && to.cardWidth > 0
             if cardToCard {
                 guard fromCard, toCard, from.shape.part1.width > 1 else { return nil }
-                compact = from
                 card = to
                 self.cardToCard = true
                 reference = SnapshotPart1Check.geometry(from)
                 return
             }
             guard fromCard != toCard else { return nil }
-            compact = fromCard ? to : from
+            let compact = fromCard ? to : from
             card = fromCard ? from : to
             self.cardToCard = false
             guard compact.compact != nil else { return nil }

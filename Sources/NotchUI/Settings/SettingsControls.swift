@@ -59,7 +59,7 @@ struct SettingsPalette {
 
 /// 둥근 상자로 묶은 설정 묶음 (제목 + 행들)
 struct SettingsGroup<Content: View>: View {
-    let title: String?
+    let title: String
     @ViewBuilder var content: Content
 
     @Environment(\.colorScheme) private var colorScheme
@@ -67,12 +67,10 @@ struct SettingsGroup<Content: View>: View {
     var body: some View {
         let palette = SettingsPalette.resolve(colorScheme)
         VStack(alignment: .leading, spacing: 6) {
-            if let title {
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .padding(.leading, 4)
-                    .accessibilityAddTraits(.isHeader)
-            }
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .padding(.leading, 4)
+                .accessibilityAddTraits(.isHeader)
             VStack(alignment: .leading, spacing: 0) {
                 content
             }

@@ -767,7 +767,7 @@ enum SnapshotShapeCheck {
     /// 경로 경계 · 하위 경로(주 외곽선 · 부분 1)마다 자기 교차.
     /// 모양이 여러 조각으로 보이는지는 칠한 래스터로 본다 (`SnapshotSeamCheck.rasterIssues`: 주 외곽선과 부분 1 은 하위 경로 둘이라
     /// 경로 조각 수로는 알 수 없다)
-    static func pathCheck(_ path: Path, rect: CGRect, expected: IslandOutline, extent: (minX: CGFloat, maxX: CGFloat)? = nil) -> [String] {
+    static func pathCheck(_ path: Path, rect: CGRect, expected: IslandOutline, extent range: (minX: CGFloat, maxX: CGFloat)) -> [String] {
         var issues: [String] = []
         if path.isEmpty {
             if !expected.isEmpty { issues.append("빈 경로") }
@@ -779,7 +779,6 @@ enum SnapshotShapeCheck {
             // 노치 보호로 프레임 밖까지 그리는 것은 0.5pt 이내만 정상
             issues.append(String(format: "경로가 프레임 밖 (%.1f,%.1f %.1f×%.1f)", bounds.minX, bounds.minY, bounds.width, bounds.height))
         }
-        let range = extent ?? (expected.minX, expected.maxX)
         if abs(bounds.minX - range.minX) > 1 || abs(bounds.maxX - range.maxX) > 1 {
             issues.append(String(format: "경로 가로 범위가 치수와 다름 (경로 x %.1f…%.1f, 예상 %.1f…%.1f)", bounds.minX, bounds.maxX, range.minX, range.maxX))
         }

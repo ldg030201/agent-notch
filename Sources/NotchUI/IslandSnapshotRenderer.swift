@@ -77,13 +77,13 @@ enum SnapshotScenario: String, CaseIterable {
     case working
     /// 작업 중 + 백그라운드 셸 1 · 서브에이전트 2 (접힌 상태 끝에 배지 "⧉ 3")
     case workingBackground = "working-background"
-    /// `working-background` 를 노치 아래 띠로 (양옆이 막힌 메뉴바)
+    /// `working-background` 를 양옆이 막힌 메뉴바에서 (노치 아래 띠가 앱 메뉴 · 상태 아이콘을 가리지 않는지)
     case workingBackgroundStrip = "working-background-strip"
     /// 쉬는 세션(blog)을 고정: api-server 가 작업 중이어도 넘기지 않고 고정한 세션을 "유휴" 로 보여준다
     case workingPinnedIdle = "working-pinned-idle"
     /// 세션 5개: 접힌 상태가 보여주는 세션(권한 대기, 카드 접음)을 포함한 모든 세션 요약 (기다리는 중 2 · 진행 중 1 · 끝남 2)
     case workingSummary = "working-summary"
-    /// `working-summary` 를 노치 아래 띠로 (양옆이 막힌 메뉴바)
+    /// `working-summary` 를 양옆이 막힌 메뉴바에서 (노치 아래 띠가 앱 메뉴 · 상태 아이콘을 가리지 않는지)
     case workingSummaryStrip = "working-summary-strip"
     case peek
     case permission

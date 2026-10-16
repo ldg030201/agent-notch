@@ -160,7 +160,7 @@ struct CompactSessionView: View {
 
     /// 레이아웃이 요약 자리를 줬고 요약이 있을 때만 요약 칩 (앞 내용과 간격 `summaryLead` 를 맞추는 여백 포함)
     @ViewBuilder
-    private func summaryChips(_ items: CompactItems, leading: CGFloat = 0) -> some View {
+    private func summaryChips(_ items: CompactItems, leading: CGFloat) -> some View {
         if items.contains(.summary), !summary.isEmpty {
             SessionSummaryChips(summary: summary, spokenPrefix: Self.summaryPrefix)
                 .padding(.leading, leading)
@@ -314,8 +314,10 @@ struct MenuBarDotView: View {
                 PulsingDot(color: Palette.amberNS, animated: !reduceMotion)
             case .red:
                 PulsingDot(color: Palette.redNS, animated: !reduceMotion)
-            case .green, .muted:
-                Circle().fill(tone.color)
+            case .green:
+                Circle().fill(Palette.green)
+            case .muted:
+                Circle().fill(Palette.muted)
             }
         }
         .frame(width: 6, height: 6)
@@ -333,16 +335,6 @@ struct MenuBarDotView: View {
     }
 }
 
-extension MenuBarDotView.Tone {
-    var color: Color {
-        switch self {
-        case .green: return Palette.green
-        case .amber: return Palette.amber
-        case .red: return Palette.red
-        case .muted: return Palette.muted
-        }
-    }
-}
 
 // MARK: - 카드 상단 행 왼쪽
 

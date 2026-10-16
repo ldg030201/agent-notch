@@ -545,10 +545,9 @@ final class PresentationController {
         )
     }
 
-    /// 화면 하나를 계산한 값: 레이아웃 · 그때 쓴 엔진 · 접힌 자리와 이 계산을 커밋하면 남을 배치 이력
+    /// 화면 하나를 계산한 값: 레이아웃 · 접힌 자리와 이 계산을 커밋하면 남을 배치 이력
     private struct Resolution {
         var layout: IslandLayout
-        var engine: IslandLayoutEngine
         var placement: CompactPlacement?
         var history: LayoutHistory
         var startsCollapseHold: Bool
@@ -587,7 +586,7 @@ final class PresentationController {
             history.forgetCompact()
         }
         return Resolution(
-            layout: result, engine: engine, placement: placement, history: history, startsCollapseHold: startsHold,
+            layout: result, placement: placement, history: history, startsCollapseHold: startsHold,
             measuredCompact: resolved.measured, peekBody: resolved.peekBody
         )
     }
@@ -791,7 +790,7 @@ final class PresentationController {
             return card(M.doneWidth, radius: 20) { _ in body }
 
         case .expanded:
-            return card(M.expandedSize.width, radius: 26) { _ in M.expandedBodyHeight }
+            return card(M.expandedWidth, radius: 26) { _ in M.expandedBodyHeight }
         }
     }
 

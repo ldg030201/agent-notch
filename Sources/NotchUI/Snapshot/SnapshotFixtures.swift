@@ -9,6 +9,7 @@ import NotchShared
 final class MemoryDefaults: UserDefaults {
     private var storage: [String: Any] = [:]
 
+    /// `UserDefaults.init()` 과 겹치지 않게 인자를 하나 둔다 (실패할 수 있는 이니셜라이저라 `guard let` 으로 받는다)
     init?(values: [String: Any] = [:]) {
         super.init(suiteName: "AgentNotch.snapshot.memory")
         storage = values

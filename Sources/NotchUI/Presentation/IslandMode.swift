@@ -94,7 +94,7 @@ enum IslandMetrics {
     static let permissionWidth: CGFloat = 480
     static let needsInputWidth: CGFloat = 440
     static let doneWidth: CGFloat = 430
-    static let expandedSize = CGSize(width: 620, height: 300)
+    static let expandedWidth: CGFloat = 620
     /// 펼침 본문 높이 (상단 행 제외)
     static let expandedBodyHeight: CGFloat = 268
     /// 노치 없는 화면에서 카드 최대 폭 (전체 펼침 제외)

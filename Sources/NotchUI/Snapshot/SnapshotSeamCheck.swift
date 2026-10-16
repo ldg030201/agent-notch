@@ -2,12 +2,12 @@ import CoreGraphics
 import SwiftUI
 
 // 이음매 검사: 목(메뉴바 띠)과 몸통이 이어지는 곳이 끊기거나 물리는지 (전환 시트 · 정지 장면이 함께 돌린다).
-// - 래스터: 모양(구멍 · 내용 없이, 실제와 같은 IslandShape 경로)을 2배로 칠해
+// - 래스터: 모양(내용 없이, 실제와 같은 IslandShape 경로)을 2배로 칠해
 //   칠한 덩어리 수(모양이 여러 조각으로 갈라짐), 열마다 띠 ↔ 몸통 사이 틈, 쪽마다 바깥 윤곽이 안으로 물린 곳(위아래보다 안쪽)을 찾는다.
 // - 치수: 목 끝과 몸통 끝이 1–6pt 로 거의 겹친 이음매
 //   · 두 모서리가 하나의 S 곡선으로 이어지지 않음 (사이에 턱이 남거나 볼록 · 볼록이 맞물림)
 //   · 카드를 펼치고 접는 중에 목(노치 화면의 띠 · 메뉴바 알약) 끝이 움직이며 몸통 끝과 맞닿음
-//     (띠가 날개처럼 펼쳐지는 순간 바깥 끝이 잘렸다 붙어 보임. 접힌 띠 ↔ 접힌 띠는 몸통 = 띠라 보지 않음)
+//     (띠가 옆으로 퍼지는 순간 바깥 끝이 잘렸다 붙어 보임. 접힌 띠 ↔ 접힌 띠는 몸통 = 띠라 보지 않음)
 //   시트 프레임 사이도 스프링 값을 촘촘히 훑는다.
 
 @MainActor
@@ -45,7 +45,7 @@ enum SnapshotSeamCheck {
     static func check(layout: IslandLayout, ends: Ends? = nil) -> [String] {
         let outline = SnapshotShapeCheck.drawnOutline(layout)
         guard !outline.isEmpty else { return [] }
-        return rasterIssues(layout, outline: outline) + jointIssues(layout, outline: outline, ends: ends).map(\.text)
+        return rasterIssues(layout, top: outline.top) + jointIssues(layout, outline: outline, ends: ends).map(\.text)
     }
 
     // MARK: 래스터
@@ -112,7 +112,7 @@ enum SnapshotSeamCheck {
         }
     }
 
-    /// 레이아웃의 모양 (구멍 없이)
+    /// 레이아웃의 모양 (내용 없이)
     static func rasterize(_ layout: IslandLayout) -> Raster? {
         rasterize(IslandShape(spec: layout.shapeSpec).path(in: CGRect(origin: .zero, size: layout.size)), size: layout.size)
     }
@@ -141,13 +141,14 @@ enum SnapshotSeamCheck {
         return Raster(width: width, height: height, pixels: Array(UnsafeBufferPointer(start: buffer, count: width * height)), pad: pad, scale: scale)
     }
 
-    static func rasterIssues(_ layout: IslandLayout, outline o: IslandOutline) -> [String] {
+    static func rasterIssues(_ layout: IslandLayout, top: CGFloat) -> [String] {
         guard let raster = rasterize(layout) else { return ["이음매 래스터를 만들지 못함"] }
-        return rasterIssues(raster, outline: o, originX: layout.origin.x)
+        return rasterIssues(raster, top: top, originX: layout.origin.x)
     }
 
+    /// - top: 모양 위끝 (프레임 기준. 물림은 그 아래 줄부터 본다)
     /// - originX: 보고에 쓸 프레임 왼쪽의 패널 기준 x
-    static func rasterIssues(_ raster: Raster, outline o: IslandOutline, originX: CGFloat) -> [String] {
+    static func rasterIssues(_ raster: Raster, top: CGFloat, originX: CGFloat) -> [String] {
         var issues: [String] = []
         // 0) 칠한 모양이 여러 덩어리 (주 외곽선과 부분 1 이 떨어짐 등)
         let pieces = raster.componentCount
@@ -180,7 +181,7 @@ enum SnapshotSeamCheck {
         }
 
         // 2) 쪽마다 바깥 윤곽: 위 · 아래 줄보다 안쪽으로 들어간 줄이 있으면 물림 (맨 위 줄 · 위 모서리 반경 아래부터)
-        let firstRow = max(0, raster.row(o.top + 0.75) + 1)
+        let firstRow = max(0, raster.row(top + 0.75) + 1)
         var left: [Int?] = Array(repeating: nil, count: raster.height)
         var right: [Int?] = Array(repeating: nil, count: raster.height)
         for row in firstRow..<raster.height {
@@ -227,45 +228,39 @@ enum SnapshotSeamCheck {
     /// 래스터 검사 자체 점검: 일부러 끊고 물린 모양을 찾아내는지 (못 찾으면 문제 목록)
     static func selfTest() -> [String] {
         var problems: [String] = []
-        var o = IslandOutline()
-        o.top = 0
-        o.nx0 = 40
-        o.nx1 = 160
-        o.bx0 = 20
-        o.bx1 = 180
         let size = CGSize(width: 200, height: 80)
         // 띠(0…33)와 몸통(35…80) 사이 2pt 틈
         var gap = Path()
         gap.addRect(CGRect(x: 40, y: 0, width: 120, height: 33))
         gap.addRect(CGRect(x: 20, y: 35, width: 160, height: 45))
-        if let raster = rasterize(gap, size: size), !rasterIssues(raster, outline: o, originX: 0).contains(where: { $0.contains("끊김") }) {
+        if let raster = rasterize(gap, size: size), !rasterIssues(raster, top: 0, originX: 0).contains(where: { $0.contains("끊김") }) {
             problems.append("띠 ↔ 몸통 틈을 못 찾음")
         }
         // 목 아래 볼록 모서리와 몸통 위 볼록 모서리가 맞물려 안으로 물린 모양
         var bite = Path()
         bite.addRoundedRect(in: CGRect(x: 20, y: 0, width: 160, height: 36), cornerSize: CGSize(width: 6, height: 6))
         bite.addRoundedRect(in: CGRect(x: 20, y: 35, width: 160, height: 45), cornerSize: CGSize(width: 6, height: 6))
-        if let raster = rasterize(bite, size: size), !rasterIssues(raster, outline: o, originX: 0).contains(where: { $0.contains("물림") }) {
+        if let raster = rasterize(bite, size: size), !rasterIssues(raster, top: 0, originX: 0).contains(where: { $0.contains("물림") }) {
             problems.append("볼록 · 볼록 물림을 못 찾음")
         }
         // 옆으로 떨어진 두 덩어리 (세로로는 겹치지 않아 열 틈으로는 안 보임)
         var apart = Path()
         apart.addRect(CGRect(x: 20, y: 0, width: 60, height: 40))
         apart.addRect(CGRect(x: 120, y: 0, width: 60, height: 40))
-        if let raster = rasterize(apart, size: size), !rasterIssues(raster, outline: o, originX: 0).contains(where: { $0.contains("조각 2개") }) {
+        if let raster = rasterize(apart, size: size), !rasterIssues(raster, top: 0, originX: 0).contains(where: { $0.contains("조각 2개") }) {
             problems.append("떨어진 두 덩어리를 못 찾음")
         }
         // 겹친 두 하위 경로(주 외곽선 + 부분 1 처럼)는 한 덩어리
         var overlapped = Path()
         overlapped.addRoundedRect(in: CGRect(x: 20, y: 0, width: 160, height: 80), cornerSize: CGSize(width: 12, height: 12))
         overlapped.addRoundedRect(in: CGRect(x: 40, y: 0, width: 120, height: 30), cornerSize: CGSize(width: 8, height: 8))
-        if let raster = rasterize(overlapped, size: size), !rasterIssues(raster, outline: o, originX: 0).isEmpty {
+        if let raster = rasterize(overlapped, size: size), !rasterIssues(raster, top: 0, originX: 0).isEmpty {
             problems.append("겹친 두 하위 경로를 문제로 봄")
         }
         // 이어진 모양은 문제 없음
         var whole = Path()
         whole.addRoundedRect(in: CGRect(x: 20, y: 0, width: 160, height: 80), cornerSize: CGSize(width: 12, height: 12))
-        if let raster = rasterize(whole, size: size), !rasterIssues(raster, outline: o, originX: 0).isEmpty {
+        if let raster = rasterize(whole, size: size), !rasterIssues(raster, top: 0, originX: 0).isEmpty {
             problems.append("이어진 모양을 문제로 봄")
         }
         return problems

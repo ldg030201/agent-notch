@@ -30,9 +30,7 @@ public protocol GlobalShortcutState: AnyObject {
 /// 노치 UI 진입점. 화면별 패널 생성, 표시 모드 계산, 설정 창을 묶는다.
 @MainActor
 public final class NotchUIController {
-    private let store: SessionStore
     private let preferences: AppPreferences
-    private let actions: IslandActions
     private let settings: SettingsProvider
 
     private let presentation: PresentationController
@@ -49,9 +47,7 @@ public final class NotchUIController {
     }
 
     public init(store: SessionStore, preferences: AppPreferences, actions: IslandActions, settings: SettingsProvider) {
-        self.store = store
         self.preferences = preferences
-        self.actions = actions
         self.settings = settings
 
         let presentation = PresentationController(store: store, preferences: preferences, actions: actions)
