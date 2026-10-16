@@ -265,7 +265,18 @@ struct SettingsView: View {
     private var generalSection: some View {
         VStack(alignment: .leading, spacing: 18) {
             SettingsGroup(title: "권한 요청") {
-                switchRow("터미널이 앞에 있으면 권한 요청을 터미널로 넘기기", isOn: $preferences.passthroughWhenTerminalFrontmost)
+                switchRow(
+                    "세션 앱을 보고 있으면 그 앱으로 넘기기",
+                    note: "터미널 · Claude 앱이 앞에 있으면 노치에서 기다리지 않고 그 앱의 승인 창 · 질문으로 넘겨요",
+                    isOn: $preferences.passthroughWhenTerminalFrontmost
+                )
+                SettingsDivider()
+                switchRow(
+                    "Claude 앱 권한 요청은 노치에서 받기",
+                    note: "Claude 앱을 보고 있어도 노치에서 바로 허용 · 거부해요. Claude 앱 승인 창도 같이 떠서 먼저 누른 쪽으로 정해져요",
+                    isOn: $preferences.claudeAppPermissionsInNotch
+                )
+                .disabled(!preferences.passthroughWhenTerminalFrontmost)
                 SettingsDivider()
                 SettingsRow(title: "권한 대기 시간", note: "지나면 Claude Code 기본 프롬프트로 넘겨요") {
                     SettingsStepper(value: $preferences.permissionTimeout, range: 15...540, step: 15) { "\(Int($0))초" }

@@ -25,6 +25,7 @@ import Testing
             preferences.permissionTimeout = 30
             preferences.staleSessionTimeout = 60
             preferences.passthroughWhenTerminalFrontmost = false
+            preferences.claudeAppPermissionsInNotch = false
             preferences.externalDisplayStyle = .hidden
             preferences.restoresRecentSessions = false
             preferences.checksForUpdates = false
@@ -49,6 +50,7 @@ import Testing
                 #expect(preferences.permissionTimeout == fresh.permissionTimeout)
                 #expect(preferences.staleSessionTimeout == fresh.staleSessionTimeout)
                 #expect(preferences.passthroughWhenTerminalFrontmost == fresh.passthroughWhenTerminalFrontmost)
+                #expect(preferences.claudeAppPermissionsInNotch == fresh.claudeAppPermissionsInNotch)
                 #expect(preferences.externalDisplayStyle == fresh.externalDisplayStyle)
                 #expect(preferences.restoresRecentSessions == fresh.restoresRecentSessions)
                 #expect(preferences.checksForUpdates == fresh.checksForUpdates)
@@ -83,6 +85,31 @@ import Testing
             #expect(reloaded.globalShortcut == combo)
             #expect(reloaded.globalShortcut.displayString == "⇧⌘Space")
             #expect(reloaded.globalShortcutEnabled)
+        }
+    }
+
+    /// 세션 앱이 앞에 있을 때 넘기기: Claude 앱 권한 요청만 (처음 값으로) 노치에서 받고, 질문 · 터미널은 넘긴다
+    @Test func passthroughToFrontmostHost() {
+        Self.withDefaults { defaults, _ in
+            let preferences = AppPreferences(defaults: defaults)
+            #expect(preferences.passthroughWhenTerminalFrontmost)
+            #expect(preferences.claudeAppPermissionsInNotch)
+            #expect(!preferences.passesThroughToFrontmostHost(isClaudeApp: true, isInteraction: false))
+            #expect(preferences.passesThroughToFrontmostHost(isClaudeApp: true, isInteraction: true))
+            #expect(preferences.passesThroughToFrontmostHost(isClaudeApp: false, isInteraction: false))
+            #expect(preferences.passesThroughToFrontmostHost(isClaudeApp: false, isInteraction: true))
+
+            // Claude 앱 권한 요청도 넘기기 (예전 동작)
+            preferences.claudeAppPermissionsInNotch = false
+            #expect(preferences.passesThroughToFrontmostHost(isClaudeApp: true, isInteraction: false))
+
+            // 넘기기를 끄면 무엇도 넘기지 않는다
+            preferences.passthroughWhenTerminalFrontmost = false
+            for claude in [true, false] {
+                for interaction in [true, false] {
+                    #expect(!preferences.passesThroughToFrontmostHost(isClaudeApp: claude, isInteraction: interaction))
+                }
+            }
         }
     }
 
