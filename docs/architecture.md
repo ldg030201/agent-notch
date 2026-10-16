@@ -456,8 +456,9 @@ Claude 의 객관식 질문과 계획 승인을 다이얼로그 대신 노치에
 
 ### 검증: 스냅숏 렌더링
 
-- `AgentNotch --render-island <장면|all> <폴더> [--style notch|menubar|both]` 로 실제 뷰를 PNG 로 그린다
-  (화면 기록 권한 불필요, 가짜 데이터). 파일 이름 `<장면>-<notch|menubar>.png`.
+- `AgentNotch --render-island <장면|all> <폴더> [--style notch|menubar|both] [--crop]` 로 실제 뷰를 PNG 로 그린다
+  (화면 기록 권한 불필요, 가짜 데이터). 파일 이름 `<장면>-<notch|menubar>.png`. `--crop` 은 메뉴바 위 끝부터 아일랜드
+  둘레(양옆 48pt · 아래 28pt, 최소 폭 520pt)만 남긴다 — README 스크린샷(`scripts/readme-images.sh` → `docs/images`).
 - 오프스크린 렌더링은 AppKit 기반 컨트롤(Picker, Slider, 스위치, ScrollView 등)을 그리지 못하므로 스냅숏에서만 같은 모양의
   SwiftUI 그림으로 대체한다. 아일랜드 안에는 AppKit 기반 컨트롤을 넣지 않는다 (질문 카드 "기타" 입력란만 예외 — 스냅숏은 글자 그림).
 - 질문 · 계획 카드 장면: `question` (한 개 고르기) · `question-multi` (여러 개) · `question-pages` (질문 두 개, 1/2) ·

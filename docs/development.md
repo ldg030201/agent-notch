@@ -65,7 +65,8 @@ VARIANT=test scripts/build.sh     # build/AgentNotch-Test.app 만 만들기
 
 | 명령 | 용도 |
 |---|---|
-| `AgentNotch --render-island <장면\|all> <폴더> [--style notch\|menubar\|both]` | 아일랜드 장면 PNG. 화면 기록 권한 불필요, 가짜 데이터. 화면에 영향을 주는 변경은 이걸로 먼저 본다 |
+| `AgentNotch --render-island <장면\|all> <폴더> [--style notch\|menubar\|both] [--crop]` | 아일랜드 장면 PNG. 화면 기록 권한 불필요, 가짜 데이터. 화면에 영향을 주는 변경은 이걸로 먼저 본다. `--crop` 은 아일랜드 둘레만 |
+| `scripts/readme-images.sh` | README 스크린샷(`docs/images/*.png`)을 다시 만든다. 화면이 바뀌면 다시 뽑아 README 와 함께 커밋 |
 | `AgentNotch --demo` | 데모 시나리오로 시작 (`open build/AgentNotch-Test.app --args --demo`) |
 | `scripts/simulate-events.sh [--fast] [--keep]` | `Fixtures/events/*.json` 을 `notch-hook` 으로 실행 중인 앱에 흘린다. 권한 요청 단계는 노치에서 고른 결정을 출력 |
 | `AgentNotch --dump-changelog [경로]` | 변경 내역 JSON |

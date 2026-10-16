@@ -30,7 +30,7 @@ enum RenderIslandCommand {
                 // 파일 이름: <장면>-<notch|menubar>.png
                 let url = directory.appendingPathComponent("\(name)-\(style.rawValue.lowercased()).png")
                 do {
-                    try IslandSnapshotRenderer.renderPNG(scenario: name, style: style, to: url)
+                    try IslandSnapshotRenderer.renderPNG(scenario: name, style: style, crop: request.crop, to: url)
                     print(url.path)
                 } catch {
                     printToStandardError("\(name) (\(style.rawValue)): \(error.localizedDescription)")

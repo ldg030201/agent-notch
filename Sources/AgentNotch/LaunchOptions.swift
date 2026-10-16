@@ -5,7 +5,7 @@
 /// | `--help`, `-h` | 이 사용법 출력 후 종료 |
 /// | `--version`, `-v` | `agent-notch <버전>` 출력 후 종료 |
 /// | `--dump-changelog [경로]` | 변경 내역 JSON 출력 (경로가 없으면 stdout) |
-/// | `--render-island <장면\|all> <폴더> [--style notch\|menubar\|both]` | 아일랜드 장면을 PNG 로 저장 |
+/// | `--render-island <장면\|all> <폴더> [--style notch\|menubar\|both] [--crop]` | 아일랜드 장면을 PNG 로 저장 (`--crop`: 아일랜드 둘레만, README 용) |
 /// | `--probe-upgrade` | brew 위치와 업데이트 스크립트 문법 점검 (실행하지 않음) |
 /// | `--install-hooks [--no-message-display]` | Claude Code 훅 설치 (settings.json 백업 후 AgentNotch 항목만 추가) |
 /// | `--uninstall-hooks` | AgentNotch 훅만 제거 |
@@ -13,11 +13,13 @@
 /// | `--demo` | 데모 시나리오로 시작 |
 /// | `--dock` | (개발용) Dock 아이콘을 보이게 띄움 — 화면 캡처 도구가 앱으로 인식하게 |
 struct LaunchOptions {
-    /// `--render-island <장면|all> <폴더> [--style notch|menubar|both]`
+    /// `--render-island <장면|all> <폴더> [--style notch|menubar|both] [--crop]`
     struct RenderIsland: Equatable {
         var scenario: String
         var outputDirectory: String
         var style = "notch"
+        /// 아일랜드 둘레만 잘라 저장 (README 스크린샷)
+        var crop = false
     }
 
     /// `--dump-changelog [경로]`
@@ -40,6 +42,7 @@ struct LaunchOptions {
 
     init(arguments: [String]) {
         var style: String?
+        var crop = false
         var includeMessageDisplay = true
         var index = arguments.index(after: arguments.startIndex)
         // 값을 하나 받는 인자: 다음 인자를 꺼내고, 없으면 nil
@@ -82,11 +85,13 @@ struct LaunchOptions {
                     break
                 }
                 style = value
+            case "--crop": crop = true
             default: break  // -NSDocumentRevisionsDebugMode 같은 시스템 인자는 무시
             }
             index = arguments.index(after: index)
         }
         if let style { renderIsland?.style = style }
+        if crop { renderIsland?.crop = true }
         // 모르는 `--` 인자를 앱 실행으로 넘기지 않는다 (오타가 앱을 하나 더 띄워 "이미 실행 중" 창을 내지 않게).
         // `-NSDocumentRevisionsDebugMode` 처럼 시스템이 붙이는 인자는 대시가 하나라 그대로 둔다
         if usageError == nil, let unknown = arguments.dropFirst().first(where: { $0.hasPrefix("--") && !Self.knownFlags.contains($0) }) {
@@ -97,7 +102,7 @@ struct LaunchOptions {
 
     static let knownFlags: Set<String> = [
         "--demo", "--dock", "--version", "--help", "--probe-upgrade", "--install-hooks", "--no-message-display",
-        "--uninstall-hooks", "--hook-status", "--dump-changelog", "--render-island", "--style",
+        "--uninstall-hooks", "--hook-status", "--dump-changelog", "--render-island", "--style", "--crop",
     ]
 
     static let usage = """
@@ -110,7 +115,7 @@ struct LaunchOptions {
           --uninstall-hooks                   AgentNotch 훅만 제거
           --hook-status                       훅 설치 상태 출력
           --dump-changelog [경로]             변경 내역 JSON 출력
-          --render-island <장면|all> <폴더> [--style notch|menubar|both]  아일랜드 장면 PNG 저장
+          --render-island <장면|all> <폴더> [--style notch|menubar|both] [--crop]  아일랜드 장면 PNG 저장 (--crop: 아일랜드 둘레만)
           --probe-upgrade                     brew 위치 · 업데이트 스크립트 문법 점검 (실행 안 함)
         """
 }

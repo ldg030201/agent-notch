@@ -36,8 +36,9 @@ public enum IslandSnapshotRenderer {
     }
 
     /// 장면 하나를 PNG 로 저장한다. 배경은 메뉴바 일부를 흉내 낸 밝은 띠 위에 아일랜드를 올린 모양.
+    /// - crop: 메뉴바 위 끝부터 아일랜드(펼친 카드 포함) 둘레만 남긴다 (README 스크린샷). 전환 시트 · 설정 화면은 그대로
     @MainActor
-    public static func renderPNG(scenario: String, style: Style, to url: URL) throws {
+    public static func renderPNG(scenario: String, style: Style, crop: Bool = false, to url: URL) throws {
         if let transition = SnapshotTransition.named(scenario) {
             let image = try SnapshotAnimationSheet.render(transition, style: style)
             try write(image, to: url)
@@ -46,7 +47,7 @@ public enum IslandSnapshotRenderer {
         guard let scene = SnapshotScenario(rawValue: scenario) else {
             throw RenderError.unknownScenario(scenario)
         }
-        let image = try SnapshotStage.render(scene, style: style)
+        let image = try SnapshotStage.render(scene, style: style, crop: crop)
         try write(image, to: url)
     }
 
@@ -382,7 +383,7 @@ struct SnapshotSetup {
 
 @MainActor
 enum SnapshotStage {
-    static func render(_ scene: SnapshotScenario, style: IslandSnapshotRenderer.Style) throws -> CGImage {
+    static func render(_ scene: SnapshotScenario, style: IslandSnapshotRenderer.Style, crop: Bool = false) throws -> CGImage {
         if scene.isSettings {
             var world = SnapshotWorld()
             world.startSessions()
@@ -390,13 +391,35 @@ enum SnapshotStage {
         }
         let setup = try prepare(scene, style: style)
         // 관찰 패스를 한 번 돌린 뒤(커밋) 그린다. 정지 장면도 이음매 검사 (목 ↔ 몸통 끊김 · 물림 · 거의 겹친 이음매)
-        let seam = SnapshotSeamCheck.check(layout: setup.draw())
+        let layout = setup.draw()
+        let seam = SnapshotSeamCheck.check(layout: layout)
         print("== \(scene.rawValue) (\(style.rawValue)): 이음매 검사: 위반 \(seam.count)"
             + seam.map { "\n   ✗ \($0)" }.joined())
         let canvas = SnapshotIslandCanvas(bar: setup.bar, presentation: setup.presentation)
             .environment(\.islandRenderContext, IslandRenderContext(isSnapshot: true, fixedNow: setup.world.clock.now))
             .environment(\.colorScheme, .light)
-        return try image(of: canvas, size: CGSize(width: setup.bar.geometry.frame.width, height: setup.bar.canvasHeight))
+        let size = CGSize(width: setup.bar.geometry.frame.width, height: setup.bar.canvasHeight)
+        let full = try image(of: canvas, size: size)
+        guard crop else { return full }
+        return try cropped(full, canvas: size, around: layout.panelRect)
+    }
+
+    /// README 용으로 자르는 아일랜드 둘레 (pt): 양옆 여백 · 아래 여백 · 최소 폭 (노치 아래 띠처럼 좁아도 메뉴바가 조금 보이게)
+    static let cropSideMargin: CGFloat = 48
+    static let cropBottomMargin: CGFloat = 28
+    static let cropMinWidth: CGFloat = 520
+
+    /// 메뉴바 위 끝부터 아일랜드 아래 여백까지, 아일랜드 가운데로 자른다 (화면 밖으로 나가지 않게)
+    private static func cropped(_ image: CGImage, canvas: CGSize, around island: CGRect) throws -> CGImage {
+        let scale = CGFloat(image.width) / canvas.width
+        let width = min(canvas.width, max(cropMinWidth, island.width + cropSideMargin * 2))
+        let minX = min(max(0, island.midX - width / 2), canvas.width - width)
+        let height = min(canvas.height, island.maxY + cropBottomMargin)
+        let rect = CGRect(x: minX * scale, y: 0, width: width * scale, height: height * scale).integral
+        guard let result = image.cropping(to: rect) else {
+            throw IslandSnapshotRenderer.RenderError.renderFailed("이미지 자르기 실패")
+        }
+        return result
     }
 
     private static func makePreferences() throws -> AppPreferences {
