@@ -95,6 +95,8 @@ enum SnapshotScenario: String, CaseIterable {
     case needsInputDesktop = "needs-input-desktop"
     /// Claude 데스크톱 앱 세션의 권한 요청을 "Claude로" 넘긴 뒤: 훅 대기 없이 앱에서 승인을 기다림 (문구 · 버튼이 Claude 앱)
     case permissionHandoffDesktop = "permission-handoff-desktop"
+    /// Claude 데스크톱 앱 세션의 삭제 권한 요청: 앱을 보고 있어도 노치에서 바로 허용 · 거부 (버튼이 "Claude로")
+    case permissionDesktop = "permission-desktop"
     /// 노치에서 답하는 질문: 한 개 고르기 (선택지 설명 있음)
     case question
     /// 여러 개 고르는 질문 (둘 고름)
@@ -526,6 +528,12 @@ enum SnapshotStage {
             if let request = world.store.pendingPermissions.first {
                 presentation.minimize(request)
             }
+        case .permissionDesktop:
+            world.hostEnvironment[SnapshotWorld.webApp.id] = SnapshotWorld.desktopEnvironment
+            world.apiServerEdits()
+            world.apiServerRunsTests()
+            showCompact()
+            world.webAppAsksDeletePermission()
         case .permissionHandoffDesktop:
             world.hostEnvironment[SnapshotWorld.webApp.id] = SnapshotWorld.desktopEnvironment
             world.apiServerEdits()

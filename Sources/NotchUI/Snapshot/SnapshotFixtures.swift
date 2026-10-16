@@ -283,6 +283,25 @@ struct SnapshotWorld {
         clock.set(842)
     }
 
+    /// web-app: 빌드 결과물 삭제 권한 요청 (`permission-desktop`: Claude 앱 세션도 노치에서 바로 허용 · 거부)
+    mutating func webAppAsksDeletePermission() {
+        let web = Self.webApp
+        send(web, "UserPromptSubmit", at: 820, ["prompt": "빌드 결과물 지우고 처음부터 다시 빌드해줘"])
+        let command: [String: Any] = ["command": "rm -rf dist .next", "description": "빌드 결과물 삭제"]
+        start(web, "Bash", at: 830, input: command)
+        send(web, "PermissionRequest", at: 831, [
+            "tool_name": "Bash",
+            "tool_input": command,
+            "permission_suggestions": [[
+                "type": "addRules",
+                "rules": [["toolName": "Bash", "ruleContent": "rm -rf dist .next"]],
+                "behavior": "allow",
+                "destination": "localSettings",
+            ]],
+        ])
+        clock.set(842)
+    }
+
     /// web-app: 카드에 다 들어가지 않는 여러 줄 명령 권한 요청 (허용 막힘 · 터미널로 안내)
     mutating func webAppAsksClippedPermission() {
         let web = Self.webApp
