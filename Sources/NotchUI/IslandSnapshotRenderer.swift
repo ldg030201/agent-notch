@@ -83,7 +83,9 @@ enum SnapshotScenario: String, CaseIterable {
     case workingBackground = "working-background"
     /// `working-background` 를 노치 아래 띠로 (양옆이 막힌 메뉴바)
     case workingBackgroundStrip = "working-background-strip"
-    /// 세션 5개: 접힌 상태가 보여주는 세션(권한 대기, 카드 접음) 말고 기다리는 중 1 · 진행 중 1 · 끝남 2 요약
+    /// 쉬는 세션(blog)을 고정: api-server 가 작업 중이어도 넘기지 않고 고정한 세션을 "유휴" 로 보여준다
+    case workingPinnedIdle = "working-pinned-idle"
+    /// 세션 5개: 접힌 상태가 보여주는 세션(권한 대기, 카드 접음)을 포함한 모든 세션 요약 (기다리는 중 2 · 진행 중 1 · 끝남 2)
     case workingSummary = "working-summary"
     /// `working-summary` 를 노치 아래 띠로 (양옆이 막힌 메뉴바)
     case workingSummaryStrip = "working-summary-strip"
@@ -460,7 +462,7 @@ enum SnapshotStage {
             world.startMoreSessions()
         case .workingSummary, .workingSummaryStrip, .expandedSummary:
             // api-server 작업 중 · web-app 권한 대기 · blog 입력 대기 · docs-site / mobile-app 쉬는 중.
-            // 기다리는 세션이 있으면 늘 그 세션이 포커스라 접힌 상태는 web-app 을 보여주고(두 알림은 접어 둠), 나머지를 요약한다
+            // 기다리는 세션이 있으면 늘 그 세션이 포커스라 접힌 상태는 web-app 을 보여주고(두 알림은 접어 둠), 모든 세션을 요약한다
             world.startMoreSessions()
             world.apiServerEdits()
             world.apiServerRunsTests()
@@ -490,6 +492,10 @@ enum SnapshotStage {
                 showCompact()
                 presentation.toggleExpanded(on: screenID)
             }
+        case .workingPinnedIdle:
+            world.apiServerEdits()
+            world.apiServerRunsTests()
+            world.store.togglePin(sessionID: SnapshotWorld.blog.id)
         case .workingWingsRetracted:
             // 마우스를 올린 오른쪽 날개가 노치 안으로 들어간 모습
             world.apiServerEdits()

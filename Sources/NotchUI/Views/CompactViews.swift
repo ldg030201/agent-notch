@@ -72,10 +72,35 @@ struct CompactSessionView: View {
 
     var body: some View {
         if let session {
-            content(session)
-                .accessibilityElement(children: .combine)
+            // 보여주는 세션이 바뀌면(자동 넘기기 · 알림 · 고름) 옆으로 넘긴다: 이전 세션은 왼쪽으로 흐려지며 나가고
+            // 새 세션은 오른쪽에서 들어온다. 날개마다 제자리에서 조금만 움직여 노치(카메라)를 가로지르지 않는다.
+            // 점 · 선은 색만 바뀐다
+            ZStack(alignment: .topLeading) {
+                content(session)
+                    .id(Self.slides(layout) ? session.id : "")
+                    .transition(reduceMotion ? .opacity : Self.slide)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .animation(IslandMotion.carousel, value: session.id)
+            .accessibilityElement(children: .combine)
         } else {
             Color.clear
+        }
+    }
+
+    /// 세션을 넘길 때 내용이 움직이는 거리 (pt)
+    static let slideDistance: CGFloat = 28
+
+    private static let slide = AnyTransition.asymmetric(
+        insertion: .offset(x: slideDistance).combined(with: .opacity),
+        removal: .offset(x: -slideDistance).combined(with: .opacity)
+    )
+
+    /// 글자가 있는 접힌 모양(날개 · 노치 아래 띠 · 알약)만 넘기는 움직임을 준다
+    private static func slides(_ layout: IslandLayout) -> Bool {
+        switch layout.compact {
+        case .wings, .strip, .pill: return true
+        case .line, .dot, nil: return false
         }
     }
 

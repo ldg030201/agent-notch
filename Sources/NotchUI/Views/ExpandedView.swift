@@ -172,10 +172,13 @@ struct SessionRow: View {
                         BackgroundTaskBadge(count: session.backgroundTaskCount)
                     }
                     if isPinned {
-                        Image(systemName: "pin")
-                            .font(.system(size: 11))
+                        // 고정한 세션: 접힌 아일랜드가 넘기지 않고 이 세션만 보여준다
+                        Image(systemName: "pin.fill")
+                            .font(.system(size: 10))
+                            .rotationEffect(.degrees(45))
                             .foregroundStyle(Palette.secondary)
                             .accessibilityLabel("고정됨")
+                            .help("고정됨 · 우클릭해서 해제")
                     }
                 }
                 .padding(.vertical, 6)
@@ -191,15 +194,21 @@ struct SessionRow: View {
             .accessibilityLabel(Self.spokenLabel(session, subtitle: subtitle))
             .accessibilityAddTraits(isSelected ? .isSelected : [])
             .contextMenu {
-                Button(isPinned ? "고정 해제" : "고정") {
+                Button {
                     actions.togglePin(sessionID: session.id)
+                } label: {
+                    Label(isPinned ? "고정 해제" : "고정", systemImage: isPinned ? "pin.slash" : "pin")
                 }
-                Button(SessionHost(session.terminal).jumpLabel) {
+                Button {
                     actions.jumpToTerminal(sessionID: session.id)
+                } label: {
+                    Label(SessionHost(session.terminal).jumpLabel, systemImage: "arrow.up.forward.app")
                 }
                 Divider()
-                Button("목록에서 제거", role: .destructive) {
+                Button(role: .destructive) {
                     actions.dismiss(sessionID: session.id)
+                } label: {
+                    Label("목록에서 제거", systemImage: "xmark")
                 }
             }
         }

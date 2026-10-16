@@ -164,13 +164,15 @@ struct CompactMetrics: Equatable {
 enum CompactText {
     enum Tone { case amber, red, muted }
 
-    /// 작업 중이 아닌 단계의 상태 문구 (승인 필요 등). 작업 중이면 nil
+    /// 작업 중이 아닌 단계의 상태 문구 (승인 필요 등). 작업 중이면 nil.
+    /// 쉬는 세션은 고정했을 때만 접힌 상태에 보인다: 지난 턴의 `+N −M` 대신 "유휴" (백그라운드 작업이 돌면 배지만)
     static func attentionText(_ session: AgentSession) -> (text: String, tone: Tone)? {
         switch session.phase {
         case .waitingPermission: return ("승인 필요", .amber)
         case .waitingInput: return ("입력 필요", .amber)
         case .failed: return ("실패", .red)
         case .completed: return ("완료", .muted)
+        case .idle where session.backgroundTaskCount == 0: return ("유휴", .muted)
         default: return nil
         }
     }

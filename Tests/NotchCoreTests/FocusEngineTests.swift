@@ -145,6 +145,182 @@ import NotchShared
         #expect(store.rankedSessions.map(\.id) == ["a"])
     }
 
+    // MARK: - 자동 넘기기
+
+    @Test func rotationPoolKeepsActiveSessionsInStartOrder() {
+        var background = session("background", phase: .idle, at: 15)
+        background.backgroundShells = 1
+        let sessions = [
+            session("thinking", phase: .thinking, at: 30),
+            session("idle", phase: .idle, at: 5),
+            session("unseen", phase: .completed, at: 20, unseen: true),
+            session("seen", phase: .idle, at: 25),
+            session("asking", phase: .waitingInput, at: 10),
+            session("failed", phase: .failed, at: 40),
+            background,
+        ]
+        // 쉬는 세션(확인한 완료 포함)은 넘기지 않는다. 순서는 시작한 순서 (이벤트로 바뀌지 않음)
+        let pool = FocusEngine.rotationPool(sessions)
+        #expect(pool == ["asking", "background", "unseen", "thinking", "failed"])
+
+        #expect(FocusEngine.next(after: "asking", in: pool) == "background")
+        #expect(FocusEngine.next(after: "failed", in: pool) == "asking")
+        // 지금 보여주는 세션이 대상이 아니면 처음부터
+        #expect(FocusEngine.next(after: "idle", in: pool) == "asking")
+        #expect(FocusEngine.next(after: nil, in: pool) == "asking")
+        #expect(FocusEngine.next(after: "a", in: []) == nil)
+    }
+
+    @Test func rotationPrecedence() {
+        let sessions = [
+            session("a", phase: .runningTool, at: 10),
+            session("b", phase: .thinking, at: 20),
+            session("done", phase: .completed, at: 30, unseen: true),
+            session("idle", phase: .idle, at: 40),
+        ]
+        // 넘기기가 고른 세션이 미확인 완료 · 작업 중 유지보다 먼저
+        #expect(decide(sessions, current: "a").focusedID == "done")
+        #expect(FocusEngine.decide(
+            sessions: sessions, pendingPermissions: [], manualFocusID: nil, pinnedID: nil, rotationID: "b", currentFocusID: "a"
+        ).focusedID == "b")
+        // 넘기기 대상이 아닌 세션은 무시
+        #expect(FocusEngine.decide(
+            sessions: sessions, pendingPermissions: [], manualFocusID: nil, pinnedID: nil, rotationID: "idle", currentFocusID: "a"
+        ).focusedID == "done")
+        // 직접 선택 · 고정이 넘기기보다 먼저
+        #expect(FocusEngine.decide(
+            sessions: sessions, pendingPermissions: [], manualFocusID: nil, pinnedID: "idle", rotationID: "b", currentFocusID: "a"
+        ).focusedID == "idle")
+        #expect(FocusEngine.decide(
+            sessions: sessions, pendingPermissions: [], manualFocusID: "a", pinnedID: "idle", rotationID: "b", currentFocusID: nil
+        ).focusedID == "a")
+        // 승인 대기는 무엇보다 먼저
+        let asking = sessions + [session("asking", phase: .waitingPermission, at: 50)]
+        #expect(FocusEngine.decide(
+            sessions: asking, pendingPermissions: [], manualFocusID: "a", pinnedID: "idle", rotationID: "b", currentFocusID: nil
+        ).focusedID == "asking")
+        // 고정 세션은 미확인 완료보다 먼저 (완료는 카드로 알린다)
+        #expect(decide(sessions, pinned: "idle").focusedID == "idle")
+    }
+
+    /// 작업 중인 세션 셋(a · b · c 순서로 시작)과 쉬는 세션 하나
+    @MainActor
+    private func rotatingStore(_ clock: TestClock) -> SessionStore {
+        let store = makeStore(clock)
+        for (id, cwd) in [("a", projectCwd), ("b", otherCwd), ("c", "/Users/dev/projects/docs-site")] {
+            store.ingest(hook("UserPromptSubmit", session: id, cwd: cwd, #"{"prompt":"go"}"#))
+            clock.advance()
+        }
+        store.ingest(hook("SessionStart", session: "idle", cwd: "/Users/dev/projects/blog", "{}"))
+        clock.advance()
+        return store
+    }
+
+    @MainActor
+    @Test func rotateFocusCyclesActiveSessions() {
+        let clock = TestClock()
+        let store = rotatingStore(clock)
+        #expect(store.focusedSessionID == "a")
+        var shown: [String?] = []
+        for _ in 0..<4 {
+            store.rotateFocus()
+            shown.append(store.focusedSessionID)
+        }
+        // 쉬는 세션은 건너뛰고 시작한 순서로 돈다. 이벤트가 와도 순서는 그대로
+        #expect(shown == ["b", "c", "a", "b"])
+        store.ingest(hook("PostToolUse", session: "a", #"{"tool_name":"Read","tool_input":{"file_path":"x"}}"#))
+        store.rotateFocus()
+        #expect(store.focusedSessionID == "c")
+
+        // 활동 중인 세션이 하나뿐이면 넘기지 않는다
+        store.ingest(hook("SessionEnd", session: "a", "{}"))
+        store.ingest(hook("SessionEnd", session: "b", cwd: otherCwd, "{}"))
+        store.rotateFocus()
+        #expect(store.focusedSessionID == "c")
+    }
+
+    @MainActor
+    @Test func pinStopsRotation() {
+        let clock = TestClock()
+        let store = rotatingStore(clock)
+        store.togglePin(sessionID: "b")
+        #expect(store.focusedSessionID == "b")
+        store.rotateFocus()
+        store.rotateFocus()
+        #expect(store.focusedSessionID == "b")
+        // 쉬는 세션도 고정하면 그 세션을 보여준다
+        store.togglePin(sessionID: "idle")
+        store.rotateFocus()
+        #expect(store.focusedSessionID == "idle")
+        // 풀면 다시 넘긴다 (작업 중인 세션 중에서)
+        store.togglePin(sessionID: "idle")
+        #expect(store.pinnedSessionID == nil)
+        store.rotateFocus()
+        #expect(["a", "b", "c"].contains(store.focusedSessionID ?? ""))
+        let first = store.focusedSessionID
+        store.rotateFocus()
+        #expect(store.focusedSessionID != first)
+    }
+
+    @MainActor
+    @Test func pinPrecedesManualPick() {
+        let clock = TestClock()
+        let store = rotatingStore(clock)
+        store.focus(sessionID: "c")
+        #expect(store.focusedSessionID == "c")
+        // 고정하면 바로 그 세션 (고른 세션을 놓는다)
+        store.togglePin(sessionID: "a")
+        #expect(store.focusedSessionID == "a")
+        // 고정한 동안 고른 세션은 한 번만 보여주고 고정 세션으로 돌아간다
+        store.focus(sessionID: "b")
+        #expect(store.focusedSessionID == "b")
+        store.rotateFocus()
+        #expect(store.focusedSessionID == "a")
+    }
+
+    @MainActor
+    @Test func manualPickContinuesRotationFromIt() {
+        let clock = TestClock()
+        let store = rotatingStore(clock)
+        store.focus(sessionID: "c")
+        #expect(store.focusedSessionID == "c")
+        store.rotateFocus()
+        #expect(store.focusedSessionID == "a")
+        // 쉬는 세션을 고르면 한 번 보여준 뒤 넘기기 대상의 처음부터
+        store.focus(sessionID: "idle")
+        #expect(store.focusedSessionID == "idle")
+        store.rotateFocus()
+        #expect(store.focusedSessionID == "a")
+    }
+
+    @MainActor
+    @Test func alertsJumpRotation() {
+        let clock = TestClock()
+        let store = rotatingStore(clock)
+        #expect(store.focusedSessionID == "a")
+        // 완료 알림이 온 세션으로 바로 넘어가고, 다음 넘기기는 그 세션 다음부터
+        store.ingest(hook("Stop", session: "c", cwd: "/Users/dev/projects/docs-site", "{}"))
+        #expect(store.focusedSessionID == "c")
+        store.rotateFocus()
+        #expect(store.focusedSessionID == "a")
+        // 확인하지 않은 완료도 넘기기 대상이다
+        store.rotateFocus()
+        store.rotateFocus()
+        #expect(store.focusedSessionID == "c")
+
+        // 승인 대기 중이면 넘기지 않는다
+        let id = store.ingest(hook("PermissionRequest", session: "b", cwd: otherCwd, #"{"tool_name":"Bash","tool_input":{"command":"ls"}}"#))
+        #expect(store.focusedSessionID == "b")
+        store.rotateFocus()
+        #expect(store.focusedSessionID == "b")
+        store.resolvePermission(id: id!, decision: .allow)
+
+        // 고정한 세션이 있으면 알림이 와도 고정 세션 (알림은 카드로 보여준다)
+        store.togglePin(sessionID: "a")
+        store.ingest(hook("StopFailure", session: "b", cwd: otherCwd, #"{"error":"rate_limit"}"#))
+        #expect(store.focusedSessionID == "a")
+    }
+
     @MainActor
     @Test func completionInterruptsUntilSeen() {
         let clock = TestClock()

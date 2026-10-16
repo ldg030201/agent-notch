@@ -352,6 +352,17 @@ struct SettingsView: View {
                 switchRow("응답 스트리밍 표시", isOn: $preferences.showStreamingText)
             }
 
+            SettingsGroup(title: "여러 세션") {
+                switchRow(
+                    "세션 자동으로 넘기기",
+                    note: "활동 중인 세션이 여럿이면 접힌 아일랜드가 번갈아 보여줘요. 펼친 목록에서 세션을 우클릭해 고정하면 그 세션만 보여줘요.",
+                    isOn: $preferences.rotatesSessions
+                )
+                SettingsDivider()
+                secondsSlider("넘기는 간격", value: $preferences.sessionRotationInterval, range: 3...15, step: 1)
+                    .disabled(!preferences.rotatesSessions)
+            }
+
             SettingsGroup(title: "메뉴바와 겹침") {
                 SettingsRow(title: "노치 화면 표시", note: Self.notchStyleNote(preferences.notchStyle)) {
                     SettingsMenuPicker(title: "노치 화면 표시", selection: $preferences.notchStyle, options: [

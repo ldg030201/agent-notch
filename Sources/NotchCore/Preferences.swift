@@ -67,12 +67,14 @@ public final class AppPreferences {
         static let checksForUpdates = "checksForUpdates"
         static let notchStyle = "notchStyle"
         static let restoresRecentSessions = "restoresRecentSessions"
+        static let rotatesSessions = "rotatesSessions"
+        static let sessionRotationInterval = "sessionRotationInterval"
 
         /// 설정 초기화가 지우는 키 (설정을 더하면 여기와 `resetToDefaults` 에도 넣는다)
         static let all = [
             displayPolicy, fullscreenBehavior, peekOnEdit, peekDuration, completionDisplayDuration, showStreamingText,
             permissionTimeout, staleSessionTimeout, passthroughWhenTerminalFrontmost, externalDisplayStyle,
-            compactOverlapStyle, checksForUpdates, notchStyle, restoresRecentSessions,
+            compactOverlapStyle, checksForUpdates, notchStyle, restoresRecentSessions, rotatesSessions, sessionRotationInterval,
         ]
     }
 
@@ -99,6 +101,16 @@ public final class AppPreferences {
     /// 완료 요약 유지 시간(초)
     public var completionDisplayDuration: Double {
         didSet { defaults.set(completionDisplayDuration, forKey: Key.completionDisplayDuration) }
+    }
+
+    /// 여러 세션이 활동 중이면 접힌 아일랜드가 보여주는 세션을 주기적으로 넘길지 (고정한 세션이 있으면 넘기지 않는다)
+    public var rotatesSessions: Bool {
+        didSet { defaults.set(rotatesSessions, forKey: Key.rotatesSessions) }
+    }
+
+    /// 세션을 넘기는 간격(초)
+    public var sessionRotationInterval: Double {
+        didSet { defaults.set(sessionRotationInterval, forKey: Key.sessionRotationInterval) }
     }
 
     /// 응답 스트리밍 텍스트 표시 여부
@@ -161,6 +173,8 @@ public final class AppPreferences {
         compactOverlapStyle = defaults.string(forKey: Key.compactOverlapStyle).flatMap(CompactOverlapStyle.init(rawValue:)) ?? .belowNotch
         checksForUpdates = defaults.object(forKey: Key.checksForUpdates) as? Bool ?? true
         restoresRecentSessions = defaults.object(forKey: Key.restoresRecentSessions) as? Bool ?? true
+        rotatesSessions = defaults.object(forKey: Key.rotatesSessions) as? Bool ?? true
+        sessionRotationInterval = defaults.object(forKey: Key.sessionRotationInterval) as? Double ?? 5
     }
 
     /// 모든 설정을 처음 값으로 되돌린다. 훅 설치 · 로그인 시 실행은 이 설정 밖(settings.json · 시스템)이라 그대로 둔다.
@@ -182,6 +196,8 @@ public final class AppPreferences {
         notchStyle = fresh.notchStyle
         compactOverlapStyle = fresh.compactOverlapStyle
         restoresRecentSessions = fresh.restoresRecentSessions
+        rotatesSessions = fresh.rotatesSessions
+        sessionRotationInterval = fresh.sessionRotationInterval
         checksForUpdates = fresh.checksForUpdates
         // 위 대입의 didSet 이 처음 값을 다시 적었으므로 한 번 더 지운다
         for key in Key.all { defaults.removeObject(forKey: key) }

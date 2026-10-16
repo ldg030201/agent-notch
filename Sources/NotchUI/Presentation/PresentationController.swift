@@ -36,8 +36,12 @@ final class PresentationController {
     private(set) var activeScreenID: ScreenID?
     /// 마우스가 아일랜드 위에 있는 화면
     private(set) var hoveredScreenID: ScreenID?
-    /// 사용자가 직접 펼친 화면 (클릭한 화면에서만 펼친다)
-    private(set) var expandedScreenID: ScreenID?
+    /// 사용자가 직접 펼친 화면 (클릭한 화면에서만 펼친다). 펼친 동안엔 세션을 넘기지 않고, 닫으면 넘기는 시계를 처음부터 잰다
+    private(set) var expandedScreenID: ScreenID? {
+        didSet {
+            if oldValue != nil, expandedScreenID == nil { restartRotationClock() }
+        }
+    }
     /// 풀스크린 앱이 덮고 있는 화면 (best-effort)
     private(set) var fullscreenScreenIDs: Set<ScreenID> = []
     private(set) var reduceMotion = false
@@ -82,6 +86,10 @@ final class PresentationController {
     @ObservationIgnored var uptime: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
 
     @ObservationIgnored private var transientTask: Task<Void, Never>?
+    /// 세션 자동 넘기기 시계 (`restartRotationClock`)
+    @ObservationIgnored private var rotationTask: Task<Void, Never>?
+    /// 넘기는 간격 하한 (초). 설정 슬라이더보다 짧게 저장된 값이 와도 너무 자주 넘기지 않게
+    static let minimumRotationInterval: Double = 2
 
     /// 접힌 상태 폭 안정화 (툴 이름 · `+N −M` 폭이 이벤트마다 바뀌어도 날개가 출렁이지 않게). 커밋에서만 옮긴다
     @ObservationIgnored private var compactHold = CompactMetricsHold()
@@ -127,12 +135,16 @@ final class PresentationController {
         lastSignalSeq = store.latestSignal?.seq
         setReduceMotion(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
         armSignalObservation()
+        armFocusObservation()
+        restartRotationClock()
     }
 
     func stop() {
         observing = false
         transientTask?.cancel()
         transientTask = nil
+        rotationTask?.cancel()
+        rotationTask = nil
         transient = nil
         expandedScreenID = nil
     }
@@ -150,6 +162,59 @@ final class PresentationController {
                 self.armSignalObservation()
             }
         }
+    }
+
+    /// 보여주는 세션이 바뀌면(넘김 · 알림 · 직접 고름 · 고정) 그 세션을 넘기는 간격만큼 온전히 보여주도록 시계를 다시 잰다
+    private func armFocusObservation() {
+        guard observing else { return }
+        let current = generation
+        withObservationTracking {
+            _ = store.focusedSessionID
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.observing, self.generation == current else { return }
+                self.restartRotationClock()
+                self.armFocusObservation()
+            }
+        }
+    }
+
+    // MARK: - 세션 자동 넘기기
+
+    /// 넘기는 시계를 처음부터 다시 잰다: 넘기는 간격(설정, 매번 지금 값)마다 한 번 넘긴다.
+    /// 그때 접힌 상태를 보고 있지 않으면(`isShowingCompact`) 돌아올 때까지 기다렸다가, 접힌 상태를 잠깐(`rotationResumeDelay`) 보여준 뒤 넘긴다
+    func restartRotationClock() {
+        rotationTask?.cancel()
+        rotationTask = nil
+        guard observing else { return }
+        rotationTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let interval = self?.rotationInterval else { return }
+                try? await Task.sleep(for: .seconds(interval))
+                guard self?.preferences.rotatesSessions == true else { continue }
+                var waited = false
+                while !Task.isCancelled, self?.isShowingCompact == false {
+                    waited = true
+                    try? await Task.sleep(for: .milliseconds(500))
+                }
+                if waited { try? await Task.sleep(for: Self.rotationResumeDelay) }
+                guard !Task.isCancelled, let self else { return }
+                if self.preferences.rotatesSessions, self.isShowingCompact { self.store.rotateFocus() }
+            }
+        }
+    }
+
+    /// 접힌 상태로 돌아온 뒤 넘기기 전에 보여주는 시간
+    static let rotationResumeDelay: Duration = .seconds(2)
+
+    private var rotationInterval: Double {
+        max(Self.minimumRotationInterval, preferences.sessionRotationInterval)
+    }
+
+    /// 접힌 상태를 보고 있는지: 펼친 카드(사용자가 연 펼침 · 알림 · 미리보기 · 완료)가 없고 마우스가 아일랜드 위에 없을 때
+    /// (보이는 세션을 누르려는 중엔 넘기지 않는다). 고정 · 승인 대기는 스토어가 따진다 (`SessionStore.rotateFocus`)
+    private var isShowingCompact: Bool {
+        expandedScreenID == nil && transient == nil && hoveredScreenID == nil && alertMode() == nil
     }
 
     // MARK: - 외부 상태 갱신 (ScreenManager)
@@ -279,14 +344,14 @@ final class PresentationController {
         return !(id == transientTargetScreenID && alertMode() != nil)
     }
 
-    /// 접힌 상태에서 보여줄 세션: 포커스 세션이 활동 중이면 그것, 아니면 작업 중인 첫 세션
+    /// 접힌 상태에서 보여줄 세션: 포커스 세션이 활동 중(넘기기 대상)이거나 고정한 세션이면 그것 (고정한 세션은 쉬는 중이어도),
+    /// 아니면 작업 중인 첫 세션
     var compactSession: AgentSession? {
-        if let focused = store.focusedSession, Self.isActive(focused) { return focused }
+        if let focused = store.focusedSession,
+           FocusEngine.isRotationCandidate(focused) || focused.id == store.pinnedSessionID {
+            return focused
+        }
         return store.rankedSessions.first { $0.phase.isWorking }
-    }
-
-    private static func isActive(_ session: AgentSession) -> Bool {
-        session.phase.isWorking || session.phase.needsAttention || session.hasUnseenCompletion
     }
 
     /// 접힌 상태의 세션 상태 요약: 펼친 목록 머리와 같은 모든 세션 요약 (`compactSummary(showing:)`)

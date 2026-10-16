@@ -33,7 +33,7 @@ enum Changelog {
                 .new("터미널 · Claude 앱으로 넘기기"),
             ]),
             ChangelogGroup(title: "여러 세션", icon: "square.stack.3d.up.fill", isNew: true, notes: [
-                .new("주의가 필요한 세션 자동 포커스 · 세션 고정"),
+                .new("세션 자동 넘기기 (알림 온 세션 먼저, 우클릭으로 고정)"),
                 .new("백그라운드 작업 수 표시"),
                 .new("앱을 다시 켜도 진행 중인 세션 이어 보기"),
             ]),

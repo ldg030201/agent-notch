@@ -126,6 +126,8 @@ enum IslandMotion {
         let parts = settleDelay.components
         return Double(parts.seconds) + Double(parts.attoseconds) / 1e18
     }()
+    /// 접힌 상태가 보여주는 세션을 넘길 때 내용이 옆으로 들고 나는 움직임 (모양 폭은 `adjust` 로 함께 바뀐다)
+    static let carousel = Animation.easeInOut(duration: 0.36)
     static let contentFadeIn = Animation.easeOut(duration: 0.18)
     static let contentFadeOut = Animation.easeOut(duration: 0.1)
     static let hover = Animation.easeOut(duration: 0.15)

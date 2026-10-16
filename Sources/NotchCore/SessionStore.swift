@@ -51,8 +51,10 @@ public final class SessionStore {
 
     private let clock: () -> Date
 
-    /// 사용자가 직접 선택한 세션 (세션이 제거되면 해제)
+    /// 사용자가 직접 선택한 세션 (세션이 제거되거나 자동 넘기기가 한 번 돌면 해제, `rotateFocus`)
     @ObservationIgnored private var manualFocusID: String?
+    /// 자동 넘기기가 고른 세션 (`rotateFocus`). 알림(완료 · 실패 · 권한 요청 · 입력 필요)이 온 세션으로도 바로 옮긴다
+    @ObservationIgnored private var rotationID: String?
     /// PreCompact 직전 메인 턴 단계 (PostCompact 에서 복귀)
     @ObservationIgnored private var phaseBeforeCompact: [String: SessionPhase] = [:]
     /// Claude 앱 확인 카드를 띄울 수 있어 지켜보는 실행 중인 툴 (세션 ID → tool_use_id → 상태)
@@ -424,14 +426,29 @@ public final class SessionStore {
         return taken
     }
 
-    /// 고정 토글 (이미 고정된 세션이면 해제)
+    /// 고정 토글 (이미 고정된 세션이면 해제). 고정하면 그 세션을 바로 보여준다 (직접 고른 세션보다 뒤라서 고른 것을 놓는다).
+    /// 고정한 동안 자동 넘기기는 멈추고, 풀면 그 세션 다음부터 다시 넘긴다
     public func togglePin(sessionID: String) {
         if pinnedSessionID == sessionID {
             pinnedSessionID = nil
+            rotationID = sessionID
         } else if sessions[sessionID] != nil {
             pinnedSessionID = sessionID
+            manualFocusID = nil
         } else {
             return
+        }
+        recomputeFocus()
+    }
+
+    /// 자동 넘기기 한 번 (`PresentationController` 가 넘기는 간격마다 부른다).
+    /// 직접 고른 세션은 한 번 보여줬으니 놓고, 고정한 세션이 없으면 넘기기 대상 중 지금 보여주는 세션 다음으로 옮긴다.
+    /// 승인 · 입력 대기가 있으면 포커스는 계속 그 세션이다 (`FocusEngine`)
+    public func rotateFocus() {
+        manualFocusID = nil
+        if pinnedSessionID == nil {
+            let pool = FocusEngine.rotationPool(Array(sessions.values))
+            if pool.count >= 2 { rotationID = FocusEngine.next(after: focusedSessionID, in: pool) }
         }
         recomputeFocus()
     }
@@ -1157,6 +1174,7 @@ public final class SessionStore {
         runningSubagents[sessionID] = nil
         if manualFocusID == sessionID { manualFocusID = nil }
         if pinnedSessionID == sessionID { pinnedSessionID = nil }
+        if rotationID == sessionID { rotationID = nil }
         let requests = pendingPermissions.filter { $0.sessionID == sessionID }
         if !requests.isEmpty { pendingPermissions.removeAll { $0.sessionID == sessionID } }
         return requests
@@ -1457,6 +1475,7 @@ public final class SessionStore {
             pendingPermissions: pendingPermissions,
             manualFocusID: manualFocusID,
             pinnedID: pinnedSessionID,
+            rotationID: rotationID,
             currentFocusID: focusedSessionID
         )
         let ranked = decision.rankedIDs.compactMap { sessions[$0] }
@@ -1465,6 +1484,14 @@ public final class SessionStore {
     }
 
     private func emit(_ signal: IslandSignal, at date: Date) {
+        // 알림이 온 세션을 자동 넘기기가 바로 보여준다 (고정한 세션이 있으면 고정이 먼저)
+        switch signal {
+        case let .completed(sessionID), let .failed(sessionID), let .permissionRequested(_, sessionID),
+             let .needsInput(sessionID, _):
+            rotationID = sessionID
+        case .edited, .sessionStarted:
+            break
+        }
         signalSeq += 1
         latestSignal = SignalEvent(seq: signalSeq, signal: signal, at: date)
     }

@@ -2,10 +2,12 @@ import Foundation
 
 /// 주로 볼 세션(포커스)과 목록 순서를 계산하는 순수 함수 모음 (architecture.md §5)
 ///
-/// 1. 끼어들기: 권한 대기(오래된 요청 먼저) → 대기열 없는 권한 대기 → 입력 대기 → 실패 → 미확인 완료
+/// 1. 막는 끼어들기: 권한 대기(오래된 요청 먼저) → 대기열 없는 권한 대기 → 입력 대기
 /// 2. 사용자가 직접 선택한 세션 → 고정 세션
-/// 3. 현재 포커스가 아직 작업 중이면 유지, 아니면 작업 중인 세션 중 가장 최근
-/// 4. 가장 최근 이벤트가 있었던 세션
+/// 3. 자동 넘기기가 고른 세션 (넘기기 대상일 때, `rotationID`)
+/// 4. 알림 끼어들기: 실패 → 미확인 완료
+/// 5. 현재 포커스가 아직 작업 중이면 유지, 아니면 작업 중인 세션 중 가장 최근
+/// 6. 가장 최근 이벤트가 있었던 세션
 public enum FocusEngine {
     public struct Decision: Hashable, Sendable {
         /// 우선순위 순 세션 ID
@@ -23,6 +25,7 @@ public enum FocusEngine {
         pendingPermissions: [PermissionRequestInfo],
         manualFocusID: String?,
         pinnedID: String?,
+        rotationID: String? = nil,
         currentFocusID: String?
     ) -> Decision {
         let byID = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -34,7 +37,7 @@ public enum FocusEngine {
             oldestPending[request.sessionID] = request.receivedAt
         }
 
-        let attention = attentionOrder(sessions, oldestPending: oldestPending)
+        let attention = attentionGroups(sessions, oldestPending: oldestPending)
         let recent = sessions.sorted(by: mostRecentFirst)
 
         // 목록 순서: 끼어들기 → 고정 → 작업 중(최근순) → 나머지(최근순)
@@ -43,19 +46,23 @@ public enum FocusEngine {
         func add(_ id: String) {
             if seen.insert(id).inserted { ranked.append(id) }
         }
-        attention.forEach(add)
+        (attention.blocking + attention.notable).forEach(add)
         if let pinnedID, byID[pinnedID] != nil { add(pinnedID) }
         recent.filter { $0.phase.isWorking }.forEach { add($0.id) }
         recent.forEach { add($0.id) }
 
         // 포커스
         let focused: String?
-        if let first = attention.first {
+        if let first = attention.blocking.first {
             focused = first
         } else if let manualFocusID, byID[manualFocusID] != nil {
             focused = manualFocusID
         } else if let pinnedID, byID[pinnedID] != nil {
             focused = pinnedID
+        } else if let rotationID, let rotating = byID[rotationID], isRotationCandidate(rotating) {
+            focused = rotationID
+        } else if let first = attention.notable.first {
+            focused = first
         } else if let currentFocusID, let current = byID[currentFocusID], current.phase.isWorking {
             // 작업 중인 세션끼리는 자동 전환하지 않음 (깜빡임 방지)
             focused = current.id
@@ -67,8 +74,39 @@ public enum FocusEngine {
         return Decision(rankedIDs: ranked, focusedID: focused)
     }
 
-    /// 끼어들기 대상 세션 ID (우선순위 순)
-    static func attentionOrder(_ sessions: [AgentSession], oldestPending: [String: Date]) -> [String] {
+    // MARK: - 자동 넘기기
+
+    /// 자동 넘기기 대상인지: 작업 중 · 승인 · 입력 대기 · 실패 · 미확인 완료, 쉬는 중이어도 백그라운드 작업이 도는 세션.
+    /// 접힌 상태 요약에서 주황 · 초록으로 세는 세션과 미확인 완료다 (쉬는 세션은 넘기지 않는다)
+    public static func isRotationCandidate(_ session: AgentSession) -> Bool {
+        session.phase.isWorking || session.phase.needsAttention || session.hasUnseenCompletion
+            || session.backgroundTaskCount > 0
+    }
+
+    /// 자동 넘기기 대상 세션 ID. 시작한 순서라 이벤트가 와도 넘기는 순서가 바뀌지 않는다
+    public static func rotationPool(_ sessions: [AgentSession]) -> [String] {
+        sessions
+            .filter(isRotationCandidate)
+            .sorted { lhs, rhs in
+                lhs.startedAt != rhs.startedAt ? lhs.startedAt < rhs.startedAt : lhs.id < rhs.id
+            }
+            .map(\.id)
+    }
+
+    /// `current` 다음에 보여줄 세션 (끝이면 처음으로). `current` 가 대상이 아니면 첫 세션, 대상이 없으면 nil
+    public static func next(after current: String?, in pool: [String]) -> String? {
+        guard let first = pool.first else { return nil }
+        guard let current, let index = pool.firstIndex(of: current) else { return first }
+        return pool[(index + 1) % pool.count]
+    }
+
+    // MARK: - 끼어들기
+
+    /// 끼어들기 대상 세션 ID (우선순위 순)를 두 갈래로: 사용자가 답해야 턴이 이어지는 대기(`blocking`, 고정 · 직접 선택보다 먼저)와
+    /// 끝난 턴의 알림(`notable`, 자동 넘기기가 고른 세션 다음)
+    static func attentionGroups(
+        _ sessions: [AgentSession], oldestPending: [String: Date]
+    ) -> (blocking: [String], notable: [String]) {
         // 1) 권한 대기열이 있는 세션: 오래된 요청 먼저
         var pendingPairs: [(id: String, at: Date)] = []
         for session in sessions {
@@ -88,11 +126,8 @@ public enum FocusEngine {
         let failed = rest.filter { $0.phase == .failed }.sorted(by: mostRecentFirst)
         let completed = rest.filter { $0.phase == .completed && $0.hasUnseenCompletion }.sorted(by: mostRecentFirst)
 
-        var ordered = withPending
-        for group in [waitingPermission, waitingInput, failed, completed] {
-            ordered.append(contentsOf: group.map(\.id))
-        }
-        return ordered
+        let blocking = withPending + (waitingPermission + waitingInput).map(\.id)
+        return (blocking, (failed + completed).map(\.id))
     }
 
     private static func mostRecentFirst(_ lhs: AgentSession, _ rhs: AgentSession) -> Bool {

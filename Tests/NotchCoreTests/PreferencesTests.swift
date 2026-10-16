@@ -30,6 +30,8 @@ import Testing
             preferences.compactOverlapStyle = .minimal
             preferences.restoresRecentSessions = false
             preferences.checksForUpdates = false
+            preferences.rotatesSessions = false
+            preferences.sessionRotationInterval = 12
 
             preferences.resetToDefaults()
 
@@ -49,6 +51,8 @@ import Testing
                 #expect(preferences.compactOverlapStyle == fresh.compactOverlapStyle)
                 #expect(preferences.restoresRecentSessions == fresh.restoresRecentSessions)
                 #expect(preferences.checksForUpdates == fresh.checksForUpdates)
+                #expect(preferences.rotatesSessions == fresh.rotatesSessions)
+                #expect(preferences.sessionRotationInterval == fresh.sessionRotationInterval)
             }
             // 저장된 값은 남기지 않는다 (나중 버전의 처음 값을 따르게)
             #expect((defaults.persistentDomain(forName: suite) ?? [:]).isEmpty)
