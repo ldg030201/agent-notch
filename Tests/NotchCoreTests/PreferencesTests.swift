@@ -26,8 +26,6 @@ import Testing
             preferences.staleSessionTimeout = 60
             preferences.passthroughWhenTerminalFrontmost = false
             preferences.externalDisplayStyle = .hidden
-            preferences.notchStyle = .belowNotch
-            preferences.compactOverlapStyle = .minimal
             preferences.restoresRecentSessions = false
             preferences.checksForUpdates = false
             preferences.rotatesSessions = false
@@ -47,8 +45,6 @@ import Testing
                 #expect(preferences.staleSessionTimeout == fresh.staleSessionTimeout)
                 #expect(preferences.passthroughWhenTerminalFrontmost == fresh.passthroughWhenTerminalFrontmost)
                 #expect(preferences.externalDisplayStyle == fresh.externalDisplayStyle)
-                #expect(preferences.notchStyle == fresh.notchStyle)
-                #expect(preferences.compactOverlapStyle == fresh.compactOverlapStyle)
                 #expect(preferences.restoresRecentSessions == fresh.restoresRecentSessions)
                 #expect(preferences.checksForUpdates == fresh.checksForUpdates)
                 #expect(preferences.rotatesSessions == fresh.rotatesSessions)
@@ -59,15 +55,27 @@ import Testing
         }
     }
 
+    /// 없앤 설정(노치 화면 표시 방식 · 노치 아래 표시 모양)의 저장된 값은 읽을 때 지운다
+    @Test func removedKeysAreCleared() {
+        Self.withDefaults { defaults, suite in
+            defaults.set("wings", forKey: "notchStyle")
+            defaults.set("minimal", forKey: "compactOverlapStyle")
+            _ = AppPreferences(defaults: defaults)
+            let stored = defaults.persistentDomain(forName: suite) ?? [:]
+            #expect(stored["notchStyle"] == nil)
+            #expect(stored["compactOverlapStyle"] == nil)
+        }
+    }
+
     /// 다시 읽어도 초기화한 값이다
     @Test func resetSurvivesReload() {
         Self.withDefaults { defaults, _ in
             let preferences = AppPreferences(defaults: defaults)
-            preferences.notchStyle = .belowNotch
+            preferences.externalDisplayStyle = .hidden
             preferences.permissionTimeout = 30
             preferences.resetToDefaults()
             let reloaded = AppPreferences(defaults: defaults)
-            #expect(reloaded.notchStyle == .wings)
+            #expect(reloaded.externalDisplayStyle == .inMenuBar)
             #expect(reloaded.permissionTimeout == 120)
         }
     }

@@ -220,7 +220,7 @@ struct IslandShownContent: Equatable {
 }
 
 /// 내용 뷰 구조: 모드 종류 + 접힌 상태 표시 방식 + 카드의 요청.
-/// 모드 종류가 같아도 표시 방식이 바뀌면(다른 노치 앱이 생겨 날개 ↔ 노치 아래 띠, 메뉴바 빈 곳이 줄어 알약 ↔ 점 등) 내용을 통째로 바꾼다.
+/// 모드 종류가 같아도 표시 방식이 바뀌면(메뉴바 빈 곳이 줄어 알약 ↔ 점, 외부 모니터 표시를 바꿈 등) 내용을 통째로 바꾼다.
 /// 그대로 두면 이전 · 새 내용이 프레임을 따라 200pt 가까이 미끄러지며 겹쳐 보인다.
 /// 권한 요청 · 질문 · 계획 승인 카드는 요청이 바뀌어도(대기열의 다음 요청) 바꾼다: 같은 높이의 카드 글자만 제자리에서
 /// 바뀌면 새 요청이 온 줄 모르고 이어서 누르기 쉽다 (승인은 새 요청 카드가 나타난 뒤 `PresentationController.shortcutSettleDelay` 가 지나야 받는다)
@@ -228,8 +228,7 @@ struct IslandContentKey: Hashable {
     enum Branch: Hashable {
         /// 펼친 카드 · 숨김
         case card
-        case wings(WingArrangement)
-        case strip, line, pill, dot
+        case strip, pill, dot
     }
 
     var kind: IslandMode.Kind
@@ -242,9 +241,7 @@ struct IslandContentKey: Hashable {
         if case let .permission(info, _) = mode { request = info.id } else { request = nil }
         switch layout.compact {
         case nil: branch = .card
-        case let .wings(spec): branch = .wings(spec.arrangement)
         case .strip: branch = .strip
-        case .line: branch = .line
         case .pill: branch = .pill
         case .dot: branch = .dot
         }

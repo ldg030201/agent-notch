@@ -159,7 +159,7 @@ enum SnapshotSummaryCheck {
         var problems: [String] = []
         var cases = 0
 
-        // 개수가 한 자리 안에서 바뀌면 폭이 같다 (접힌 날개가 출렁이지 않게)
+        // 개수가 한 자리 안에서 바뀌면 폭이 같다 (접힌 모양이 출렁이지 않게)
         let width = CompactText.summaryWidth
         let checks: [(String, Bool)] = [
             ("1·1·1 = 2·3·9", width(SessionStatusSummary(waiting: 1, working: 1, done: 1)) == width(SessionStatusSummary(waiting: 2, working: 3, done: 9))),
@@ -178,17 +178,15 @@ enum SnapshotSummaryCheck {
             ("끝남 2", SessionStatusSummary(done: 2)),
             ("세 묶음", SessionStatusSummary(waiting: 1, working: 1, done: 2)),
         ]
-        let scenes: [(String, IslandSnapshotRenderer.Style, SnapshotMenuBar.Crowding, NotchStyle)] = [
-            ("넓은 노치 · 넉넉함", .notch, .roomy, .wings),
-            ("넓은 노치 · 아이콘이 노치까지", .notch, .iconsToNotch, .wings),
-            ("노치 아래 · 양옆 막힘", .notch, .bothBlocked, .belowNotch),
-            ("메뉴바 알약", .menuBar, .roomy, .wings),
+        let scenes: [(String, IslandSnapshotRenderer.Style, SnapshotMenuBar.Crowding)] = [
+            ("노치 아래 · 넉넉함", .notch, .roomy),
+            ("노치 아래 · 양옆 막힘", .notch, .bothBlocked),
+            ("메뉴바 알약", .menuBar, .roomy),
         ]
-        for (sceneName, style, crowding, notchStyle) in scenes {
+        for (sceneName, style, crowding) in scenes {
             let bar = SnapshotMenuBar(style: style, crowding: crowding)
             let engine = IslandLayoutEngine(
-                geometry: bar.geometry, space: bar.space, externalStyle: .inMenuBar,
-                notchStyle: notchStyle, overlapStyle: .belowNotch, notchConflict: false
+                geometry: bar.geometry, space: bar.space, externalStyle: .inMenuBar
             )
             for (summaryName, summary) in summaries {
                 cases += 1
@@ -202,7 +200,6 @@ enum SnapshotSummaryCheck {
                 let layout = engine.compactLayout(for: .session(metrics))
                 let shown: Bool
                 switch layout.compact {
-                case let .wings(spec): shown = spec.items.contains(.summary)
                 case let .strip(items): shown = items.contains(.summary)
                 case let .pill(items): shown = items.contains(.summary)
                 default: shown = false
@@ -242,8 +239,7 @@ enum SnapshotPillCheck {
         let unmeasured = MenuBarSpace(menuBarVisible: true, menuBarHeight: 24)
         func engine(_ style: ExternalDisplayStyle, space: MenuBarSpace = unmeasured, geometry: NotchGeometry = geometry) -> IslandLayoutEngine {
             IslandLayoutEngine(
-                geometry: geometry, space: space, externalStyle: style,
-                notchStyle: .wings, overlapStyle: .belowNotch, notchConflict: false
+                geometry: geometry, space: space, externalStyle: style
             )
         }
         let font = IslandFont.bodyNS
@@ -407,13 +403,11 @@ enum SnapshotStripCheck {
         // 1) 사용자 화면: 노치 아래 띠(노치 185pt)와 메뉴바 알약이 같은 요소 ("agent-notch · 생각 중")
         let notchBar = SnapshotMenuBar(style: .notch, crowding: .bothBlocked)
         let stripEngine = IslandLayoutEngine(
-            geometry: notchBar.geometry, space: notchBar.space, externalStyle: .inMenuBar,
-            notchStyle: .belowNotch, overlapStyle: .belowNotch, notchConflict: false
+            geometry: notchBar.geometry, space: notchBar.space, externalStyle: .inMenuBar
         )
         let pillBar = SnapshotMenuBar(style: .menuBar, crowding: .roomy)
         let pillEngine = IslandLayoutEngine(
-            geometry: pillBar.geometry, space: pillBar.space, externalStyle: .inMenuBar,
-            notchStyle: .wings, overlapStyle: .belowNotch, notchConflict: false
+            geometry: pillBar.geometry, space: pillBar.space, externalStyle: .inMenuBar
         )
         func items(_ layout: IslandLayout) -> CompactItems? {
             switch layout.compact {
@@ -429,7 +423,7 @@ enum SnapshotStripCheck {
         if userStrip != userPill { problems.append("agent-notch · 생각 중: 띠 \(String(describing: userStrip)) ≠ 알약 \(String(describing: userPill))") }
 
         // 1-1) 백그라운드 배지가 있어도 두 화면 제목이 같다 ("api-server · Bash +12 −3 ⧉ 3", `working-background` 장면).
-        //      띠는 배지(와 요약)를 둘째 줄로 내리고, 알약 · 날개는 끝에 그대로 둔다
+        //      띠는 배지(와 요약)를 둘째 줄로 내리고, 알약은 끝에 그대로 둔다
         for (summaryName, summary) in [("요약 없음", SessionStatusSummary.empty), ("요약 ● 2", SessionStatusSummary(done: 2))] {
             cases += 1
             let name = "api-server · Bash +12 −3 ⧉ 3 · \(summaryName)"
@@ -522,15 +516,10 @@ enum SnapshotStripCheck {
                 let second = sample.badge + summary + (sample.badge > 0 && summary > 0 ? IslandMetrics.summaryLead : 0)
                 if 20 + second > stripRoom { problems.append("\(name): 둘째 줄 \(Int(second))pt 가 띠 밖") }
             }
-            // 알약 · 날개 · 한쪽 날개는 배지를 끝 요소에 그대로 센다 (배지를 따로 두기 전 셈법과 같은 폭)
+            // 알약은 배지를 끝 요소에 그대로 센다 (배지를 따로 두기 전 셈법과 같은 폭)
             cases += 1
-            let pillSame = E.pillNeed(sample, items: first) == E.pillNeed(inline, items: first)
-            let splitSame = E.splitNeed(sample, items: .all, project: sample.project, tool: sample.tool, leftPad: 14, rightPad: 14)
-                == E.splitNeed(inline, items: .all, project: sample.project, tool: sample.tool, leftPad: 14, rightPad: 14)
-            let singleSame = E.contentWidth(sample, items: first, toolWidth: sample.tool, toolCap: 90)
-                == E.contentWidth(inline, items: first, toolWidth: sample.tool, toolCap: 90)
-            if !pillSame || !splitSame || !singleSame {
-                problems.append("\(name): 알약 \(pillSame) · 양쪽 날개 \(splitSame) · 한쪽 날개 \(singleSame) 가 배지를 끝 요소와 다르게 셈")
+            if E.pillNeed(sample, items: first) != E.pillNeed(inline, items: first) {
+                problems.append("\(name): 알약이 배지를 끝 요소와 다르게 셈")
             }
         }
         return (cases, problems)

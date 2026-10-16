@@ -6,7 +6,7 @@ import NotchCore
 enum IslandMode: Equatable {
     /// 표시하지 않음 (세션 없음, 정책상 숨김, 풀스크린 숨김)
     case hidden
-    /// 작업 중인 세션 없음 → 날개에 세션 상태 요약 (끝남 개수 등)
+    /// 작업 중인 세션 없음 → 세션 상태 요약 (끝남 개수 등)
     case idle
     /// 접힌 상태로 포커스 세션 표시 (작업 중 / 주의 필요 / 미확인 완료)
     case working
@@ -65,7 +65,7 @@ enum IslandMode: Equatable {
 
 enum IslandMetrics {
     /// 바깥 좌우 여백 (상단 행)
-    static let wingPadding: CGFloat = 14
+    static let headerPadding: CGFloat = 14
     /// 펼친 내용 좌우 여백
     static let bodyPadding: CGFloat = 16
     static let bodyTop: CGFloat = 4
@@ -80,8 +80,6 @@ enum IslandMetrics {
     static let backgroundIconSize: CGFloat = 11
     static let backgroundIconGap: CGFloat = 3
     static let backgroundLead: CGFloat = 6
-    /// 요약을 넣느라 날개가 더 넓어질 수 있는 폭 (한쪽)
-    static let summaryWingGrowth: CGFloat = 40
     /// 노치 아래 띠에 백그라운드 배지 · 요약이 제목 줄에 함께 안 들어가면 띠를 이만큼 높여 둘째 줄에 둔다 (폭은 노치 폭 그대로)
     static let stripSecondLineHeight: CGFloat = 14
 
@@ -104,17 +102,8 @@ enum IslandMetrics {
 
     /// 메뉴바 아이템과 띄울 여백
     static let menuBarMargin: CGFloat = 8
-    /// 접힌 날개 하나만 쓸 때 최대 폭
-    static let maxSingleWing: CGFloat = 240
-    /// 넓은 노치: 양쪽 날개 한쪽 최대/최소 폭, 왼쪽 프로젝트명 · 오른쪽 툴 이름 최대 폭
-    static let wideWingMax: CGFloat = 120
-    static let minWideWing: CGFloat = 64
-    static let wideWingProjectCap: CGFloat = 76
-    static let wideWingToolCap: CGFloat = 56
     /// 노치 아래 띠 (폭은 노치 폭)
     static let stripHeight: CGFloat = 22
-    /// 노치 아래 선
-    static let lineThickness: CGFloat = 3
     /// 메뉴바 안 점
     static let menuBarDotSize: CGFloat = 12
     /// 메뉴바 안 알약 최소 폭 (이보다 좁으면 점)

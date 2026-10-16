@@ -13,25 +13,10 @@ struct IdleCompactView: View {
     var body: some View {
         Group {
             switch layout.compact {
-            case let .wings(spec):
-                CompactWings(layout: layout, spec: spec) {
-                    if spec.arrangement == .split {
-                        // 양쪽 날개면 왼쪽엔 작은 점만
-                        Circle()
-                            .fill(Palette.muted)
-                            .frame(width: 3, height: 3)
-                    } else {
-                        chips
-                    }
-                } trailing: {
-                    chips
-                }
             case .strip:
                 CompactStrip(layout: layout) {
                     chips
                 }
-            case .line:
-                StatusLine(layout: layout, color: Palette.muted.opacity(0.6))
             case .pill:
                 chips
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -58,8 +43,6 @@ struct IdleCompactView: View {
 // MARK: - working
 
 /// 접힌 상태로 포커스 세션 표시. 세션이 여럿이면 모든 세션 상태 요약("● 2")을 레이아웃이 정한 자리에 함께 둔다.
-/// - 양쪽 날개: 왼쪽 = 상태 + 프로젝트명 (+ 요약), 오른쪽 = (노치 쪽에 고정한 요약 …) 현재 툴 + `+N −M`
-/// - 한쪽 날개: 상태 + (프로젝트) + (요약) + (툴) + `+N −M` 을 노치 옆에 모은다
 /// - 노치 아래 띠: 알약과 같은 요소 (상태 + 프로젝트 · 툴 이름 + `+N −M` + 배지 + 요약, 한 줄에 안 들어가면 배지 · 요약은 둘째 줄)
 /// - 알약: 상태 + 프로젝트 · 툴 이름 + `+N −M` + 배지 + 요약
 /// 툴은 어디서나 짧은 이름만 (`IslandFormat.shortToolTitle`, 예: "Bash")
@@ -73,8 +56,7 @@ struct CompactSessionView: View {
     var body: some View {
         if let session {
             // 보여주는 세션이 바뀌면(자동 넘기기 · 알림 · 고름) 옆으로 넘긴다: 이전 세션은 왼쪽으로 흐려지며 나가고
-            // 새 세션은 오른쪽에서 들어온다. 날개마다 제자리에서 조금만 움직여 노치(카메라)를 가로지르지 않는다.
-            // 점 · 선은 색만 바뀐다
+            // 새 세션은 오른쪽에서 들어온다 (띠 · 알약 안에서 조금만 움직인다). 점은 색만 바뀐다
             ZStack(alignment: .topLeading) {
                 content(session)
                     .id(Self.slides(layout) ? session.id : "")
@@ -96,59 +78,19 @@ struct CompactSessionView: View {
         removal: .offset(x: -slideDistance).combined(with: .opacity)
     )
 
-    /// 글자가 있는 접힌 모양(날개 · 노치 아래 띠 · 알약)만 넘기는 움직임을 준다
+    /// 글자가 있는 접힌 모양(노치 아래 띠 · 알약)만 넘기는 움직임을 준다
     private static func slides(_ layout: IslandLayout) -> Bool {
         switch layout.compact {
-        case .wings, .strip, .pill: return true
-        case .line, .dot, nil: return false
+        case .strip, .pill: return true
+        case .dot, nil: return false
         }
     }
 
     @ViewBuilder
     private func content(_ session: AgentSession) -> some View {
         switch layout.compact {
-        case let .wings(spec):
-            if spec.arrangement == .split {
-                let summaryRight = spec.items.contains(.summaryTrailing)
-                CompactWings(layout: layout, spec: spec) {
-                    HStack(spacing: 6) {
-                        StatusIndicator(session: session, reduceMotion: reduceMotion)
-                        if spec.items.contains(.project) {
-                            // 자리가 모자라면 프로젝트명부터 줄인다 (요약은 통째로)
-                            Text(session.projectName)
-                                .truncationMode(.tail)
-                                .layoutPriority(-1)
-                        }
-                        if !summaryRight { summaryChips(spec.items, leading: 2) }
-                    }
-                } trailing: {
-                    let toolTitle = spec.items.contains(.tool) ? IslandFormat.shortToolTitle(session) : ""
-                    if summaryRight, !summary.isEmpty {
-                        // 요약은 노치 쪽에 고정하고 툴 · `+N −M` 은 바깥 끝에 붙인다
-                        // (툴 이름 · diff 자릿수가 바뀌어도 칩이 좌우로 움직이지 않게)
-                        HStack(spacing: 0) {
-                            summaryChips(spec.items)
-                            Spacer(minLength: Self.hasTrailing(session, toolTitle: toolTitle) ? IslandMetrics.summaryLead : 0)
-                            trailing(session, toolTitle: toolTitle)
-                        }
-                        .frame(maxWidth: .infinity)
-                    } else {
-                        trailing(session, toolTitle: toolTitle)
-                    }
-                }
-            } else {
-                CompactWings(layout: layout, spec: spec) {
-                    singleWing(session, items: spec.items)
-                } trailing: {
-                    singleWing(session, items: spec.items)
-                }
-            }
-
         case let .strip(items):
             stripContent(session, items: items)
-
-        case .line:
-            StatusLine(layout: layout, color: Self.toneColor(session))
 
         case let .pill(items):
             HStack(spacing: 6) {
@@ -156,8 +98,8 @@ struct CompactSessionView: View {
                 pillTitle(session, items: items)
                 Spacer(minLength: 0)
                 // 그릴 것이 없으면 빼서 사이 간격이 겹치지 않게 (제목 자리가 그만큼 넓어진다)
-                if Self.hasTrailing(session, toolTitle: "") {
-                    trailing(session, toolTitle: "")
+                if Self.hasTrailing(session) {
+                    trailing(session)
                         .layoutPriority(1)
                 }
                 summaryChips(items, leading: 2)
@@ -187,8 +129,8 @@ struct CompactSessionView: View {
         let line = HStack(spacing: 5) {
             StatusIndicator(session: session, reduceMotion: reduceMotion, size: 12)
             pillTitle(session, items: items)
-            if Self.hasTrailing(session, toolTitle: "", badge: !wraps) {
-                trailing(session, toolTitle: "", badge: !wraps)
+            if Self.hasTrailing(session, badge: !wraps) {
+                trailing(session, badge: !wraps)
                     .layoutPriority(1)
             }
         }
@@ -214,21 +156,6 @@ struct CompactSessionView: View {
         }
     }
 
-    /// 한쪽 날개에 모은 내용
-    private func singleWing(_ session: AgentSession, items: CompactItems) -> some View {
-        HStack(spacing: 6) {
-            StatusIndicator(session: session, reduceMotion: reduceMotion)
-            if items.contains(.project) {
-                // 자리가 모자라면 프로젝트명부터 줄인다
-                Text(session.projectName)
-                    .truncationMode(.tail)
-                    .layoutPriority(-1)
-            }
-            summaryChips(items, leading: 2)
-            trailing(session, toolTitle: items.contains(.tool) ? IslandFormat.shortToolTitle(session) : "")
-        }
-    }
-
     static let summaryPrefix = "전체 세션 "
 
     /// 레이아웃이 요약 자리를 줬고 요약이 있을 때만 요약 칩 (앞 내용과 간격 `summaryLead` 를 맞추는 여백 포함)
@@ -240,23 +167,17 @@ struct CompactSessionView: View {
         }
     }
 
-    /// 툴 이름 + `+N −M`, 또는 상태 문구 (승인 필요 등). 백그라운드 작업이 돌고 있으면 끝에 배지 "⧉ N"
-    /// (`badge` 가 false 면 빼고 — 노치 아래 띠가 배지를 둘째 줄로 내린 경우)
+    /// `+N −M`, 또는 상태 문구 (승인 필요 등). 백그라운드 작업이 돌고 있으면 끝에 배지 "⧉ N"
+    /// (`badge` 가 false 면 빼고 — 노치 아래 띠가 배지를 둘째 줄로 내린 경우). 툴 이름은 제목(`pillTitle`)에 있다
     @ViewBuilder
-    private func trailing(_ session: AgentSession, toolTitle: String, badge: Bool = true) -> some View {
+    private func trailing(_ session: AgentSession, badge: Bool = true) -> some View {
         HStack(spacing: IslandMetrics.backgroundLead) {
             if let attention = CompactText.attentionText(session) {
                 Text(attention.text)
                     .foregroundStyle(Self.color(attention.tone))
-            } else {
-                if !toolTitle.isEmpty {
-                    Text(toolTitle)
-                        .truncationMode(.middle)
-                }
-                if session.turn.added > 0 || session.turn.removed > 0 {
-                    DiffStatText(added: session.turn.added, removed: session.turn.removed)
-                        .layoutPriority(1)
-                }
+            } else if session.turn.added > 0 || session.turn.removed > 0 {
+                DiffStatText(added: session.turn.added, removed: session.turn.removed)
+                    .layoutPriority(1)
             }
             if badge, session.backgroundTaskCount > 0 {
                 BackgroundTaskBadge(count: session.backgroundTaskCount)
@@ -265,9 +186,9 @@ struct CompactSessionView: View {
         }
     }
 
-    /// `trailing` 이 그릴 것이 있는지 (상태 문구 · 툴 이름 · `+N −M` · 백그라운드 배지)
-    private static func hasTrailing(_ session: AgentSession, toolTitle: String, badge: Bool = true) -> Bool {
-        CompactText.attentionText(session) != nil || !toolTitle.isEmpty
+    /// `trailing` 이 그릴 것이 있는지 (상태 문구 · `+N −M` · 백그라운드 배지)
+    private static func hasTrailing(_ session: AgentSession, badge: Bool = true) -> Bool {
+        CompactText.attentionText(session) != nil
             || session.turn.added > 0 || session.turn.removed > 0
             || (badge && session.backgroundTaskCount > 0)
     }
@@ -303,10 +224,6 @@ struct CompactSessionView: View {
         case .thinking, .runningTool, .compacting: return .green
         default: return session.hasUnseenCompletion ? .green : .muted
         }
-    }
-
-    static func toneColor(_ session: AgentSession) -> Color {
-        tone(session).color
     }
 
     private static func color(_ tone: CompactText.Tone) -> Color {
@@ -364,52 +281,6 @@ struct PillTitleLayout: Layout {
 
 // MARK: - 자리별 틀
 
-/// 노치 양옆 날개 틀. 내용은 노치 가장자리부터 날개 폭 안에 둔다.
-/// 양쪽이면 바깥쪽 정렬, 한쪽이면 노치 쪽으로 붙인다.
-/// 비켜준 쪽 내용은 날개가 들어가는 동안 흐려진다.
-struct CompactWings<Leading: View, Trailing: View>: View {
-    let layout: IslandLayout
-    let spec: WingsSpec
-    @ViewBuilder var leading: Leading
-    @ViewBuilder var trailing: Trailing
-
-    var body: some View {
-        let earL = layout.shape.neckLeft
-        let earR = layout.shape.neckRight
-        let left = spec.visibleLeft
-        let right = spec.visibleRight
-        let notchX = earL + left
-        let notchWidth = max(0, layout.size.width - earL - earR - left - right)
-        let split = spec.arrangement == .split
-        let height = layout.size.height
-        let showsLeft = (split || spec.arrangement == .left) && spec.left > 0
-        let showsRight = (split || spec.arrangement == .right) && spec.right > 0
-
-        ZStack(alignment: .topLeading) {
-            if showsLeft {
-                leading
-                    .padding(.leading, IslandMetrics.wingPadding)
-                    .padding(.trailing, split ? 4 : 6)
-                    .frame(width: spec.left, height: height, alignment: split ? .leading : .trailing)
-                    .offset(x: notchX - spec.left)
-                    .opacity(spec.hidden.contains(.left) ? 0 : 1)
-            }
-            if showsRight {
-                trailing
-                    .padding(.leading, split ? 4 : 6)
-                    .padding(.trailing, IslandMetrics.wingPadding)
-                    .frame(width: spec.right, height: height, alignment: split ? .trailing : .leading)
-                    .offset(x: notchX + notchWidth)
-                    .opacity(spec.hidden.contains(.right) ? 0 : 1)
-            }
-        }
-        .frame(width: layout.size.width, height: height, alignment: .topLeading)
-        .font(IslandFont.body)
-        .foregroundStyle(Palette.text)
-        .lineLimit(1)
-    }
-}
-
 /// 노치 아래 띠 틀: 목(노치) 높이만큼 비우고 그 아래 한 줄 (요약이 안 들어가면 두 줄).
 struct CompactStrip<Content: View>: View {
     let layout: IslandLayout
@@ -426,24 +297,6 @@ struct CompactStrip<Content: View>: View {
         .font(IslandFont.caption)
         .foregroundStyle(Palette.text)
         .lineLimit(1)
-    }
-}
-
-/// 노치 아래 가장자리 상태 색 선
-struct StatusLine: View {
-    let layout: IslandLayout
-    let color: Color
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 0)
-            Capsule()
-                .fill(color)
-                .frame(height: IslandMetrics.lineThickness)
-                .padding(.horizontal, 14)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityHidden(true)
     }
 }
 

@@ -27,8 +27,6 @@ final class ScreenManager {
     }
 
     private var screens: [ScreenID: Screen] = [:]
-    /// 넓은 노치 날개 비켜주기 (날개가 메뉴바 아이콘을 덮으므로)
-    private let wingRetract = WingRetractTracker()
     private var eventMonitors: [Any] = []
     private var notificationTokens: [(NotificationCenter, NSObjectProtocol)] = []
     private var fullscreenTask: Task<Void, Never>?
@@ -58,9 +56,6 @@ final class ScreenManager {
         guard !running else { return }
         running = true
         presentation.onRequestKey = { [weak self] id in self?.makeKey(id) }
-        wingRetract.onChange = { [weak self] id, sides in
-            self?.presentation.setRetractedWings(sides, on: id)
-        }
         rebuildPanels()
         installEventMonitors()
         installNotifications()
@@ -85,7 +80,6 @@ final class ScreenManager {
         spaceMonitor.stop()
         overlapMonitor.stop()
         keyReleasePanel.orderOut(nil)
-        wingRetract.reset()
         for id in Array(screens.keys) { removeScreen(id) }
     }
 
@@ -155,7 +149,7 @@ final class ScreenManager {
 
     private typealias ScreenFrame = PresentationController.ScreenFrame
 
-    /// 관찰 패스: 모든 화면의 표시 상태(모드 · 레이아웃 · 투명 숨김 · 비켜줄 날개 자리)를 한 번에 계산해 커밋 · 적용하고,
+    /// 관찰 패스: 모든 화면의 표시 상태(모드 · 레이아웃 · 투명 숨김)를 한 번에 계산해 커밋 · 적용하고,
     /// 그중 하나라도 바뀌면 다시 건다. 화면 상태(배치 이력 · 붙잡은 띠 · 접힌 폭 안정화)는 여기서 커밋할 때만 바뀐다.
     /// 화면 구성(`geometries`)도 함께 읽어, 패널이 하나도 없을 때(하나뿐인 모니터를 끔 · 덮개를 닫고 외부 모니터를 뺌 ·
     /// 화면 없이 실행)도 화면이 다시 생기면 깨어난다. 화면이 바뀌면 `rebuildPanels` 뒤에 바로 다시 건다 (사라진 화면 이력도 이때 지운다)
@@ -180,7 +174,6 @@ final class ScreenManager {
 
     private func applyModes(_ states: [ScreenID: ScreenFrame]) {
         var becameCompact = false
-        var bands: [ScreenID: WingRetractTracker.Bands] = [:]
         let now = ProcessInfo.processInfo.systemUptime
         for (id, state) in states {
             guard var screen = screens[id] else { continue }
@@ -192,12 +185,6 @@ final class ScreenManager {
             }
             screen.hitRects = Self.globalRects(state.layout.panelHitRects, state, geometry: geometry)
             screen.overlapTarget = overlapTarget(id, state, geometry: geometry)
-            if let geometry, !state.bands.isEmpty {
-                bands[id] = WingRetractTracker.Bands(
-                    left: state.bands.left.map(geometry.screenRect(fromPanel:)),
-                    right: state.bands.right.map(geometry.screenRect(fromPanel:))
-                )
-            }
             let previous = screen.lastMode
             screen.lastMode = state.mode
             screens[id] = screen
@@ -209,7 +196,6 @@ final class ScreenManager {
                 releaseKey(from: screen.panel, geometry: geometry)
             }
         }
-        wingRetract.setBands(bands)
         updateMouseState()
         // 접힌 상태가 새로 보이기 시작하면 메뉴바 빈 공간을 바로 다시 잰다
         if becameCompact { spaceMonitor.refresh() }
@@ -286,14 +272,12 @@ final class ScreenManager {
         for (id, screen) in screens {
             let panel = screen.panel
             let inside = id == active?.screenID && isInside(location, screen: id)
-            // 비켜줄 날개 위에서는 호버 밝힘을 주지 않는다 (곧 들어가므로)
-            if inside, !wingRetract.isInBand(location, screen: id) { hovered = id }
+            if inside { hovered = id }
             if panel.ignoresMouseEvents == inside {
                 panel.ignoresMouseEvents = !inside
             }
         }
         presentation.setHoveredScreen(hovered)
-        wingRetract.update(location: location, activeScreen: active?.screenID)
     }
 
     /// 아일랜드가 클릭을 받는 자리인지
@@ -400,7 +384,7 @@ final class ScreenManager {
         notificationTokens.append((workspace, motionToken))
     }
 
-    // MARK: - 메뉴바 빈 공간 · 열린 메뉴 · 다른 노치 앱 감시
+    // MARK: - 메뉴바 빈 공간 · 열린 메뉴 감시
 
     private func startOverlapMonitoring() {
         spaceMonitor.screensProvider = { [weak self] in
@@ -423,7 +407,6 @@ final class ScreenManager {
         overlapMonitor.onChange = { [weak self] state in
             guard let self else { return }
             self.presentation.setOccluded(state.occluded, concealed: state.concealed)
-            self.presentation.setNotchConflicts(state.notchConflicts)
         }
         overlapMonitor.start { [weak self] location in
             self?.isIslandHit(location) ?? false

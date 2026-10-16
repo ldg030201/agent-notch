@@ -31,23 +31,6 @@ public enum ExternalDisplayStyle: String, CaseIterable, Codable, Sendable {
     case hidden
 }
 
-/// 노치 화면(맥북 내장)에서 접힌 아일랜드를 그리는 방식
-public enum NotchStyle: String, CaseIterable, Codable, Sendable {
-    /// 카메라(노치)를 가운데 두고 양옆 메뉴바 자리를 검은 날개로 사용.
-    /// 날개는 메뉴바 아이콘을 덮고, 마우스를 가져가면 그쪽 날개가 노치 안으로 들어가 비켜준다.
-    case wings
-    /// 노치 바로 아래로 띠를 내려 표시 (메뉴바를 전혀 가리지 않음)
-    case belowNotch
-}
-
-/// 노치 아래 방식(또는 다른 노치 앱이 노치를 쓸 때)에서 접힌 아일랜드를 노치 아래에 보여주는 모양
-public enum CompactOverlapStyle: String, CaseIterable, Codable, Sendable {
-    /// 노치 바로 아래로 띠를 내려 표시
-    case belowNotch
-    /// 노치 아래 가장자리에 상태 색 선만 표시
-    case minimal
-}
-
 /// 사용자 설정 (UserDefaults 에 저장, 비밀 정보 없음)
 @MainActor
 @Observable
@@ -63,9 +46,7 @@ public final class AppPreferences {
         static let staleSessionTimeout = "staleSessionTimeout"
         static let passthroughWhenTerminalFrontmost = "passthroughWhenTerminalFrontmost"
         static let externalDisplayStyle = "externalDisplayStyle"
-        static let compactOverlapStyle = "compactOverlapStyle"
         static let checksForUpdates = "checksForUpdates"
-        static let notchStyle = "notchStyle"
         static let restoresRecentSessions = "restoresRecentSessions"
         static let rotatesSessions = "rotatesSessions"
         static let sessionRotationInterval = "sessionRotationInterval"
@@ -74,8 +55,10 @@ public final class AppPreferences {
         static let all = [
             displayPolicy, fullscreenBehavior, peekOnEdit, peekDuration, completionDisplayDuration, showStreamingText,
             permissionTimeout, staleSessionTimeout, passthroughWhenTerminalFrontmost, externalDisplayStyle,
-            compactOverlapStyle, checksForUpdates, notchStyle, restoresRecentSessions, rotatesSessions, sessionRotationInterval,
+            checksForUpdates, restoresRecentSessions, rotatesSessions, sessionRotationInterval,
         ]
+        /// 없앤 설정 (노치 화면 표시 방식 · 노치 아래 표시 모양). 노치 화면은 늘 노치 아래 띠라 저장된 값을 지운다
+        static let removed = ["notchStyle", "compactOverlapStyle"]
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -138,15 +121,6 @@ public final class AppPreferences {
         didSet { defaults.set(externalDisplayStyle.rawValue, forKey: Key.externalDisplayStyle) }
     }
 
-    /// 노치 화면 표시 방식 (날개 / 노치 아래)
-    public var notchStyle: NotchStyle {
-        didSet { defaults.set(notchStyle.rawValue, forKey: Key.notchStyle) }
-    }
-
-    public var compactOverlapStyle: CompactOverlapStyle {
-        didSet { defaults.set(compactOverlapStyle.rawValue, forKey: Key.compactOverlapStyle) }
-    }
-
     /// 앱을 켤 때 최근 Claude Code 대화 기록 끝부분을 읽어 이미 돌고 있던 세션을 바로 보여줄지 (읽기만 하고 아무것도 쓰지 않음)
     public var restoresRecentSessions: Bool {
         didSet { defaults.set(restoresRecentSessions, forKey: Key.restoresRecentSessions) }
@@ -169,12 +143,11 @@ public final class AppPreferences {
         staleSessionTimeout = defaults.object(forKey: Key.staleSessionTimeout) as? Double ?? 2 * 60 * 60
         passthroughWhenTerminalFrontmost = defaults.object(forKey: Key.passthroughWhenTerminalFrontmost) as? Bool ?? true
         externalDisplayStyle = defaults.string(forKey: Key.externalDisplayStyle).flatMap(ExternalDisplayStyle.init(rawValue:)) ?? .inMenuBar
-        notchStyle = defaults.string(forKey: Key.notchStyle).flatMap(NotchStyle.init(rawValue:)) ?? .wings
-        compactOverlapStyle = defaults.string(forKey: Key.compactOverlapStyle).flatMap(CompactOverlapStyle.init(rawValue:)) ?? .belowNotch
         checksForUpdates = defaults.object(forKey: Key.checksForUpdates) as? Bool ?? true
         restoresRecentSessions = defaults.object(forKey: Key.restoresRecentSessions) as? Bool ?? true
         rotatesSessions = defaults.object(forKey: Key.rotatesSessions) as? Bool ?? true
         sessionRotationInterval = defaults.object(forKey: Key.sessionRotationInterval) as? Double ?? 5
+        for key in Key.removed { defaults.removeObject(forKey: key) }
     }
 
     /// 모든 설정을 처음 값으로 되돌린다. 훅 설치 · 로그인 시 실행은 이 설정 밖(settings.json · 시스템)이라 그대로 둔다.
@@ -193,8 +166,6 @@ public final class AppPreferences {
         staleSessionTimeout = fresh.staleSessionTimeout
         passthroughWhenTerminalFrontmost = fresh.passthroughWhenTerminalFrontmost
         externalDisplayStyle = fresh.externalDisplayStyle
-        notchStyle = fresh.notchStyle
-        compactOverlapStyle = fresh.compactOverlapStyle
         restoresRecentSessions = fresh.restoresRecentSessions
         rotatesSessions = fresh.rotatesSessions
         sessionRotationInterval = fresh.sessionRotationInterval

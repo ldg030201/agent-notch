@@ -192,7 +192,7 @@ final class PulsingDotNSView: NSView {
 
 // MARK: - 세션 상태 표시
 
-/// 접힌 날개/목록에서 쓰는 세션 상태 아이콘
+/// 접힌 띠 · 알약 · 목록에서 쓰는 세션 상태 아이콘
 struct StatusIndicator: View {
     let session: AgentSession
     var reduceMotion: Bool
@@ -428,10 +428,10 @@ struct IslandIconButtonStyle: ButtonStyle {
     }
 }
 
-// MARK: - 상단 행 (날개)
+// MARK: - 상단 행
 
 /// 카드 상단 행 (부분 2 맨 위): 왼쪽 · 오른쪽
-struct WingRow<Leading: View, Trailing: View>: View {
+struct HeaderRow<Leading: View, Trailing: View>: View {
     let height: CGFloat
     @ViewBuilder var leading: Leading
     @ViewBuilder var trailing: Trailing
@@ -444,7 +444,7 @@ struct WingRow<Leading: View, Trailing: View>: View {
             trailing
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .padding(.horizontal, IslandMetrics.wingPadding)
+        .padding(.horizontal, IslandMetrics.headerPadding)
         .frame(height: height)
         .font(IslandFont.body)
         .foregroundStyle(Palette.text)
@@ -462,7 +462,7 @@ struct CardScaffold<Leading: View, Trailing: View, Content: View>: View {
     var body: some View {
         let header = layout.header
         VStack(spacing: 0) {
-            WingRow(height: header.height) {
+            HeaderRow(height: header.height) {
                 leading
             } trailing: {
                 trailing
@@ -543,7 +543,7 @@ enum IslandFormat {
         return "\(hours / 24)일"
     }
 
-    /// 접힌 상태(날개 · 노치 아래 띠 · 알약)용 짧은 툴 이름 (예: "Bash", "Edit", MCP 는 서버 이름 "Claude_Browser").
+    /// 접힌 상태(노치 아래 띠 · 알약)용 짧은 툴 이름 (예: "Bash", "Edit", MCP 는 서버 이름 "Claude_Browser").
     /// 명령 · 경로 · MCP 툴 이름은 펼친 타임라인과 카드에서 보여준다
     static func shortToolTitle(_ session: AgentSession) -> String {
         switch session.phase {

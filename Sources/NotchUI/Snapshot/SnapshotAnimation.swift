@@ -17,7 +17,7 @@ struct SnapshotTransition {
     let name: String
     let from: SnapshotScenario
     let to: SnapshotScenario
-    /// 메뉴바 배치 · 노치 표시 방식을 가져올 장면 (두 상태가 같은 화면이어야 하므로 하나로 맞춘다)
+    /// 메뉴바 배치 · 외부 모니터 표시 방식을 가져올 장면 (두 상태가 같은 화면이어야 하므로 하나로 맞춘다)
     let environment: SnapshotScenario
     /// `from` 카드를 접은 직후(카드 띠를 붙잡은 `to` 접힌 상태) → 띠를 놓은 `to` 접힌 상태 (접힌 뒤 띠가 바뀌는 단계)
     var afterCollapse = false
@@ -66,12 +66,6 @@ struct SnapshotTransition {
             t(.permission, .workingSummary, env: .working),
             t(.permission, .idle, env: .working),
             t(.expanded, .idle, env: .working),
-            // 넓은 노치 날개 비켜주기 (마우스를 올린 쪽)
-            t(.workingWings, .workingWingsRetracted, env: .workingWings),
-            t(.workingWingsRetracted, .workingWings, env: .workingWings),
-            // 노치 아래 띠 → 카드
-            t(.workingBelowNotch, .peek, env: .workingBelowNotch),
-            t(.peek, .workingBelowNotch, env: .workingBelowNotch),
             // 메뉴바 알약 → 카드
             t(.menubarWorking, .menubarPermission, env: .menubarWorking),
             t(.menubarPermission, .menubarWorking, env: .menubarWorking),
@@ -86,8 +80,8 @@ struct SnapshotTransition {
             // 화면 가운데가 좁아 빈 곳 안으로 밀어 놓은 메뉴바 알약 ↔ 카드
             t(.menubarWorkingLongTool, .menubarPermission, env: .menubarWorkingLongTool),
             t(.menubarPermission, .menubarWorkingLongTool, env: .menubarWorkingLongTool),
-            // 실제 사용 환경에 가까운 것: 노치 오른쪽이 상태 아이콘으로 꽉 참 (날개가 아이콘을 덮음)
-            t(.workingWings, .peek, env: .workingWings, name: "anim-working-wings-peek"),
+            // 실제 사용 환경에 가까운 것: 노치 양옆이 앱 메뉴 · 상태 아이콘으로 꽉 참 (노치 아래 띠는 메뉴바를 가리지 않음)
+            t(.workingSummaryStrip, .peek, env: .workingSummaryStrip, name: "anim-working-strip-peek"),
             t(.permissionCollapsed, .permission, env: .working),
         ]
         for (from, to) in [(SnapshotScenario.permission, SnapshotScenario.workingSummary), (.permission, .idle), (.expanded, .idle)] {
@@ -95,7 +89,7 @@ struct SnapshotTransition {
             release.afterCollapse = true
             list.append(release)
         }
-        // 접힌 내용이 카드를 여는 순간 · 열린 동안 바뀌는 전환 (한 표시 상태로 이어서): 넓은 노치 · 노치 아래 띠 ·
+        // 접힌 내용이 카드를 여는 순간 · 열린 동안 바뀌는 전환 (한 표시 상태로 이어서): 노치 아래 띠 ·
         // 메뉴바 알약 · 메뉴바 아래 알약 · 메뉴바 안 점
         for sequence in SnapshotSequence.all {
             for env in SnapshotSequence.environments {
@@ -134,10 +128,10 @@ struct SnapshotSequence {
     /// 카드를 접는다
     let close: Step
 
-    /// 화면 (장면 · 이름 · 고정할 화면 종류). 넓은 노치 화면은 노치 없는 화면 스타일로도 그려 메뉴바 안 알약도 본다.
-    /// 노치 아래 띠는 노치 화면만 (노치 없는 화면에선 빈 곳이 좁아 점이 되므로 점은 빈 곳이 좁은 메뉴바 `dot` 하나로 본다)
+    /// 화면 (장면 · 이름 · 고정할 화면 종류). 노치 아래 띠는 노치 화면만
+    /// (노치 없는 화면은 메뉴바 알약 `pill` · 메뉴바 아래 알약 `below` · 빈 곳이 좁은 메뉴바의 점 `dot` 으로 본다)
     static let environments: [(scene: SnapshotScenario, name: String, style: IslandSnapshotRenderer.Style?)] = [
-        (.working, "wings", nil), (.workingBelowNotch, "strip", .notch),
+        (.working, "strip", .notch), (.workingSummaryStrip, "strip-crowded", .notch),
         (.menubarWorking, "pill", .menuBar), (.menubarBelowWorking, "below", .menuBar), (.menubarDot, "dot", .menuBar),
     ]
 
@@ -499,27 +493,26 @@ enum SnapshotContentSwapCheck {
         }
         // 같은 종류 · 같은 표시 방식에서 폭만 바뀜: 교체 없이 바로 새 레이아웃
         do {
-            let wings = WingsSpec.plain(left: 192, right: 0, items: .all)
-            let panel = Panel(.working, width: 383, compact: .wings(wings))
-            expect("같은 표시 방식", panel.change(to: .working, width: 375, compact: .wings(wings)), .working, 375)
+            let panel = Panel(.working, width: 300, compact: .pill(items: .all))
+            expect("같은 표시 방식", panel.change(to: .working, width: 280, compact: .pill(items: .all)), .working, 280)
             if panel.pendingFinish { problems.append("같은 표시 방식: 교체 예약이 생김") }
             settled("같은 표시 방식", panel)
         }
-        // 같은 종류에서 표시 방식만 바뀜 (왼쪽 날개 → 노치 아래 띠): 이전 내용이 흐려진 뒤 새 내용
+        // 같은 종류에서 표시 방식만 바뀜 (메뉴바 빈 곳이 줄어 알약 → 점): 이전 내용이 흐려진 뒤 새 내용
         do {
-            let panel = Panel(.working, width: 383, compact: .wings(.plain(left: 192, right: 0, items: .all)))
-            expect("날개→띠 첫 렌더", panel.change(to: .working, width: 185, compact: .strip(items: [])), .working, 383)
-            expect("날개→띠 교체 중", panel.render(), .working, 383)
-            if panel.state.contentVisible { problems.append("날개→띠: 교체 중인데 내용이 보임") }
+            let panel = Panel(.working, width: 300, compact: .pill(items: .all))
+            expect("알약→점 첫 렌더", panel.change(to: .working, width: 12, compact: .dot), .working, 300)
+            expect("알약→점 교체 중", panel.render(), .working, 300)
+            if panel.state.contentVisible { problems.append("알약→점: 교체 중인데 내용이 보임") }
             if panel.state.contentDelay(to: IslandContentKey(mode: panel.mode, layout: panel.layout)) != IslandMotion.branchContentDelay {
-                problems.append("날개→띠: 표시 방식 교체 지연이 branchContentDelay 가 아님")
+                problems.append("알약→점: 표시 방식 교체 지연이 branchContentDelay 가 아님")
             }
             panel.elapse()
-            settled("날개→띠", panel)
-            // 교체 끝 전에 다시 날개로: 원래 내용을 바로 보인다
-            _ = panel.change(to: .working, width: 383, compact: .wings(.plain(left: 192, right: 0, items: .all)))
-            expect("띠→날개→띠 첫 렌더", panel.change(to: .working, width: 185, compact: .strip(items: [])), .working, 185)
-            settled("띠→날개→띠", panel)
+            settled("알약→점", panel)
+            // 교체 끝 전에 다시 알약으로: 원래 내용을 바로 보인다
+            _ = panel.change(to: .working, width: 300, compact: .pill(items: .all))
+            expect("점→알약→점 첫 렌더", panel.change(to: .working, width: 12, compact: .dot), .working, 12)
+            settled("점→알약→점", panel)
         }
         // 카드에서 대기열의 다음 요청으로 바뀜: 이전 요청 카드가 흐려진 뒤 새 요청 카드 (대기 수만 바뀌면 그대로)
         do {
@@ -611,7 +604,7 @@ enum SnapshotInterpolation {
     }
 
     /// SwiftUI 가 레이아웃 변경 한 번에 같은 스프링으로 함께 보간하는 값: 프레임 크기 · 위치 · 모양.
-    /// 숫자가 아닌 값(접힌 방식 등)은 후 상태 그대로. 날개 폭 같은 숫자는 보간.
+    /// 숫자가 아닌 값(접힌 방식 등)은 후 상태 그대로.
     static func mix(_ a: IslandLayout, _ b: IslandLayout, _ v: Double) -> IslandLayout {
         var result = b
         result.size = CGSize(width: mix(a.size.width, b.size.width, v), height: mix(a.size.height, b.size.height, v))
@@ -624,11 +617,6 @@ enum SnapshotInterpolation {
             leftInset: mix(a.header.leftInset, b.header.leftInset, v),
             rightInset: mix(a.header.rightInset, b.header.rightInset, v)
         )
-        if case let .wings(from) = a.compact, case var .wings(to) = b.compact {
-            to.left = mix(from.left, to.left, v)
-            to.right = mix(from.right, to.right, v)
-            result.compact = .wings(to)
-        }
         return result
     }
 }
@@ -1040,10 +1028,10 @@ enum SnapshotAnimationSheet {
             sheetNote = "\(transition.from.rawValue) 카드를 접은 뒤 붙잡은 띠를 놓음"
         } else {
             from = try SnapshotStage.prepare(transition.from, style: style, environment: transition.environment)
-            // 전 상태를 그리면서(관찰 패스 · 커밋) 배치 이력(직전 접힌 날개 · 열린 카드 띠)이 남는다
+            // 전 상태를 그리면서(관찰 패스 · 커밋) 배치 이력(직전 접힌 모양 · 열린 카드 띠)이 남는다
             fromLayout = from.draw()
             to = try SnapshotStage.prepare(transition.to, style: style, environment: transition.environment)
-            // 실제 앱처럼 전 상태의 배치 이력을 기억한 채 후 상태를 계산한다 (날개 배치 · 카드 띠 이력 유지, 카드를 접으면 띠를 붙잡음)
+            // 실제 앱처럼 전 상태의 배치 이력을 기억한 채 후 상태를 계산한다 (카드 띠 이력 유지, 카드를 접으면 띠를 붙잡음)
             to.presentation.adoptLayoutHistory(from: from.presentation)
         }
         let fromMode = from.mode
@@ -1260,15 +1248,12 @@ enum SnapshotAnimationSheet {
 
     private static func describe(_ layout: IslandLayout) -> String {
         let s = layout.shape
-        var text = String(
+        let text = String(
             format: "프레임 (%.1f,%.1f) %.1f×%.1f · 목 L%.1f R%.1f H%.1f · 몸통 L%.1f R%.1f · 귀 %.0f/%.0f · 위 %.0f · 몸통위 %.0f · 어깨 %.0f · 아래 %.0f",
             layout.origin.x, layout.origin.y, layout.size.width, layout.size.height,
             s.neckLeft, s.neckRight, s.neckHeight, s.bodyLeft, s.bodyRight, s.leftEar, s.rightEar,
             s.topRadius, s.bodyTopRadius, s.shoulderRadius, s.bottomRadius
         )
-        if case let .wings(spec) = layout.compact {
-            text += String(format: " · 날개 %.0f/%.0f (%@)", spec.left, spec.right, "\(spec.arrangement)")
-        }
         return text
     }
 }

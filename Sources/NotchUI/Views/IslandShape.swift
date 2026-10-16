@@ -64,7 +64,7 @@ extension IslandShapeSpec {
 }
 
 /// 부분 1: 접힌 상태 모양 그대로 (자리는 패널 기준, 모양 치수는 그 사각형 기준 — `IslandShapeSpec` 의 같은 이름 값과 같은 뜻).
-/// 넓은 노치에서 내용을 노치 아래 띠로 내린 모양은 띠(목) + 노치 폭 띠(몸통) 두 조각이다
+/// 아래 조각이 위 조각보다 좁은 두 조각 모양도 그릴 수 있다 (지금 접힌 모양 · 띠 · 알약 · 점은 모두 한 조각)
 struct IslandPart1Spec: Equatable {
     var minX: CGFloat = 0
     var minY: CGFloat = 0

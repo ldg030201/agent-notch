@@ -77,7 +77,7 @@ struct NotchGeometry: Equatable {
         self.reportsMenuBar = reportsMenuBar
     }
 
-    /// 아일랜드 상단 행(날개) 높이. 노치 화면은 노치 높이, 아니면 알약 높이.
+    /// 아일랜드 상단 행 높이. 노치 화면은 노치 높이, 아니면 알약 높이.
     var headerHeight: CGFloat {
         hasNotch ? max(notchSize.height, 24) : Self.pillHeaderHeight
     }

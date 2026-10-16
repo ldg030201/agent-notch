@@ -68,17 +68,6 @@ final class SettingsModel {
         launchAtLoginManagedByHomebrew = provider.launchAtLoginManagedByHomebrew
     }
 
-    /// 시스템 설정 > 메뉴 막대를 연다. 그 화면으로 바로 못 가면 시스템 설정만 연다.
-    func openMenuBarSettings() {
-        let workspace = NSWorkspace.shared
-        if let url = URL(string: "x-apple.systempreferences:com.apple.ControlCenter-Settings.extension"), workspace.open(url) {
-            return
-        }
-        if let app = workspace.urlForApplication(withBundleIdentifier: "com.apple.systempreferences") {
-            workspace.openApplication(at: app, configuration: NSWorkspace.OpenConfiguration())
-        }
-    }
-
     func installHooks() {
         do {
             try provider.installHooks()
@@ -123,8 +112,6 @@ final class SettingsModel {
 struct SettingsView: View {
     @Bindable var preferences: AppPreferences
     let model: SettingsModel
-    /// 다른 노치 앱 감지 정보 (없으면 표시 안 함)
-    let presentation: PresentationController?
 
     static let windowSize = CGSize(width: 720, height: 620)
 
@@ -363,23 +350,7 @@ struct SettingsView: View {
                     .disabled(!preferences.rotatesSessions)
             }
 
-            SettingsGroup(title: "메뉴바와 겹침") {
-                SettingsRow(title: "노치 화면 표시", note: Self.notchStyleNote(preferences.notchStyle)) {
-                    SettingsMenuPicker(title: "노치 화면 표시", selection: $preferences.notchStyle, options: [
-                        (.belowNotch, "노치 아래 (노치 폭에 맞춤)"),
-                        (.wings, "넓은 노치 (양옆을 검게)"),
-                    ])
-                }
-                SettingsDivider()
-                if preferences.notchStyle == .belowNotch {
-                    SettingsRow(title: "노치 아래 표시", note: "접힌 아일랜드를 노치 아래에 보여줄 모양") {
-                        SettingsMenuPicker(title: "노치 아래 표시", selection: $preferences.compactOverlapStyle, options: [
-                            (.belowNotch, "노치 아래 띠"),
-                            (.minimal, "선만"),
-                        ])
-                    }
-                    SettingsDivider()
-                }
+            SettingsGroup(title: "외부 모니터") {
                 SettingsRow(title: "외부 모니터 표시", note: "노치 없는 화면에서 접힌 아일랜드를 둘 곳") {
                     SettingsMenuPicker(title: "외부 모니터 표시", selection: $preferences.externalDisplayStyle, options: [
                         (.inMenuBar, "메뉴바 안"),
@@ -387,41 +358,7 @@ struct SettingsView: View {
                         (.hidden, "표시 안 함"),
                     ])
                 }
-                ForEach(presentation?.notchConflictNames ?? [], id: \.self) { name in
-                    SettingsDivider()
-                    SettingsNote(
-                        text: "다른 노치 앱 감지됨: \(name) — 겹치지 않게 노치 아래로 내려서 보여줘요",
-                        systemImage: "exclamationmark.triangle.fill",
-                        tint: SettingsPalette.orange,
-                        emphasized: true
-                    )
-                }
             }
-
-            SettingsGroup(title: "메뉴바 아이콘") {
-                SettingsNote(
-                    text: "macOS 27 은 아이콘이 넘치면 « 버튼 뒤로 자동으로 접어요. 노치 옆 아이콘이 먼저 접히고, ⌘-드래그로 순서를 바꿀 수 있어요. 시스템 설정 > 메뉴 막대에서 아이콘을 숨길 수도 있어요.",
-                    systemImage: "info.circle"
-                )
-                SettingsDivider()
-                HStack(spacing: 8) {
-                    Button("메뉴 막대 설정 열기") {
-                        model.openMenuBarSettings()
-                    }
-                    Spacer(minLength: 0)
-                }
-                .buttonStyle(SettingsButtonStyle())
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-            }
-        }
-    }
-
-    /// 노치 화면 표시 방식 설명
-    private static func notchStyleNote(_ style: NotchStyle) -> String {
-        switch style {
-        case .wings: return "노치 양옆 메뉴바 자리를 검게 칠해 노치가 넓어 보여요. 날개에 마우스를 올리면 비켜줘서 아래 메뉴바 아이콘을 쓸 수 있어요."
-        case .belowNotch: return "메뉴바를 가리지 않고 노치 바로 아래에 노치 폭만큼 내려 보여줘요."
         }
     }
 
@@ -470,13 +407,11 @@ struct SettingsView: View {
 final class SettingsWindowController {
     private let preferences: AppPreferences
     private let model: SettingsModel
-    private let presentation: PresentationController
     private var window: NSWindow?
 
-    init(preferences: AppPreferences, provider: SettingsProvider, presentation: PresentationController) {
+    init(preferences: AppPreferences, provider: SettingsProvider) {
         self.preferences = preferences
         self.model = SettingsModel(provider: provider)
-        self.presentation = presentation
     }
 
     func setUpdateProvider(_ provider: UpdateProvider?) {
@@ -501,7 +436,7 @@ final class SettingsWindowController {
     }
 
     private func makeWindow() -> NSWindow {
-        let root = SettingsView(preferences: preferences, model: model, presentation: presentation)
+        let root = SettingsView(preferences: preferences, model: model)
         let hosting = NSHostingController(rootView: root)
         hosting.sizingOptions = []
         let window = NSWindow(contentViewController: hosting)

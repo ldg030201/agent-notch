@@ -79,7 +79,7 @@ public final class NotchUIController {
     }
 
     private func makeSettingsWindow() -> SettingsWindowController {
-        let controller = SettingsWindowController(preferences: preferences, provider: settings, presentation: presentation)
+        let controller = SettingsWindowController(preferences: preferences, provider: settings)
         controller.setUpdateProvider(updateProvider)
         return controller
     }

@@ -71,14 +71,9 @@ public enum IslandSnapshotRenderer {
 
 enum SnapshotScenario: String, CaseIterable {
     case idle
-    case idleWings = "idle-wings"
     /// 쉬는 세션 5개: 모든 세션 요약 ("● 5")
     case idleSummary = "idle-summary"
     case working
-    case workingWings = "working-wings"
-    case workingWingsRetracted = "working-wings-retracted"
-    case workingBelowNotch = "working-below-notch"
-    case workingMinimal = "working-minimal"
     /// 작업 중 + 백그라운드 셸 1 · 서브에이전트 2 (접힌 상태 끝에 배지 "⧉ 3")
     case workingBackground = "working-background"
     /// `working-background` 를 노치 아래 띠로 (양옆이 막힌 메뉴바)
@@ -153,20 +148,10 @@ enum SnapshotScenario: String, CaseIterable {
         self == .menubarBelowWorking || self == .menubarBelowPermission ? .belowMenuBar : .inMenuBar
     }
 
-    /// 노치 화면 표시 방식. 노치 아래 장면만 명시하고 나머지는 기본값(넓은 노치)
-    var notchStyle: NotchStyle {
-        switch self {
-        case .workingBelowNotch, .workingMinimal, .workingSummaryStrip, .workingBackgroundStrip:
-            return .belowNotch
-        default: return .wings
-        }
-    }
-
     /// 메뉴바 배치 (메뉴 · 상태 아이콘이 차지하는 자리)
     var crowding: SnapshotMenuBar.Crowding {
         switch self {
-        case .workingBelowNotch, .workingMinimal, .workingSummaryStrip, .workingBackgroundStrip: return .bothBlocked
-        case .idleWings, .workingWings, .workingWingsRetracted: return .iconsToNotch
+        case .workingSummaryStrip, .workingBackgroundStrip: return .bothBlocked
         case .menubarDot: return .narrowGap
         case .menubarWorkingLongTool: return .offCenterGap
         case .menubarWorkingTight: return .tightGap
@@ -186,8 +171,6 @@ struct SnapshotMenuBar {
         case roomy
         /// 왼쪽은 앱 메뉴, 오른쪽은 상태 아이콘이 노치 바로 옆까지 (오른쪽 빈 곳 약 30pt)
         case bothBlocked
-        /// 앱 메뉴는 짧고, 상태 아이콘이 노치 바로 옆부터 꽉 참 (넓은 노치가 아이콘을 덮는 모습)
-        case iconsToNotch
         /// 노치 없는 화면: 앱 메뉴와 상태 아이콘 사이가 좁음 (알약 대신 점)
         case narrowGap
         /// 노치 없는 화면: 앱 메뉴가 화면 가운데 가까이까지 길고 빈 곳(약 296pt)이 오른쪽으로 치우침.
@@ -248,7 +231,7 @@ struct SnapshotMenuBar {
         let appMenuEnd = IslandLayoutEngine.estimatedAppMenuEnd(screenWidth: width)
         let menus: [MenuItem]
         switch crowding {
-        case .roomy, .iconsToNotch:
+        case .roomy:
             menus = Self.layoutMenus(shortMenus, limit: .greatestFiniteMagnitude)
         case .bothBlocked:
             // 노치 없는 화면은 추정한 앱 메뉴 끝 앞까지 (알약 · 점이 메뉴 글자를 덮지 않게)
@@ -263,7 +246,6 @@ struct SnapshotMenuBar {
         switch crowding {
         case .roomy: statusStart = hasNotch ? 760 : 800
         case .bothBlocked: statusStart = notchMaxX + 38
-        case .iconsToNotch: statusStart = notchMaxX + 8
         case .narrowGap: statusStart = appMenuEnd + 92
         case .offCenterGap: statusStart = appMenuEnd + 296
         case .tightGap: statusStart = appMenuEnd + 140
@@ -402,9 +384,7 @@ enum SnapshotStage {
         if scene.isSettings {
             var world = SnapshotWorld()
             world.startSessions()
-            let preferences = try makePreferences(notchStyle: scene.notchStyle)
-            let presentation = PresentationController(store: world.store, preferences: preferences, actions: SnapshotActions())
-            return try renderSettings(scene, world: world, preferences: preferences, presentation: presentation)
+            return try renderSettings(scene, world: world, preferences: try makePreferences())
         }
         let setup = try prepare(scene, style: style)
         // 관찰 패스를 한 번 돌린 뒤(커밋) 그린다. 정지 장면도 이음매 검사 (목 ↔ 몸통 끊김 · 물림 · 거의 겹친 이음매)
@@ -417,17 +397,15 @@ enum SnapshotStage {
         return try image(of: canvas, size: CGSize(width: setup.bar.geometry.frame.width, height: setup.bar.canvasHeight))
     }
 
-    private static func makePreferences(notchStyle: NotchStyle) throws -> AppPreferences {
+    private static func makePreferences() throws -> AppPreferences {
         guard let defaults = MemoryDefaults() else {
             throw IslandSnapshotRenderer.RenderError.renderFailed("설정 저장소를 만들 수 없음")
         }
-        let preferences = AppPreferences(defaults: defaults)
-        preferences.notchStyle = notchStyle
-        return preferences
+        return AppPreferences(defaults: defaults)
     }
 
     /// 장면의 가짜 데이터 · 표시 상태를 만든다.
-    /// - environment: 메뉴바 배치 · 노치 표시 방식을 가져올 장면 (전환 시트에서 두 상태가 같은 화면을 쓰게). nil 이면 `scene` 자신
+    /// - environment: 메뉴바 배치 · 외부 모니터 표시 방식을 가져올 장면 (전환 시트에서 두 상태가 같은 화면을 쓰게). nil 이면 `scene` 자신
     static func prepare(
         _ scene: SnapshotScenario,
         style: IslandSnapshotRenderer.Style,
@@ -436,8 +414,7 @@ enum SnapshotStage {
         let env = environment ?? scene
         var world = SnapshotWorld()
         world.startSessions()
-        let preferences = try makePreferences(notchStyle: env.notchStyle)
-        if env == .workingMinimal { preferences.compactOverlapStyle = .minimal }
+        let preferences = try makePreferences()
         preferences.externalDisplayStyle = env.externalStyle
         let presentation = PresentationController(store: world.store, preferences: preferences, actions: SnapshotActions())
         let uptime = SnapshotUptime()
@@ -456,7 +433,7 @@ enum SnapshotStage {
             presentation.commitScreens()
         }
         switch scene {
-        case .idle, .idleWings:
+        case .idle:
             break
         case .idleSummary:
             world.startMoreSessions()
@@ -479,7 +456,7 @@ enum SnapshotStage {
                 showCompact()
                 presentation.toggleExpanded(on: screenID)
             }
-        case .working, .workingWings, .workingBelowNotch, .menubarWorking, .menubarDot, .menubarBelowWorking:
+        case .working, .menubarWorking, .menubarDot, .menubarBelowWorking:
             world.apiServerEdits()
             world.apiServerRunsTests()
         case .menubarWorkingLongTool, .menubarWorkingTight:
@@ -496,15 +473,6 @@ enum SnapshotStage {
             world.apiServerEdits()
             world.apiServerRunsTests()
             world.store.togglePin(sessionID: SnapshotWorld.blog.id)
-        case .workingWingsRetracted:
-            // 마우스를 올린 오른쪽 날개가 노치 안으로 들어간 모습
-            world.apiServerEdits()
-            world.apiServerRunsTests()
-            presentation.setRetractedWings(.right, on: screenID)
-        case .workingMinimal:
-            preferences.compactOverlapStyle = .minimal
-            world.apiServerEdits()
-            world.apiServerRunsTests()
         case .peek:
             let diff = world.apiServerEdits()
             showCompact()
@@ -614,8 +582,7 @@ enum SnapshotStage {
     private static func renderSettings(
         _ scene: SnapshotScenario,
         world: SnapshotWorld,
-        preferences: AppPreferences,
-        presentation: PresentationController
+        preferences: AppPreferences
     ) throws -> CGImage {
         let now = world.clock.now
         let model = SettingsModel(provider: SnapshotSettingsProvider(), now: { now })
@@ -624,7 +591,6 @@ enum SnapshotStage {
         switch scene {
         case .settings:
             model.selectedSection = .display
-            presentation.setNotchConflicts([1: "NotchDemo"])
         case .settingsGeneral:
             model.selectedSection = .general
             // 초기화 확인 단계 (취소 · 초기화 버튼)
@@ -633,7 +599,7 @@ enum SnapshotStage {
             model.selectedSection = .version
         }
         let size = CGSize(width: 720, height: 700)
-        let view = SettingsView(preferences: preferences, model: model, presentation: presentation)
+        let view = SettingsView(preferences: preferences, model: model)
             .frame(width: size.width, height: size.height)
             .environment(\.islandRenderContext, IslandRenderContext(isSnapshot: true, fixedNow: now))
             .environment(\.colorScheme, .light)

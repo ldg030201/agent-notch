@@ -38,9 +38,9 @@ enum Changelog {
                 .new("앱을 다시 켜도 진행 중인 세션 이어 보기"),
             ]),
             ChangelogGroup(title: "표시", icon: "display", tab: "display", isNew: true, notes: [
-                .new("노치 아래 · 넓은 노치 모양"),
+                .new("노치 아래 띠 (메뉴바를 가리지 않음)"),
                 .new("외부 모니터 메뉴바 알약"),
-                .new("열린 메뉴 · 다른 노치 앱과 겹치면 피하기"),
+                .new("열린 메뉴와 겹치면 피하기"),
             ]),
             ChangelogGroup(title: "시작하기", icon: "power", tab: "general", isNew: true, notes: [
                 .new("첫 실행 안내 (훅 설치 · 로그인 시 실행)"),

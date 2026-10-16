@@ -51,10 +51,6 @@ final class PresentationController {
     private(set) var occludedScreenIDs: Set<ScreenID> = []
     /// 그중 메뉴가 접힌 아일랜드에 닿아 접힌 상태를 투명하게 숨긴 화면
     private(set) var concealedScreenIDs: Set<ScreenID> = []
-    /// 노치를 쓰는 다른 앱 (화면 → 앱 이름)
-    private(set) var notchConflicts: [ScreenID: String] = [:]
-    /// 넓은 노치에서 마우스를 올려 비켜준 날개
-    private(set) var retractedWings: [ScreenID: WingSides] = [:]
     /// 업데이트 상태 (없으면 배지 · 버전 탭 숨김)
     var updateProvider: UpdateProvider?
 
@@ -91,7 +87,7 @@ final class PresentationController {
     /// 넘기는 간격 하한 (초). 설정 슬라이더보다 짧게 저장된 값이 와도 너무 자주 넘기지 않게
     static let minimumRotationInterval: Double = 2
 
-    /// 접힌 상태 폭 안정화 (툴 이름 · `+N −M` 폭이 이벤트마다 바뀌어도 날개가 출렁이지 않게). 커밋에서만 옮긴다
+    /// 접힌 상태 폭 안정화 (툴 이름 · `+N −M` 폭이 이벤트마다 바뀌어도 알약이 출렁이지 않게). 커밋에서만 옮긴다
     @ObservationIgnored private var compactHold = CompactMetricsHold()
     /// 붙잡아 둔 접힌 폭을 줄이거나 접히는 동안 붙잡은 카드 띠를 놓을 때가 되면 올려서 다시 계산 · 커밋하게 한다
     private var holdRevision = 0
@@ -228,8 +224,6 @@ final class PresentationController {
         if let expanded = expandedScreenID, map[expanded] == nil { expandedScreenID = nil }
         if let active = activeScreenID, map[active] == nil { activeScreenID = nil }
         if let hovered = hoveredScreenID, map[hovered] == nil { hoveredScreenID = nil }
-        let validRetracted = retractedWings.filter { map[$0.key] != nil }
-        if validRetracted != retractedWings { retractedWings = validRetracted }
         let validFullscreen = fullscreenScreenIDs.filter { map[$0] != nil }
         if validFullscreen != fullscreenScreenIDs { fullscreenScreenIDs = validFullscreen }
     }
@@ -254,17 +248,6 @@ final class PresentationController {
         if spaces != value { spaces = value }
     }
 
-    func setNotchConflicts(_ value: [ScreenID: String]) {
-        if notchConflicts != value { notchConflicts = value }
-    }
-
-    /// 비켜준 날개 (ScreenManager 의 날개 비켜주기가 호출)
-    func setRetractedWings(_ sides: WingSides, on id: ScreenID) {
-        let current = retractedWings[id] ?? []
-        guard current != sides else { return }
-        retractedWings[id] = sides.isEmpty ? nil : sides
-    }
-
     /// 열린 메뉴와 겹친 화면 · 접힌 상태를 숨길 화면 (`OverlapMonitor`). 겹치기 시작하면 일시 펼침(피크/완료)은 바로 접는다.
     func setOccluded(_ ids: Set<ScreenID>, concealed: Set<ScreenID> = []) {
         let concealed = concealed.intersection(ids)
@@ -274,11 +257,6 @@ final class PresentationController {
         if let target = transientTargetScreenID, ids.contains(target), transient != nil {
             clearTransient()
         }
-    }
-
-    /// 감지된 다른 노치 앱 이름 (설정 화면 표시용)
-    var notchConflictNames: [String] {
-        Array(Set(notchConflicts.values)).sorted()
     }
 
     // MARK: - 화면 정책
@@ -443,12 +421,10 @@ final class PresentationController {
     // 배치 이력은 관찰 패스(`ScreenManager`)가 모든 화면을 한 번에 계산한 뒤 `commit` 에서만 옮긴다
 
     /// 화면 하나의 배치 이력: 직전에 그린 접힌 모양 · 열린 카드 띠 · 접히는 동안 붙잡는 띠 (`commit` 만 바꾼다).
-    /// - 접힌 상태 → 카드: 카드는 직전 접힌 모양(부분 1 · 날개 · 알약 · 접힌 내용)으로 부분 1 을 그리고, 열린 동안 그 카드 띠를 기억한다
+    /// - 접힌 상태 → 카드: 카드는 직전 접힌 모양(부분 1 · 알약 · 접힌 내용)으로 부분 1 을 그리고, 열린 동안 그 카드 띠를 기억한다
     /// - 카드 → 접힌 상태: 카드 띠를 접히는 모양이 자리 잡을 때까지 붙잡는다 (`collapseHold`)
     /// - 숨김: 접힌 모양 이력을 지운다. 사라진 화면은 통째로 지운다
     struct LayoutHistory: Equatable {
-        /// 직전 접힌 날개 (배치가 오가지 않게 하는 이력 · 펼친 카드 띠). 날개 없이 그렸으면 `.withoutWings`
-        var wings: WingsSpec?
         /// 직전에 그린 부분 1 (접힌 모양 또는 열린 카드 위의 접힌 모양). 카드를 펼치고 접는 동안 부분 1 을 그대로 두는 데 쓴다
         var part1: IslandLayout?
         /// 직전 메뉴바 알약 (노치 없는 화면). 펼친 카드가 같은 알약을 부분 1 로 쓴다
@@ -469,9 +445,8 @@ final class PresentationController {
             var until: TimeInterval
         }
 
-        /// 접힌 상태 배치 이력(직전 부분 1 · 날개 · 알약 · 접힌 내용)을 지운다. 다음 접힌 상태 · 카드는 지금 내용으로 새로 계산한다
+        /// 접힌 상태 배치 이력(직전 부분 1 · 알약 · 접힌 내용)을 지운다. 다음 접힌 상태 · 카드는 지금 내용으로 새로 계산한다
         mutating func forgetCompact() {
-            wings = nil
             part1 = nil
             pill = nil
             compactContent = nil
@@ -496,12 +471,11 @@ final class PresentationController {
         }
     }
 
-    /// 관찰 패스가 화면 하나를 계산한 결과: 그릴 모드 · 레이아웃 · 투명 숨김 · 비켜줄 날개 자리와, 커밋하면 남을 배치 이력
+    /// 관찰 패스가 화면 하나를 계산한 결과: 그릴 모드 · 레이아웃 · 투명 숨김과, 커밋하면 남을 배치 이력
     struct ScreenFrame {
         let mode: IslandMode
         let layout: IslandLayout
         let concealed: Bool
-        let bands: WingBands
         /// 커밋하면 이 화면의 배치 이력이 될 값
         let history: LayoutHistory
         /// 레이아웃을 고른 접힌 자리 (접힌 상태면 그 자리, 펼친 카드면 카드 뒤의 접힌 자리, 숨김이면 nil. 로그용)
@@ -525,7 +499,7 @@ final class PresentationController {
         let mode = mode(for: id)
         guard let resolved = resolve(id, mode: mode, now: uptime()) else {
             return ScreenFrame(
-                mode: mode, layout: Self.emptyLayout, concealed: false, bands: .none, history: LayoutHistory(),
+                mode: mode, layout: Self.emptyLayout, concealed: false, history: LayoutHistory(),
                 placement: nil, startsCollapseHold: false, measuredCompact: nil, peekBody: nil
             )
         }
@@ -533,7 +507,6 @@ final class PresentationController {
             mode: mode,
             layout: resolved.layout,
             concealed: isConcealed(id, mode: mode),
-            bands: mode.isCompact ? resolved.engine.retractBands(for: resolved.placement ?? .none) : .none,
             history: resolved.history,
             placement: resolved.placement,
             startsCollapseHold: resolved.startsCollapseHold,
@@ -566,11 +539,6 @@ final class PresentationController {
             geometry: geometry,
             space: spaces[id],
             externalStyle: preferences.externalDisplayStyle,
-            notchStyle: preferences.notchStyle,
-            overlapStyle: preferences.compactOverlapStyle,
-            notchConflict: notchConflicts[id] != nil,
-            retracted: retractedWings[id] ?? [],
-            previousWings: past.wings,
             previousPill: past.pill,
             collapseHold: past.collapseHold?.band,
             previousPart1: past.part1
@@ -604,12 +572,6 @@ final class PresentationController {
         if mode.isCompact {
             history.part1 = result
             history.compactContent = resolved.content
-            // 날개 없이 그렸으면(노치 아래 띠 · 선 · 알약) 그것도 기억한다 (날개로 다시 바꿀 때도 이력을 적용하게)
-            if case let .wings(spec)? = result.compact {
-                history.wings = spec
-            } else {
-                history.wings = .withoutWings
-            }
             if case .menuBarPill? = placement { history.pill = placement } else { history.pill = nil }
         } else if mode.isOpen, let placement {
             // 펼친 카드의 부분 1 (띠 · 알약)을 접힌 이력으로 기억한다:
@@ -618,13 +580,9 @@ final class PresentationController {
             if let content = resolved.content { history.compactContent = content }
             let band = engine.cardBand(for: placement)
             history.cardBand = band
-            if engine.geometry.hasNotch {
-                history.wings = engine.cardBandWings(for: placement) ?? .withoutWings
-            } else if case .menuBarPill = band {
-                history.pill = band
-            }
+            if case .menuBarPill = band { history.pill = band }
         } else if mode == .hidden {
-            // 숨겼다가 여는 카드는 그때 내용으로 부분 1 을 새로 그린다: 숨기기 전 접힌 모양(두 줄 띠 등) · 날개 · 알약 이력을 쓰지 않는다
+            // 숨겼다가 여는 카드는 그때 내용으로 부분 1 을 새로 그린다: 숨기기 전 접힌 모양(두 줄 띠 등) · 알약 이력을 쓰지 않는다
             // (풀스크린 "알림만" 처럼 알림마다 숨김 → 카드가 되는 화면에서 카드 목이 지금 내용과 다른 높이로 열리지 않게)
             history.forgetCompact()
         }
@@ -635,7 +593,7 @@ final class PresentationController {
     }
 
     /// 접힌 상태 내용 (레이아웃 선택용 폭 측정).
-    /// 다른 세션 요약 폭도 툴 이름 · `+N −M` 처럼 붙잡아 둬서 개수가 바뀌어도 날개가 출렁이지 않는다 (붙잡은 값은 커밋에서 옮긴다)
+    /// 세션 요약 폭도 툴 이름 · `+N −M` 처럼 붙잡아 둬서 개수가 바뀌어도 알약이 출렁이지 않는다 (붙잡은 값은 커밋에서 옮긴다)
     func compactContent(for mode: IslandMode) -> CompactContent {
         if mode == .working, let measured = compactMeasurement() {
             _ = holdRevision
@@ -1193,13 +1151,12 @@ final class PresentationController {
         }
     }
 
-    /// 다른 표시 상태가 커밋한 배치 이력(부분 1 · 날개 · 알약 · 접힌 내용 · 열린 카드 띠)으로 이 표시 상태의 이력을 채운다.
+    /// 다른 표시 상태가 커밋한 배치 이력(부분 1 · 알약 · 접힌 내용 · 열린 카드 띠)으로 이 표시 상태의 이력을 채운다.
     /// 붙잡은 띠는 그대로 (스냅숏 전환 시트용: 전 · 후 상태를 다른 가짜 세계로 만들어서, 전 상태를 그린 앱이 후 상태를 계산하는 것과 같게)
     func adoptLayoutHistory(from other: PresentationController) {
         for id in Set(histories.keys).union(other.histories.keys) {
             let source = other.histories[id] ?? LayoutHistory()
             var target = histories[id] ?? LayoutHistory()
-            target.wings = source.wings
             target.part1 = source.part1
             target.pill = source.pill
             target.compactContent = source.compactContent
