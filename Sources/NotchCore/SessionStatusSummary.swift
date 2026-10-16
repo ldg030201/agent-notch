@@ -1,7 +1,7 @@
 import Foundation
 
 /// 세션 상태 요약: 기다리는 중(주황) · 진행 중(초록) · 끝남(회색) 개수.
-/// 접힌 아일랜드는 지금 보여주는 세션을 뺀 나머지를, 펼친 목록 머리는 모든 세션을 요약한다.
+/// 접힌 아일랜드와 펼친 목록 머리가 같은 값(모든 세션)을 보여준다.
 public struct SessionStatusSummary: Hashable, Sendable {
     /// 표시 순서: 기다리는 중 → 진행 중 → 끝남
     public enum Group: Int, CaseIterable, Hashable, Sendable {
@@ -32,10 +32,10 @@ public struct SessionStatusSummary: Hashable, Sendable {
         self.done = done
     }
 
-    /// `excluding` 세션(지금 보여주는 세션)을 뺀 나머지 요약
-    public init<S: Sequence>(sessions: S, excluding excludedID: String? = nil) where S.Element == AgentSession {
+    /// 세션들의 요약
+    public init<S: Sequence>(sessions: S) where S.Element == AgentSession {
         self.init()
-        for session in sessions where session.id != excludedID {
+        for session in sessions {
             switch Self.group(for: session) {
             case .waiting: waiting += 1
             case .working: working += 1

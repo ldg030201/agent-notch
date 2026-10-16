@@ -47,10 +47,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         statusItem.menu = menu
     }
 
-    func remove() {
-        NSStatusBar.system.removeStatusItem(statusItem)
-    }
-
     // MARK: - NSMenuDelegate
 
     func menuNeedsUpdate(_ menu: NSMenu) {

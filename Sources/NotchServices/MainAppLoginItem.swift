@@ -43,11 +43,6 @@ public final class MainAppLoginItem {
         status == .enabled
     }
 
-    /// 등록은 됐지만 사용자가 시스템 설정에서 허용해야 하는 상태
-    public var requiresApproval: Bool {
-        status == .requiresApproval
-    }
-
     /// 앱 번들로 실행 중이라 로그인 항목을 등록할 수 있는지
     public var isAvailable: Bool {
         Bundle.main.bundleURL.pathExtension == "app"

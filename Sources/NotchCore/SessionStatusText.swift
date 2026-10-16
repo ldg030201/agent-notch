@@ -22,7 +22,7 @@ extension AgentSession {
     }
 
     /// 백그라운드 작업 수 문구 (단계와 상관없이)
-    public static func backgroundStatusText(count: Int) -> String {
+    private static func backgroundStatusText(count: Int) -> String {
         "백그라운드 \(count)개 작업 중"
     }
 }

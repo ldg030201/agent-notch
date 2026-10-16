@@ -289,26 +289,26 @@ struct FileOpenerTests {
         let opener = FileOpener(workspace: workspace)
 
         // 실행형 대상은 직접 열지 않고 Finder 에서 실제 파일을 보여주기만
-        #expect(opener.open(path: notes, line: nil))
+        #expect(opener.open(path: notes))
         // 대역이 호출을 가로채지 못하면 실제로 열리지 않도록 여기서 멈춘다
         try #require(workspace.revealed.count == 1)
-        #expect(opener.open(path: doc, line: nil))
+        #expect(opener.open(path: doc))
         #expect(workspace.revealed == [[terminalTarget], [toolTarget]])
         #expect(workspace.opened.isEmpty)
         #expect(workspace.openedWithApp.isEmpty)
 
         // 스크립트 대상은 텍스트 편집기로, 링크가 아닌 실제 파일을 연다
-        #expect(opener.open(path: todo, line: nil))
+        #expect(opener.open(path: todo))
         #expect(workspace.openedWithApp.map(\.urls) == [[scriptTarget]])
         #expect(workspace.openedWithApp.map(\.app) == [RecordingWorkspace.editorURL])
         #expect(workspace.opened.isEmpty)
 
         // 안전한 대상은 기본 앱으로 열되 링크가 아닌 실제 파일을 넘긴다
-        #expect(opener.open(path: alias, line: nil))
+        #expect(opener.open(path: alias))
         #expect(workspace.opened == [realTarget])
 
         // 깨진 링크는 아무것도 하지 않는다
-        #expect(!opener.open(path: gone, line: nil))
+        #expect(!opener.open(path: gone))
         #expect(workspace.revealed.count == 2)
         #expect(workspace.opened.count == 1)
     }

@@ -280,7 +280,7 @@ struct SessionDetailView: View {
                 DiffRowsView(lines: DiffPresentation.visibleLines(diff))
                     .contentShape(Rectangle())
                     .onTapGesture {
-                        actions.openFile(path: diff.filePath, line: diff.startLine)
+                        actions.openFile(path: diff.filePath)
                     }
                     .help(DiffPresentation.displayPath(diff, cwd: session.cwd))
             }

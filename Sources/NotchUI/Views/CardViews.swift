@@ -23,7 +23,7 @@ struct PeekView: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 6) {
                     Button {
-                        actions.openFile(path: diff.filePath, line: diff.startLine)
+                        actions.openFile(path: diff.filePath)
                     } label: {
                         HStack(spacing: 5) {
                             Image(systemName: "doc.text")

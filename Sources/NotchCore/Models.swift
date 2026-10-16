@@ -58,25 +58,19 @@ public enum SessionPhase: String, Codable, Sendable, CaseIterable {
 public struct TerminalContext: Hashable, Sendable, Codable {
     public var termProgram: String?
     public var itermSessionID: String?
-    public var termSessionID: String?
     public var bundleIdentifier: String?
     public var entrypoint: String?
-    public var tmuxPane: String?
 
     public init(
         termProgram: String? = nil,
         itermSessionID: String? = nil,
-        termSessionID: String? = nil,
         bundleIdentifier: String? = nil,
-        entrypoint: String? = nil,
-        tmuxPane: String? = nil
+        entrypoint: String? = nil
     ) {
         self.termProgram = termProgram
         self.itermSessionID = itermSessionID
-        self.termSessionID = termSessionID
         self.bundleIdentifier = bundleIdentifier
         self.entrypoint = entrypoint
-        self.tmuxPane = tmuxPane
     }
 
     /// `HookEnvelope.env` (화이트리스트 환경변수)로부터 생성
@@ -88,10 +82,8 @@ public struct TerminalContext: Hashable, Sendable, Codable {
         self.init(
             termProgram: value("TERM_PROGRAM"),
             itermSessionID: value("ITERM_SESSION_ID"),
-            termSessionID: value("TERM_SESSION_ID"),
             bundleIdentifier: value("__CFBundleIdentifier"),
-            entrypoint: value("CLAUDE_CODE_ENTRYPOINT"),
-            tmuxPane: value("TMUX_PANE")
+            entrypoint: value("CLAUDE_CODE_ENTRYPOINT")
         )
     }
 }
@@ -177,7 +169,6 @@ public struct ActivityItem: Identifiable, Hashable, Sendable {
     public var label: String?
     public var status: ActivityStatus
     public var startedAt: Date
-    public var endedAt: Date?
     public var diff: DiffSnippet?
     /// 이 활동을 한 서브에이전트 `agent_id` (메인 에이전트면 nil). 서브에이전트 항목(`agent:<id>`)은 그 서브에이전트 자신.
     /// 메인 턴이 끝나도 계속 도는 서브에이전트의 활동은 턴 끝에서 닫지 않는다
@@ -193,7 +184,6 @@ public struct ActivityItem: Identifiable, Hashable, Sendable {
         label: String? = nil,
         status: ActivityStatus,
         startedAt: Date,
-        endedAt: Date? = nil,
         diff: DiffSnippet? = nil,
         agentID: String? = nil
     ) {
@@ -206,7 +196,6 @@ public struct ActivityItem: Identifiable, Hashable, Sendable {
         self.label = label
         self.status = status
         self.startedAt = startedAt
-        self.endedAt = endedAt
         self.diff = diff
         self.agentID = agentID
     }
@@ -224,7 +213,6 @@ public struct TurnSummary: Hashable, Sendable {
     public var changedFiles: [String]
     public var added: Int
     public var removed: Int
-    public var toolCount: Int
     /// 턴이 끝난 시각 (Stop · StopFailure). 그 뒤에 오는 이벤트(idle_prompt · 백그라운드 작업 등)로 소요 시간이 늘지 않게 따로 둔다
     public var endedAt: Date?
 
@@ -232,13 +220,11 @@ public struct TurnSummary: Hashable, Sendable {
         changedFiles: [String] = [],
         added: Int = 0,
         removed: Int = 0,
-        toolCount: Int = 0,
         endedAt: Date? = nil
     ) {
         self.changedFiles = changedFiles
         self.added = added
         self.removed = removed
-        self.toolCount = toolCount
         self.endedAt = endedAt
     }
 }
@@ -322,8 +308,6 @@ public struct AgentSession: Identifiable, Hashable, Sendable {
     public var projectName: String
     public var gitBranch: String?
     public var transcriptPath: String?
-    public var model: String?
-    public var permissionMode: String?
 
     /// 보이는 단계. 스토어가 남은 대기와 메인 턴 단계(`mainPhase`)로 정한다 (`SessionStore` 의 `finalize`)
     public var phase: SessionPhase
@@ -367,8 +351,6 @@ public struct AgentSession: Identifiable, Hashable, Sendable {
         projectName: String,
         gitBranch: String? = nil,
         transcriptPath: String? = nil,
-        model: String? = nil,
-        permissionMode: String? = nil,
         phase: SessionPhase = .idle,
         startedAt: Date,
         lastEventAt: Date,
@@ -393,8 +375,6 @@ public struct AgentSession: Identifiable, Hashable, Sendable {
         self.projectName = projectName
         self.gitBranch = gitBranch
         self.transcriptPath = transcriptPath
-        self.model = model
-        self.permissionMode = permissionMode
         self.phase = phase
         // 대기 단계로 만든 세션은 그 대기를 일으킨 툴이 실행 중인 것으로 둔다
         self.mainPhase = phase == .waitingPermission || phase == .waitingInput ? .runningTool : phase
@@ -472,11 +452,9 @@ public enum IslandSignal: Hashable, Sendable {
 public struct SignalEvent: Hashable, Sendable {
     public let seq: Int
     public let signal: IslandSignal
-    public let at: Date
 
-    public init(seq: Int, signal: IslandSignal, at: Date) {
+    public init(seq: Int, signal: IslandSignal) {
         self.seq = seq
         self.signal = signal
-        self.at = at
     }
 }

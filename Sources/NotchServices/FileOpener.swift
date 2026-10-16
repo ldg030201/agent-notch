@@ -54,12 +54,10 @@ public final class FileOpener {
         self.fileManager = fileManager
     }
 
-    /// `line` 은 아직 쓰지 않는다 (에디터별 줄 이동은 추후 지원)
-    ///
     /// 판정과 열기 모두 심볼릭 링크를 끝까지 따라간 실제 파일 기준이다.
     /// (`notes.md -> x.terminal` 처럼 이름만 안전한 링크로 실행형 파일이 열리는 것을 막는다)
     @discardableResult
-    public func open(path: String, line: Int?) -> Bool {
+    public func open(path: String) -> Bool {
         // 한 번만 해석해 판정과 열기에 같은 경로를 쓴다 (링크를 다시 따라가지 않음)
         guard let target = Self.resolvedTarget(for: path) else { return false }
         let url = URL(fileURLWithPath: target)

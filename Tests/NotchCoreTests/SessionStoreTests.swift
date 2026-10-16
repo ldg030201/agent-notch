@@ -14,7 +14,6 @@ import NotchShared
         var s = try #require(store.sessions["s1"])
         #expect(s.phase == .idle)
         #expect(s.projectName == "api-server")
-        #expect(s.model == "claude-opus-5")
         #expect(s.terminal.termProgram == "iTerm.app")
         #expect(store.latestSignal?.signal == .sessionStarted(sessionID: "s1"))
         #expect(store.focusedSessionID == "s1")
@@ -37,7 +36,6 @@ import NotchShared
         #expect(s.currentActivity?.detail == "src/auth/session.ts")
         #expect(s.currentActivity?.label == "Edit")
         #expect(s.currentActivity?.status == .running)
-        #expect(s.turn.toolCount == 1)
 
         clock.advance()
         store.ingest(hook("PostToolUse", #"{"tool_name":"Edit","tool_use_id":"toolu_1","tool_response":{},"# + editInput + "}"))
@@ -46,7 +44,6 @@ import NotchShared
         #expect(s.currentActivity == nil)
         let activity = try #require(s.activities.first { $0.id == "toolu_1" })
         #expect(activity.status == .succeeded)
-        #expect(activity.endedAt == clock.now)
         #expect(activity.diff?.added == 2)
         #expect(activity.diff?.removed == 1)
         #expect(s.lastDiff?.fileName == "session.ts")
@@ -96,7 +93,6 @@ import NotchShared
         store.ingest(hook("Notification", #"{"notification_type":"auth_success","permission_mode":"plan","transcript_path":"/Users/dev/.claude/projects/x.jsonl"}"#))
         let s = try #require(store.sessions["s1"])
         #expect(s.lastEventAt == clock.now)
-        #expect(s.permissionMode == "plan")
         #expect(s.transcriptPath == "/Users/dev/.claude/projects/x.jsonl")
         #expect(s.phase == .idle)
     }
@@ -129,7 +125,6 @@ import NotchShared
         #expect(item.id == "r1")
         #expect(item.status == .succeeded)
         #expect(item.title == "Read a.ts")
-        #expect(s.turn.toolCount == 1)
         // diff 가 없으면 edited 신호 없음
         #expect(store.latestSignal?.seq == before)
         #expect(s.phase == .thinking)
@@ -433,7 +428,6 @@ import NotchShared
         #expect(s.activities.count == AgentSession.maxActivities)
         #expect(s.activities.first?.id == "t10")
         #expect(s.activities.last?.id == "t49")
-        #expect(s.turn.toolCount == 50)
     }
 
     @Test func markSeenDismissPrune() throws {
@@ -466,7 +460,6 @@ import NotchShared
         let second = try #require(store.latestSignal)
         #expect(second.seq > first.seq)
         #expect(second.signal == first.signal)
-        #expect(second.at == clock.now)
     }
 
     /// 마지막 비어 있지 않은 줄 (뒤에서부터 찾는다)

@@ -43,7 +43,7 @@ public struct ChangelogGroup: Codable, Equatable, Sendable {
     public let title: String
     /// 제목 앞 아이콘 (SF Symbol 이름). 없으면(예전 내역) 화면이 기본 표시를 쓴다. 예전 앱은 이 키를 모르고 넘긴다
     public let icon: String?
-    /// 설정 탭 이야기면 그 탭(`SettingsSection` rawValue: general / display / version). 탭에 없으면 nil.
+    /// 설정 탭 이야기면 그 탭(`SettingsSection` rawValue: general / display / shortcuts / version). 탭에 없으면 nil.
     public let tab: String?
     /// 묶음 자체가 이번에 새로 생긴 기능인지. 신규 묶음의 줄에는 갈래를 따로 붙이지 않는다.
     public let isNew: Bool

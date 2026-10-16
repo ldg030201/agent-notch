@@ -171,11 +171,6 @@ public enum JSONValue: Codable, Hashable, Sendable {
         return nil
     }
 
-    public var doubleValue: Double? {
-        if case .number(let value) = self { return value }
-        return nil
-    }
-
     /// 소수점 아래는 버린다. NaN · 무한대 · Int 범위 밖이면 nil (Int(Double) 트랩 방지)
     public var intValue: Int? {
         guard case .number(let value) = self else { return nil }

@@ -21,7 +21,7 @@ import Testing
         #expect(SessionPhase.allCases.count == 8)
     }
 
-    @Test func countsOthersExcludingShownSession() {
+    @Test func countsEverySession() {
         let sessions = [
             session("shown", .runningTool),
             session("permission", .waitingPermission),
@@ -30,14 +30,11 @@ import Testing
             session("done", .completed),
             session("idle", .idle),
         ]
-        let summary = SessionStatusSummary(sessions: sessions, excluding: "shown")
-        #expect(summary == SessionStatusSummary(waiting: 2, working: 1, done: 2))
-        #expect(summary.total == 5)
+        let summary = SessionStatusSummary(sessions: sessions)
+        #expect(summary == SessionStatusSummary(waiting: 2, working: 2, done: 2))
+        #expect(summary.total == 6)
         #expect(summary.groups.map(\.group) == [.waiting, .working, .done])
-        #expect(summary.spokenText == "기다리는 중 2개, 진행 중 1개, 끝남 2개")
-
-        let all = SessionStatusSummary(sessions: sessions)
-        #expect(all == SessionStatusSummary(waiting: 2, working: 2, done: 2))
+        #expect(summary.spokenText == "기다리는 중 2개, 진행 중 2개, 끝남 2개")
     }
 
     @Test func skipsEmptyGroups() {
@@ -48,8 +45,8 @@ import Testing
         #expect(summary.spokenText == "끝남 2개")
     }
 
-    @Test func emptyWhenOnlyShown() {
-        let summary = SessionStatusSummary(sessions: [session("shown", .thinking)], excluding: "shown")
+    @Test func emptyWithoutSessions() {
+        let summary = SessionStatusSummary(sessions: [AgentSession]())
         #expect(summary.isEmpty)
         #expect(summary.groups.isEmpty)
         #expect(summary.spokenText.isEmpty)

@@ -443,7 +443,7 @@ struct PlanApprovalView: View {
                         .truncationMode(.middle)
                     if let path = card.filePath {
                         Button {
-                            presentation.actions.openFile(path: path, line: nil)
+                            presentation.actions.openFile(path: path)
                         } label: {
                             Text("파일 열기")
                                 .underline()

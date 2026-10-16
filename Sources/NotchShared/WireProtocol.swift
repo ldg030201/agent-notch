@@ -83,10 +83,8 @@ public enum NotchWire {
     public static let forwardedEnvironmentKeys: [String] = [
         "TERM_PROGRAM",          // iTerm.app, Apple_Terminal, vscode, WarpTerminal, ghostty …
         "ITERM_SESSION_ID",      // iTerm2 탭/세션 식별 (w0t1p0:UUID)
-        "TERM_SESSION_ID",       // Terminal.app 세션 식별
         "__CFBundleIdentifier",  // 세션을 띄운 앱의 번들 ID (터미널 포커스용)
         "CLAUDE_CODE_ENTRYPOINT",// cli / desktop 등 실행 경로
-        "TMUX_PANE",
     ]
 
     /// `~/Library/Application Support/AgentNotch`

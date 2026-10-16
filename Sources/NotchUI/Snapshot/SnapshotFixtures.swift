@@ -58,7 +58,7 @@ final class SnapshotActions: IslandActions {
     }
     func handOff(requestID: UUID) {}
     func jumpToTerminal(sessionID: String) {}
-    func openFile(path: String, line: Int?) {}
+    func openFile(path: String) {}
     func togglePin(sessionID: String) {}
     func focus(sessionID: String) {}
     func dismiss(sessionID: String) {}

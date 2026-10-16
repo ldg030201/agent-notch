@@ -29,8 +29,8 @@ final class AppActions: IslandActions {
         store.markSeen(sessionID: sessionID)
     }
 
-    func openFile(path: String, line: Int?) {
-        fileOpener.open(path: path, line: line)
+    func openFile(path: String) {
+        fileOpener.open(path: path)
     }
 
     func togglePin(sessionID: String) {

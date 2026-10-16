@@ -11,7 +11,7 @@ public protocol IslandActions: AnyObject {
     /// 세션을 실행한 터미널/앱으로 이동
     func jumpToTerminal(sessionID: String)
     /// 파일 열기 (기본 에디터)
-    func openFile(path: String, line: Int?)
+    func openFile(path: String)
     /// 세션 고정 토글
     func togglePin(sessionID: String)
     /// 세션 선택 (포커스 변경)

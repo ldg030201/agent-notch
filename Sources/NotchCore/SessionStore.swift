@@ -186,7 +186,7 @@ public final class SessionStore {
         trimActivities(&session)
         sessions[sessionID] = session
 
-        if let signal { emit(signal, at: now) }
+        if let signal { emit(signal) }
         recomputeFocus()
         releasePassthrough(released.requests)
         return requestID
@@ -361,12 +361,10 @@ public final class SessionStore {
                 // 다른 에이전트의 세션 앱 다이얼로그가 아직 기다리면 턴이 끝났다고 보지 않는다 (그 대기로 보여준다)
                 let othersWaiting = waits[info.sessionID]?.isEmpty == false
                 if info.isInteraction, session.phase == .waitingInput {
-                    let now = clock()
                     if let toolUseID = info.toolUseID {
                         for index in session.activities.indices
                         where session.activities[index].id == toolUseID && session.activities[index].status == .running {
                             session.activities[index].status = .failed
-                            session.activities[index].endedAt = now
                         }
                         if session.currentActivity?.id == toolUseID { session.currentActivity = nil }
                     }
@@ -520,7 +518,7 @@ public final class SessionStore {
                 sessions[sessionID] = session
                 changed = true
             }
-            if let signal { emit(signal, at: now) }
+            if let signal { emit(signal) }
         }
         if changed { recomputeFocus() }
     }
@@ -544,7 +542,7 @@ public final class SessionStore {
     private func handleUserPromptSubmit(_ session: inout AgentSession, payload: HookPayload, now: Date) {
         let prompt = payload["prompt"]?.stringValue.map(TextUtils.cleanPrompt)
         // 이전 턴에서 끝나지 않은 활동(인터럽트 등)은 실패로 닫는다 (아직 도는 백그라운드 서브에이전트의 활동은 빼고)
-        closeRunningActivities(&session, status: .failed, at: now)
+        closeRunningActivities(&session, status: .failed)
         session.mainPhase = .thinking
         session.mainTurnEnded = false
         session.turnStartedAt = now
@@ -565,8 +563,7 @@ public final class SessionStore {
                 detail: prompt,
                 symbolName: "text.bubble",
                 status: .succeeded,
-                startedAt: now,
-                endedAt: now
+                startedAt: now
             ))
         }
         if !session.cwd.isEmpty {
@@ -585,9 +582,7 @@ public final class SessionStore {
         let item = Self.toolActivity(
             id: payload.string("tool_use_id"), toolName: toolName, toolInput: toolInput, cwd: session.cwd, agentID: agentID, at: now
         )
-        if appendActivity(&session, item) {
-            session.turn.toolCount += 1
-        }
+        appendActivity(&session, item)
         if session.terminal.isClaudeDesktopApp,
            let delay = appConsent.delay(toolName: toolName, toolInput: toolInput),
            consentWatches[session.id]?[item.id] == nil {
@@ -686,7 +681,6 @@ public final class SessionStore {
         }
         let index = toolActivityIndex(&session, payload: payload, toolName: toolName, agentID: agentID, now: now)
         session.activities[index].status = .succeeded
-        session.activities[index].endedAt = now
         session.activities[index].diff = outcome?.snippet
 
         var signal: IslandSignal?
@@ -715,11 +709,10 @@ public final class SessionStore {
         let toolName = payload.string("tool_name") ?? "Tool"
         let index = toolActivityIndex(&session, payload: payload, toolName: toolName, agentID: agentID, now: now)
         session.activities[index].status = .failed
-        session.activities[index].endedAt = now
 
         if payload.bool("is_interrupt") == true {
             // 사용자 인터럽트: 에러가 아니라 턴 중단 (Stop 이벤트가 오지 않음). 예전처럼 실행 중인 활동을 모두 닫는다
-            closeRunningActivities(&session, status: .failed, at: now, keepingRunningSubagents: false)
+            closeRunningActivities(&session, status: .failed, keepingRunningSubagents: false)
             session.currentActivity = nil
             session.mainPhase = .idle
             session.mainTurnEnded = true
@@ -798,7 +791,6 @@ public final class SessionStore {
                 where session.activities[index].kind == .tool && session.activities[index].status == .running
                     && !isRunningSubagent(session.activities[index].agentID, in: session.id) {
                     session.activities[index].status = .failed
-                    session.activities[index].endedAt = now
                 }
                 session.mainPhase = .idle
                 session.currentActivity = nil
@@ -836,7 +828,7 @@ public final class SessionStore {
         }
         // 작업 목록으로 아직 도는 서브에이전트를 먼저 맞추고, 그 서브에이전트의 활동은 닫지 않는다
         reconcileBackgroundTasks(&session, payload: payload, includesSubagents: true)
-        closeRunningActivities(&session, status: .succeeded, at: now)
+        closeRunningActivities(&session, status: .succeeded)
         session.currentActivity = nil
         session.mainPhase = .completed
         session.mainTurnEnded = true
@@ -850,7 +842,7 @@ public final class SessionStore {
         session.errorMessage = payload.string("error_details")
             ?? payload.string("error").map(Self.describeError)
             ?? "알 수 없는 오류"
-        closeRunningActivities(&session, status: .failed, at: now)
+        closeRunningActivities(&session, status: .failed)
         session.currentActivity = nil
         session.mainPhase = .failed
         session.mainTurnEnded = true
@@ -889,7 +881,6 @@ public final class SessionStore {
         for index in session.activities.indices
         where session.activities[index].agentID == agentID && session.activities[index].status == .running {
             session.activities[index].status = .succeeded
-            session.activities[index].endedAt = now
         }
         if let current = session.currentActivity,
            current.agentID == agentID || current.id == Self.subagentActivityID(agentID) {
@@ -1012,7 +1003,6 @@ public final class SessionStore {
         for index in session.activities.indices
         where session.activities[index].kind == .compaction && session.activities[index].status == .running {
             session.activities[index].status = .succeeded
-            session.activities[index].endedAt = now
         }
         let previous = phaseBeforeCompact.removeValue(forKey: session.id)
         guard session.mainPhase == .compacting else { return }
@@ -1076,25 +1066,17 @@ public final class SessionStore {
                 refreshBranch(&session, payload: payload)
             }
         }
-        if let mode = payload.string("permission_mode") { session.permissionMode = mode }
-        if let model = payload.string("model")
-            ?? TextUtils.nonEmpty(payload["model"]?["id"]?.stringValue)
-            ?? TextUtils.nonEmpty(payload["model"]?["display_name"]?.stringValue) {
-            session.model = model
-        }
         let terminal = TerminalContext(environment: environment)
         if terminal != TerminalContext() { session.terminal = terminal }
     }
 
-    /// 타임라인에 추가. 같은 ID 가 이미 있으면 교체하고 false
-    @discardableResult
-    private func appendActivity(_ session: inout AgentSession, _ item: ActivityItem) -> Bool {
+    /// 타임라인에 추가. 같은 ID 가 이미 있으면 교체한다
+    private func appendActivity(_ session: inout AgentSession, _ item: ActivityItem) {
         if let index = session.activities.lastIndex(where: { $0.id == item.id }) {
             session.activities[index] = item
-            return false
+        } else {
+            session.activities.append(item)
         }
-        session.activities.append(item)
-        return true
     }
 
     /// PostToolUse(Failure) 에 해당하는 활동 위치. 없으면(PreToolUse 를 놓침) 새로 만든다.
@@ -1112,7 +1094,6 @@ public final class SessionStore {
         session.activities.append(Self.toolActivity(
             id: toolUseID, toolName: toolName, toolInput: payload["tool_input"], cwd: session.cwd, agentID: agentID, at: now
         ))
-        session.turn.toolCount += 1
         return session.activities.count - 1
     }
 
@@ -1149,13 +1130,11 @@ public final class SessionStore {
     private func closeRunningActivities(
         _ session: inout AgentSession,
         status: ActivityStatus,
-        at date: Date,
         keepingRunningSubagents: Bool = true
     ) {
         for index in session.activities.indices where session.activities[index].status == .running {
             if keepingRunningSubagents, isRunningSubagent(session.activities[index].agentID, in: session.id) { continue }
             session.activities[index].status = status
-            session.activities[index].endedAt = date
         }
     }
 
@@ -1483,7 +1462,7 @@ public final class SessionStore {
         if decision.focusedID != focusedSessionID { focusedSessionID = decision.focusedID }
     }
 
-    private func emit(_ signal: IslandSignal, at date: Date) {
+    private func emit(_ signal: IslandSignal) {
         // 알림이 온 세션을 자동 넘기기가 바로 보여준다 (고정한 세션이 있으면 고정이 먼저)
         switch signal {
         case let .completed(sessionID), let .failed(sessionID), let .permissionRequested(_, sessionID),
@@ -1493,7 +1472,7 @@ public final class SessionStore {
             break
         }
         signalSeq += 1
-        latestSignal = SignalEvent(seq: signalSeq, signal: signal, at: date)
+        latestSignal = SignalEvent(seq: signalSeq, signal: signal)
     }
 
     /// notch-hook 의 PayloadShrinker 가 payload 를 줄였는지 (`NotchWire.truncatedMarkerKey`)
