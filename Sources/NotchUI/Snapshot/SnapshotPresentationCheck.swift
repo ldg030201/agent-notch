@@ -252,8 +252,10 @@ enum SnapshotLayoutHistoryCheck {
             && abs(a.origin.x - b.origin.x) < 0.5
     }
 
-    /// 두 줄 띠(노치 아래 띠 + 백그라운드 배지)를 그린 뒤 풀스크린("알림만")으로 숨김 → 숨긴 동안 그 세션을 닫고
-    /// 다른 세션의 권한 요청 카드: 카드 부분 1 은 숨기기 전 두 줄 띠가 아니라 지금 접힌 내용의 (한 줄) 띠다
+    /// 두 줄 띠(노치 아래 띠 + 백그라운드 배지)를 그린 뒤 풀스크린("알림만")으로 숨김 → 숨긴 동안 그 세션과 쉬는 세션을 닫고
+    /// 남은 세션의 권한 요청 카드: 카드 부분 1 은 숨기기 전 두 줄 띠가 아니라 지금 접힌 내용의 (한 줄) 띠다.
+    /// 쉬는 세션(blog)도 닫는 이유: 접힌 요약은 보여주는 세션까지 세서, 두 세션이 남으면 요약("● 1 ● 1")이 띠 제목 줄에 함께 안 들어가
+    /// 지금 내용도 두 줄 띠가 된다 (세션이 하나뿐이면 요약을 그리지 않아 한 줄)
     private static func hiddenToCard(_ cases: inout Int, _ problems: inout [String]) throws {
         let setup = try SnapshotStage.prepare(.workingBackgroundStrip, style: .notch)
         let id = setup.screenID
@@ -273,6 +275,7 @@ enum SnapshotLayoutHistoryCheck {
         setup.draw()
         var world = setup.world
         world.store.dismiss(sessionID: SnapshotWorld.apiServer.id)
+        world.store.dismiss(sessionID: SnapshotWorld.blog.id)
         world.webAppAsksPermission()
         let card = setup.draw()
         let expected = fresh(setup, fullscreen: [id])
