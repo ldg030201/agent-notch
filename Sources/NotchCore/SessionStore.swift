@@ -770,10 +770,11 @@ public final class SessionStore {
             // 노치에서 "터미널로" 넘긴 질문 · 계획 승인 다이얼로그 알림: 사용자는 이미 그쪽으로 갔다
             if isInputHandedOff(session.id) { return nil }
             // 알림에는 툴 정보가 없다: 그 에이전트(agent_id, 없으면 메인)가 실행 중인 툴이 하나뿐이면 그 호출로 본다
-            addSessionAppWait(
-                session.id, agentID: agentID,
-                toolUseID: Self.waitingToolUseID(in: session, agentID: agentID, toolName: nil), kind: .permission
-            )
+            let toolUseID = Self.waitingToolUseID(in: session, agentID: agentID, toolName: nil)
+            // 세션 앱으로 넘어간 질문 · 계획 승인의 다이얼로그 알림 (세션 앱을 보고 있어 바로 넘긴 경우 등):
+            // 승인 대기가 아니라 그 질문의 입력 대기다. 질문은 이미 카드로 알렸다 ("승인 필요"로 덮어쓰지 않는다)
+            if waitsForSessionAppInput(session.id, agentID: agentID, toolUseID: toolUseID) { return nil }
+            addSessionAppWait(session.id, agentID: agentID, toolUseID: toolUseID, kind: .permission)
             return .needsInput(sessionID: session.id, message: message ?? "승인 필요")
         case "elicitation_complete", "elicitation_response":
             if session.phase == .waitingInput { resumeTurn(&session, phase: .thinking) }
@@ -1320,6 +1321,14 @@ public final class SessionStore {
             list.append(Wait(agentID: agentID, toolUseID: toolUseID, kind: kind, source: .sessionApp, handedOff: handedOff))
         }
         waits[sessionID] = list
+    }
+
+    /// 이 에이전트의 그 호출이 세션 앱 다이얼로그에서 질문 · 계획 승인 · MCP 입력의 답을 기다리는 중인지
+    private func waitsForSessionAppInput(_ sessionID: String, agentID: String?, toolUseID: String?) -> Bool {
+        waits[sessionID]?.contains { wait in
+            wait.source == .sessionApp && wait.kind == .input && wait.agentID == agentID
+                && (wait.toolUseID == nil || toolUseID == nil || wait.toolUseID == toolUseID)
+        } == true
     }
 
     /// 새 입력 요청이 왔다: 넘긴 질문 표시를 풀어 다시 카드로 알린다

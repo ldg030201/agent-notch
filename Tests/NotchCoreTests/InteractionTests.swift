@@ -377,6 +377,36 @@ import NotchShared
         #expect(!store.isInputHandedOff("s1"))
     }
 
+    @Test func passedThroughQuestionStaysInputOnDialogNotification() throws {
+        let store = makeStore(clock)
+        let recorder = ResolutionRecorder()
+        recorder.attach(to: store)
+        let id = try #require(ask(store, frameworkInput))
+
+        // 세션 앱을 보고 있어 노치에서 정하지 않고 바로 넘김 (사용자가 "Claude로"를 누른 것이 아님)
+        store.resolvePermission(id: id, decision: .passthrough)
+        #expect(recorder.calls.first?.1 == .passthrough)
+        #expect(store.sessions["s1"]?.phase == .waitingInput)
+        #expect(!store.isInputHandedOff("s1"))
+        let seq = store.latestSignal?.seq
+
+        // 같은 호출의 PermissionRequest 와 다이얼로그 알림(permission_prompt)이 와도 질문의 입력 대기다.
+        // 예전에는 알림이 승인 대기로 덮어써 카드가 "Claude 앱에서 승인 필요"로 바뀌었다
+        #expect(store.ingest(hook("PermissionRequest", #"{"tool_name":"AskUserQuestion","tool_input":\#(frameworkInput)}"#)) == nil)
+        store.ingest(hook("Notification", #"{"notification_type":"permission_prompt","message":"Claude needs your permission to use AskUserQuestion"}"#))
+        #expect(store.sessions["s1"]?.phase == .waitingInput)
+        #expect(store.latestSignal?.seq == seq)
+
+        // 앱에서 답함 → 다시 평소대로
+        store.ingest(hook("PostToolUse", #"{"tool_name":"AskUserQuestion","tool_use_id":"q1","tool_response":{}}"#))
+        #expect(store.sessions["s1"]?.phase == .thinking)
+
+        // 질문이 없을 때의 다이얼로그 알림은 그대로 승인 대기
+        store.ingest(hook("PreToolUse", #"{"tool_name":"Bash","tool_use_id":"b1","tool_input":{"command":"rm -rf build"}}"#))
+        store.ingest(hook("Notification", #"{"notification_type":"permission_prompt","message":"Claude needs your permission to use Bash"}"#))
+        #expect(store.sessions["s1"]?.phase == .waitingPermission)
+    }
+
     @Test func newQuestionAfterHandOffShowsAgain() throws {
         let store = makeStore(clock)
         let id = try #require(ask(store, frameworkInput))
