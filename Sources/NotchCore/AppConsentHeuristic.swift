@@ -109,4 +109,30 @@ extension TerminalContext {
     public var isClaudeDesktopApp: Bool {
         hostBundleIdentifier == Self.claudeDesktopBundleID
     }
+
+    /// Claude 데스크톱 앱 안의 이 세션을 여는 링크 (`claude://code/continue?session=local_…`).
+    /// 앱 독 메뉴의 "Claude Code 세션 이어 하기"가 쓰는 링크다. 공개 문서에 없는 앱 내부 링크라 바뀔 수 있어서
+    /// 여는 쪽(`TerminalJumper`)은 열지 못하면 앱만 앞으로 가져온다.
+    /// Claude 앱 세션이 아니거나 세션 ID 가 앱이 받는 모양(`local_` + 영문 · 숫자 · 하이픈 64자 이하)이 아니면 nil
+    public var claudeDesktopSessionURL: URL? {
+        guard isClaudeDesktopApp, let id = hostSessionID, Self.isClaudeDesktopSessionID(id) else { return nil }
+        var components = URLComponents()
+        components.scheme = "claude"
+        components.host = "code"
+        components.path = "/continue"
+        components.queryItems = [URLQueryItem(name: "session", value: id)]
+        return components.url
+    }
+
+    static func isClaudeDesktopSessionID(_ id: String) -> Bool {
+        let prefix = "local_"
+        guard id.hasPrefix(prefix) else { return false }
+        let rest = id.utf8.dropFirst(prefix.utf8.count)
+        return (1...64).contains(rest.count) && rest.allSatisfy { byte in
+            (UInt8(ascii: "a")...UInt8(ascii: "z")).contains(byte)
+                || (UInt8(ascii: "A")...UInt8(ascii: "Z")).contains(byte)
+                || (UInt8(ascii: "0")...UInt8(ascii: "9")).contains(byte)
+                || byte == UInt8(ascii: "-")
+        }
+    }
 }

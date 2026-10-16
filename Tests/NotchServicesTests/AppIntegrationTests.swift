@@ -88,6 +88,38 @@ struct TerminalJumperTests {
         #expect(jumper.jump(to: TerminalContext(termProgram: "ghostty", itermSessionID: uuid)))
         #expect(activated == ["com.mitchellh.ghostty"])
     }
+
+    /// Claude 데스크톱 앱 세션: 앱 안의 그 세션을 링크로 열고, 링크를 못 열면 앱만 앞으로
+    @MainActor
+    @Test func claudeDesktopJumpOpensSession() {
+        var activated: [String] = []
+        var opened: [(URL, String)] = []
+        var opens = true
+        let jumper = TerminalJumper(
+            selectITermSession: { _ in false },
+            isRunning: { _ in true },
+            activate: { activated.append($0); return true },
+            openURL: { opened.append(($0, $1)); return opens }
+        )
+        let context = TerminalContext(entrypoint: "claude-desktop", hostSessionID: "local_abc-123")
+
+        #expect(jumper.jump(to: context))
+        #expect(opened.map(\.0.absoluteString) == ["claude://code/continue?session=local_abc-123"])
+        #expect(opened.map(\.1) == [TerminalContext.claudeDesktopBundleID])
+        #expect(activated.isEmpty)
+
+        // Claude 앱이 없어 링크를 못 열면 앱 활성화로
+        opens = false
+        #expect(jumper.jump(to: context))
+        #expect(activated == [TerminalContext.claudeDesktopBundleID])
+
+        // 세션 ID 를 모르면(예전 헬퍼 · 대화 기록으로 되살린 세션) 링크 없이 앱만
+        opened = []
+        activated = []
+        #expect(jumper.jump(to: TerminalContext(entrypoint: "claude-desktop")))
+        #expect(opened.isEmpty)
+        #expect(activated == [TerminalContext.claudeDesktopBundleID])
+    }
 }
 
 /// 여러 스레드에서 쓰는 값 (테스트 기록용)

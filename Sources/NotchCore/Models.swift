@@ -60,17 +60,21 @@ public struct TerminalContext: Hashable, Sendable, Codable {
     public var itermSessionID: String?
     public var bundleIdentifier: String?
     public var entrypoint: String?
+    /// Claude 데스크톱 앱이 세션마다 붙이는 ID (`CLAUDE_CODE_HOST_SESSION_ID`, `local_…`). 앱 안의 그 세션을 열 때 쓴다
+    public var hostSessionID: String?
 
     public init(
         termProgram: String? = nil,
         itermSessionID: String? = nil,
         bundleIdentifier: String? = nil,
-        entrypoint: String? = nil
+        entrypoint: String? = nil,
+        hostSessionID: String? = nil
     ) {
         self.termProgram = termProgram
         self.itermSessionID = itermSessionID
         self.bundleIdentifier = bundleIdentifier
         self.entrypoint = entrypoint
+        self.hostSessionID = hostSessionID
     }
 
     /// `HookEnvelope.env` (화이트리스트 환경변수)로부터 생성
@@ -83,7 +87,8 @@ public struct TerminalContext: Hashable, Sendable, Codable {
             termProgram: value("TERM_PROGRAM"),
             itermSessionID: value("ITERM_SESSION_ID"),
             bundleIdentifier: value("__CFBundleIdentifier"),
-            entrypoint: value("CLAUDE_CODE_ENTRYPOINT")
+            entrypoint: value("CLAUDE_CODE_ENTRYPOINT"),
+            hostSessionID: value("CLAUDE_CODE_HOST_SESSION_ID")
         )
     }
 }

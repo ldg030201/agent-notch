@@ -85,6 +85,7 @@ public enum NotchWire {
         "ITERM_SESSION_ID",      // iTerm2 탭/세션 식별 (w0t1p0:UUID)
         "__CFBundleIdentifier",  // 세션을 띄운 앱의 번들 ID (터미널 포커스용)
         "CLAUDE_CODE_ENTRYPOINT",// cli / desktop 등 실행 경로
+        "CLAUDE_CODE_HOST_SESSION_ID", // Claude 데스크톱 앱의 세션 ID (local_…, "Claude로" 가 그 세션을 연다)
     ]
 
     /// `~/Library/Application Support/AgentNotch`

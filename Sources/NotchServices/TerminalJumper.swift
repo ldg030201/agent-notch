@@ -5,6 +5,7 @@ import os
 /// 세션을 실행한 터미널/앱을 앞으로 가져온다.
 ///
 /// - iTerm2: `ITERM_SESSION_ID` 의 UUID 로 해당 탭·세션까지 선택 (AppleScript, 자동화 권한 필요)
+/// - Claude 데스크톱 앱: 앱 안의 그 세션을 링크로 연다 (`TerminalContext.claudeDesktopSessionURL`, 못 열면 앱만)
 /// - 그 외: 번들 ID 로 앱만 활성화
 ///
 /// iTerm2 AppleScript 는 메인 스레드 밖 전용 큐에서 돌린다. 멈춘 iTerm2 나 처음 뜨는 자동화 권한 창이
@@ -23,24 +24,29 @@ public final class TerminalJumper {
     private let selectITermSession: @Sendable (String) -> Bool
     private let isRunning: (String) -> Bool
     private let activateApp: (String) -> Bool
+    /// 링크를 그 번들 ID 의 앱으로 연다. 열기 시작했으면 true
+    private let openURL: (URL, String) -> Bool
 
     public convenience init() {
         self.init(
             selectITermSession: { Self.runITermSelectScript($0) },
             isRunning: { Self.isRunning($0) },
-            activate: { Self.activate(bundleID: $0) }
+            activate: { Self.activate(bundleID: $0) },
+            openURL: { Self.open($0, inAppWithBundleID: $1) }
         )
     }
 
-    /// 테스트에서 AppleScript · 앱 활성화를 바꿔 끼운다
+    /// 테스트에서 AppleScript · 앱 활성화 · 링크 열기를 바꿔 끼운다
     init(
         selectITermSession: @escaping @Sendable (String) -> Bool,
         isRunning: @escaping (String) -> Bool,
-        activate: @escaping (String) -> Bool
+        activate: @escaping (String) -> Bool,
+        openURL: @escaping (URL, String) -> Bool = { _, _ in false }
     ) {
         self.selectITermSession = selectITermSession
         self.isRunning = isRunning
         self.activateApp = activate
+        self.openURL = openURL
     }
 
     /// 앱을 앞으로 가져오기 시작했으면 true.
@@ -62,6 +68,11 @@ public final class TerminalJumper {
                     MainActor.assumeIsolated { self?.finishITermJump(selected: selected, fallback: bundleID) }
                 }
             }
+            return true
+        }
+
+        // Claude 데스크톱 앱 세션이면 앱 안의 그 세션까지 연다 (링크를 열지 못하면 앱만 앞으로)
+        if let url = context.claudeDesktopSessionURL, openURL(url, TerminalContext.claudeDesktopBundleID) {
             return true
         }
 
@@ -149,6 +160,24 @@ public final class TerminalJumper {
             return false
         }
         return result.booleanValue
+    }
+
+    /// 링크를 번들 ID 로 정한 앱에서 연다 (같은 스킴을 등록한 다른 앱이 받지 않게). 앱이 설치돼 있지 않으면 false.
+    /// 열다가 실패하면 앱만 앞으로 가져온다
+    private static func open(_ url: URL, inAppWithBundleID bundleID: String) -> Bool {
+        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return false }
+        // 비활성 앱(노치 패널)에서 여는 앱이 앞으로 오도록 활성화를 넘겨준다
+        NSApp?.yieldActivation(toApplicationWithBundleIdentifier: bundleID)
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        NSWorkspace.shared.open([url], withApplicationAt: appURL, configuration: configuration) { _, error in
+            guard error != nil else { return }
+            log.error("Claude 앱 세션 링크 열기 실패 (앱만 앞으로)")
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { _ = activate(bundleID: bundleID) }
+            }
+        }
+        return true
     }
 
     @discardableResult

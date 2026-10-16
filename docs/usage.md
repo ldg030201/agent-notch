@@ -181,7 +181,8 @@ AGENT_NOTCH_DEBUG=1 ~/Library/"Application Support"/AgentNotch/bin/notch-hook --
 - 업데이트 버튼을 누르면 그때만 Homebrew(`brew upgrade`)가 GitHub 에서 새 버전을 받아요.
 - 헬퍼와 앱은 Unix 소켓으로만 통신해요. 소켓 폴더는 0700, 소켓은 0600 이고, 연결한 프로세스가 같은 사용자인지 확인해요.
 - 훅 프로세스의 환경변수는 **허용 목록에 있는 것만** 넘겨요
-  (`TERM_PROGRAM`, `ITERM_SESSION_ID`, `__CFBundleIdentifier`, `CLAUDE_CODE_ENTRYPOINT`).
+  (`TERM_PROGRAM`, `ITERM_SESSION_ID`, `__CFBundleIdentifier`, `CLAUDE_CODE_ENTRYPOINT`,
+  Claude 앱 세션 ID `CLAUDE_CODE_HOST_SESSION_ID` — "Claude로" 가 그 세션을 바로 열 때 써요).
   API 키 같은 다른 환경변수는 앱으로 가지 않아요.
 - 프롬프트 · 코드 · 응답은 메모리에만 두고 디스크에 쓰지 않아요. 오래된 세션은 자동으로 정리해요.
 - 앱을 켤 때 최근 30분 안의 Claude Code 대화 기록(`~/.claude/projects`) 끝부분을 **읽기만** 해서, 이미 돌고 있던 세션을 바로 보여줘요.

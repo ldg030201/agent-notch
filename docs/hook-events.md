@@ -233,6 +233,9 @@ command 훅은 제어 터미널이 없어 `/dev/tty` 를 열 수 없다.
   → **API 키 등 비밀 정보가 환경에 있을 수 있으므로 헬퍼는 화이트리스트 키만 전달한다.**
 - Claude Code 가 설정: `CLAUDE_PROJECT_DIR`, `CLAUDE_EFFORT`, `CLAUDE_CODE_REMOTE`(클라우드) 등
 - `CLAUDE_CODE_ENTRYPOINT` 는 문서화되지 않음 (있으면 사용)
+- Claude 데스크톱 앱은 세션마다 `CLAUDE_CODE_HOST_SESSION_ID=local_…` 를 넣는다 (문서화되지 않음).
+  앱의 `claude://code/continue?session=local_…` 링크(독 메뉴의 세션 이어 하기)가 받는 ID 와 같아서, "Claude로" 가 앱 안의 그 세션을 연다.
+  앱이 받는 모양(`local_` + 영문 · 숫자 · 하이픈 64자 이하)일 때만 링크를 만들고, 링크를 못 열거나 ID 가 없으면 앱만 앞으로 가져온다
 
 ---
 

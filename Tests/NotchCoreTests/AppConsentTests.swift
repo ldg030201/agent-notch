@@ -384,4 +384,32 @@ import NotchShared
         #expect(!TerminalContext(termProgram: "iTerm.app", entrypoint: "claude-desktop").isClaudeDesktopApp)
         #expect(!TerminalContext(bundleIdentifier: "com.googlecode.iterm2", entrypoint: "claude-desktop").isClaudeDesktopApp)
     }
+
+    /// "Claude로": Claude 앱이 세션마다 붙이는 ID 로 앱 안의 그 세션을 여는 링크
+    @Test func claudeDesktopSessionLink() {
+        let id = "local_a65649ae-3ef5-4e30-84b0-a0579b35fcff"
+        let context = TerminalContext(environment: [
+            "__CFBundleIdentifier": TerminalContext.claudeDesktopBundleID,
+            "CLAUDE_CODE_ENTRYPOINT": "claude-desktop",
+            "CLAUDE_CODE_HOST_SESSION_ID": id,
+        ])
+        #expect(context.hostSessionID == id)
+        #expect(context.claudeDesktopSessionURL?.absoluteString == "claude://code/continue?session=\(id)")
+
+        // Claude 앱 세션이 아니면(터미널) 링크가 없다
+        #expect(TerminalContext(termProgram: "iTerm.app", hostSessionID: id).claudeDesktopSessionURL == nil)
+        // 앱이 받는 모양(local_ + 영문 · 숫자 · 하이픈 64자 이하)이 아니면 링크를 만들지 않는다
+        func link(_ raw: String) -> URL? {
+            TerminalContext(entrypoint: "claude-desktop", hostSessionID: raw).claudeDesktopSessionURL
+        }
+        #expect(link("local_abc-123") != nil)
+        #expect(link("local_" + String(repeating: "a", count: 64)) != nil)
+        #expect(link("local_" + String(repeating: "a", count: 65)) == nil)
+        #expect(link("local_") == nil)
+        #expect(link("cse_abc") == nil)
+        #expect(link("local_abc&session=other") == nil)
+        #expect(link("local_ab/../c") == nil)
+        #expect(link("local_한글") == nil)
+        #expect(TerminalContext(entrypoint: "claude-desktop").claudeDesktopSessionURL == nil)
+    }
 }

@@ -303,7 +303,8 @@ Claude 의 객관식 질문과 계획 승인을 다이얼로그 대신 노치에
   세션의 터미널 · 앱이 이미 앞에 있으면(`passthroughWhenTerminalFrontmost`) 바로 넘긴다(입력 대기 카드), 대기열 · 포커스 우선순위도 같다.
   질문 · 계획 승인은 Claude 앱이 앞에 있어도 넘긴다: 노치가 `PreToolUse` 를 들고 있는 동안은 툴이 아직 실행 전이라 Claude 앱에도 질문이 뜨지 않는다.
 - 훅 연결이 응답 전에 끊기면(Claude Code 에서 Esc · 중단 · 종료) 카드를 내리고 입력 대기도 푼다 (그 툴은 실패, 세션은 쉬는 중).
-- [터미널로 · Claude로] (`SessionStore.handOff`): 결정 없이 넘기고 세션 앱으로 이동한다. 같은 호출로 이어서 오는 `PermissionRequest` ·
+- [터미널로 · Claude로] (`SessionStore.handOff`): 결정 없이 넘기고 세션 앱으로 이동한다 (Claude 앱이면 앱 안의 그 세션까지,
+  `TerminalContext.claudeDesktopSessionURL`). 같은 호출로 이어서 오는 `PermissionRequest` ·
   `permission_prompt` 알림에 입력 대기 카드를 다시 띄우지 않는다 (넘김 표시는 넘긴 그 질문의 대기에 붙고, 그 대기가 끝나면 같이 풀림).
 - 세션 앱을 보고 있어 바로 넘긴 질문도 같은 호출의 `permission_prompt` 알림(앱이 질문 다이얼로그를 띄울 때 옴)은 그 질문의 입력 대기로 둔다
   (승인 대기로 덮어쓰면 카드가 "Claude 앱에서 승인 필요"로 바뀐다).
