@@ -128,6 +128,8 @@ enum IslandMotion {
     }()
     /// 접힌 상태가 보여주는 세션을 넘길 때 내용이 옆으로 들고 나는 움직임 (모양 폭은 `adjust` 로 함께 바뀐다)
     static let carousel = Animation.easeInOut(duration: 0.36)
+    /// 펼친 세션 목록에서 상태 묶음이 바뀐 세션이 위아래로 미끄러지듯 자리를 옮기는 움직임 (출렁이지 않게 임계 감쇠)
+    static let listReorder = Animation.spring(response: 0.45, dampingFraction: 1.0)
     static let contentFadeIn = Animation.easeOut(duration: 0.18)
     static let contentFadeOut = Animation.easeOut(duration: 0.1)
     static let hover = Animation.easeOut(duration: 0.15)

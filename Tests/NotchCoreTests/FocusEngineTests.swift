@@ -33,7 +33,28 @@ import NotchShared
         ]
         let result = decide(sessions, pending: [pending("hooked", at: 55)], current: "working")
         #expect(result.focusedID == "hooked")
-        #expect(result.rankedIDs == ["hooked", "terminalPrompt", "input", "failed", "done", "working", "seen", "idle"])
+        // 목록은 상태 묶음 순: 기다리는 중(끼어들기 → 실패) → 진행 중 → 끝남(최근순, 미확인 완료도 여기)
+        #expect(result.rankedIDs == ["hooked", "terminalPrompt", "input", "failed", "working", "seen", "done", "idle"])
+    }
+
+    @Test func listGroupsByStatus() {
+        var background = session("background", phase: .idle, at: 5)
+        background.backgroundShells = 1
+        var older = session("older", phase: .runningTool, at: 10)
+        older.lastEventAt = Date(timeIntervalSince1970: 1_800_000_000 + 90)
+        let sessions = [
+            session("done", phase: .completed, at: 80, unseen: true),
+            older,
+            session("newer", phase: .thinking, at: 20),
+            background,
+            session("idle", phase: .idle, at: 30),
+        ]
+        // 진행 중은 시작한 순: 이벤트가 와도(older 가 더 최근) 순서가 그대로다.
+        // 백그라운드 작업만 도는 세션은 먼저 시작했어도 답변 중인 세션 아래, 끝난 세션 위
+        #expect(decide(sessions).rankedIDs == ["older", "newer", "background", "done", "idle"])
+        // 고정한 세션은 자기 묶음의 맨 앞 (쉬는 세션을 고정해도 진행 중 위로 올라가지 않는다)
+        #expect(decide(sessions, pinned: "idle").rankedIDs == ["older", "newer", "background", "idle", "done"])
+        #expect(decide(sessions, pinned: "newer").rankedIDs == ["newer", "older", "background", "done", "idle"])
     }
 
     @Test func oldestPendingFirst() {
@@ -84,7 +105,7 @@ import NotchShared
         // 고정 세션이 작업 중 세션보다 우선
         let pinnedResult = decide(sessions, pinned: "pinned", current: "working")
         #expect(pinnedResult.focusedID == "pinned")
-        #expect(pinnedResult.rankedIDs == ["pinned", "working", "chosen"])
+        #expect(pinnedResult.rankedIDs == ["working", "pinned", "chosen"])
         // 직접 선택한 세션이 고정보다 우선
         #expect(decide(sessions, manual: "chosen", pinned: "pinned").focusedID == "chosen")
         // 끼어들기가 직접 선택보다 우선

@@ -1,7 +1,7 @@
 import SwiftUI
 import NotchCore
 
-/// 전체 펼침 (620×300): 왼쪽 세션 목록(우선순위순) / 오른쪽 포커스 세션 상세
+/// 전체 펼침 (620×300): 왼쪽 세션 목록(기다리는 중 → 진행 중 → 끝남) / 오른쪽 포커스 세션 상세
 struct ExpandedView: View {
     let layout: IslandLayout
     let presentation: PresentationController
@@ -139,6 +139,8 @@ struct SessionListView: View {
                     )
                 }
             }
+            // 순서가 바뀌면(작업 시작 · 끝남 · 고정) 그 세션이 새 자리로 미끄러져 간다
+            .animation(reduceMotion ? nil : IslandMotion.listReorder, value: sessions.map(\.id))
         }
     }
 }

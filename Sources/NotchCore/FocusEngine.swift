@@ -40,16 +40,28 @@ public enum FocusEngine {
         let attention = attentionGroups(sessions, oldestPending: oldestPending)
         let recent = sessions.sorted(by: mostRecentFirst)
 
-        // 목록 순서: 끼어들기 → 고정 → 작업 중(최근순) → 나머지(최근순)
-        var ranked: [String] = []
-        var seen = Set<String>()
-        func add(_ id: String) {
-            if seen.insert(id).inserted { ranked.append(id) }
+        // 목록 순서: 상태 묶음(`SessionStatusSummary.Group`) 기다리는 중 → 진행 중 → 끝남. 묶음이 바뀔 때만 자리를 옮긴다.
+        // 기다리는 중은 끼어들기(1 ~ 3 순서) → 실패(최근순), 진행 중은 시작한 순(이벤트가 와도 순서가 그대로), 끝남은 최근순.
+        // 진행 중은 답변 중인 세션(초록 점)이 먼저, 메인 답변은 끝나고 백그라운드 작업만 도는 세션(회색 점)이 그 아래.
+        // 고정한 세션은 자기 묶음의 맨 앞
+        let blockingIDs = Set(attention.blocking)
+        let rest = sessions.filter { !blockingIDs.contains($0.id) }
+        func members(_ group: SessionStatusSummary.Group) -> [AgentSession] {
+            rest.filter { SessionStatusSummary.group(for: $0) == group }
         }
-        (attention.blocking + attention.notable).forEach(add)
-        if let pinnedID, byID[pinnedID] != nil { add(pinnedID) }
-        recent.filter { $0.phase.isWorking }.forEach { add($0.id) }
-        recent.forEach { add($0.id) }
+        let working = members(.working).sorted(by: startedFirst)
+        let groups = [
+            attention.blocking + members(.waiting).sorted(by: mostRecentFirst).map(\.id),
+            working.filter { $0.phase.isWorking }.map(\.id),
+            working.filter { !$0.phase.isWorking }.map(\.id),
+            members(.done).sorted(by: mostRecentFirst).map(\.id),
+        ]
+        let ranked = groups.flatMap { ids in
+            guard let pinnedID, let index = ids.firstIndex(of: pinnedID) else { return ids }
+            var ids = ids
+            ids.insert(ids.remove(at: index), at: 0)
+            return ids
+        }
 
         // 포커스
         let focused: String?
@@ -85,12 +97,7 @@ public enum FocusEngine {
 
     /// 자동 넘기기 대상 세션 ID. 시작한 순서라 이벤트가 와도 넘기는 순서가 바뀌지 않는다
     public static func rotationPool(_ sessions: [AgentSession]) -> [String] {
-        sessions
-            .filter(isRotationCandidate)
-            .sorted { lhs, rhs in
-                lhs.startedAt != rhs.startedAt ? lhs.startedAt < rhs.startedAt : lhs.id < rhs.id
-            }
-            .map(\.id)
+        sessions.filter(isRotationCandidate).sorted(by: startedFirst).map(\.id)
     }
 
     /// `current` 다음에 보여줄 세션 (끝이면 처음으로). `current` 가 대상이 아니면 첫 세션, 대상이 없으면 nil
@@ -132,6 +139,10 @@ public enum FocusEngine {
 
     private static func mostRecentFirst(_ lhs: AgentSession, _ rhs: AgentSession) -> Bool {
         lhs.lastEventAt != rhs.lastEventAt ? lhs.lastEventAt > rhs.lastEventAt : lhs.id < rhs.id
+    }
+
+    private static func startedFirst(_ lhs: AgentSession, _ rhs: AgentSession) -> Bool {
+        lhs.startedAt != rhs.startedAt ? lhs.startedAt < rhs.startedAt : lhs.id < rhs.id
     }
 
     private static func oldestFirst(_ lhs: AgentSession, _ rhs: AgentSession) -> Bool {

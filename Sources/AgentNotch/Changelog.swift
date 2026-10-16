@@ -34,6 +34,7 @@ enum Changelog {
             ]),
             ChangelogGroup(title: "여러 세션", icon: "square.stack.3d.up.fill", isNew: true, notes: [
                 .new("세션 자동 넘기기 (알림 온 세션 먼저, 우클릭으로 고정)"),
+                .new("진행 중인 세션은 목록 위로 (상태가 바뀌면 미끄러지듯 이동)"),
                 .new("백그라운드 작업 수 표시"),
                 .new("앱을 다시 켜도 진행 중인 세션 이어 보기"),
             ]),
