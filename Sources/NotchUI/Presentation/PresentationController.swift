@@ -1021,20 +1021,23 @@ final class PresentationController {
     }
 
     /// 키 윈도우일 때의 단축키 처리. 처리했으면(또는 일부러 무시했으면) true.
+    /// 설정 → 단축키에서 켠 묶음만 받는다 (처음엔 모두 꺼짐): 접기(⎋) · 권한 결정 · 질문 · 계획 카드
     func perform(_ shortcut: Shortcut, on id: ScreenID) -> Bool {
         let mode = mode(for: id)
         if shortcut == .collapse {
-            guard mode.isOpen else { return false }
+            guard preferences.collapseShortcutEnabled, mode.isOpen else { return false }
             collapse(on: id)
             return true
         }
         guard case let .permission(request, _) = mode else { return false }
         switch request.kind {
         case .permission:
+            guard preferences.permissionShortcutsEnabled else { return false }
             // ↩ · 숫자 키는 권한 카드에서 쓰지 않는다
             if case .submit = shortcut { return false }
             if case .pick = shortcut { return false }
         case .question, .plan:
+            guard preferences.interactionShortcutsEnabled else { return false }
             return performInteraction(shortcut, request: request)
         }
         // 방금 바뀐 요청은 아직 읽지 못했을 수 있다 → 결정하지 않고 키만 소비 (경고음 없이 무시)
@@ -1056,6 +1059,40 @@ final class PresentationController {
             break
         }
         return true
+    }
+
+    /// 설정 → 단축키의 카드 단축키 묶음
+    enum ShortcutGroup {
+        /// ⌘↩ 허용 · ⌥⌘↩ 항상 허용 · ⌘⌫ 거부
+        case permission
+        /// 1–4 선택지 · ↩ 다음 · 보내기 · 승인
+        case interaction
+        /// ⎋ 접기
+        case collapse
+    }
+
+    func shortcutEnabled(_ group: ShortcutGroup) -> Bool {
+        switch group {
+        case .permission: return preferences.permissionShortcutsEnabled
+        case .interaction: return preferences.interactionShortcutsEnabled
+        case .collapse: return preferences.collapseShortcutEnabled
+        }
+    }
+
+    /// 버튼 이름 뒤에 붙일 키 표시 (" ⌘↩"). 그 묶음을 껐으면 빈 문자열
+    func keyLabel(_ keys: String, _ group: ShortcutGroup) -> String {
+        shortcutEnabled(group) ? " " + keys : ""
+    }
+
+    /// 도움말 뒤에 붙일 키 표시 (" (⎋)"). 그 묶음을 껐으면 빈 문자열
+    func keyNote(_ keys: String, _ group: ShortcutGroup) -> String {
+        shortcutEnabled(group) ? " (\(keys))" : ""
+    }
+
+    /// "기타" 입력란에서 ↩: 질문 · 계획 카드 단축키를 켰을 때만 다음 · 보내기
+    func submitFromOtherField(_ request: PermissionRequestInfo) {
+        guard shortcutEnabled(.interaction) else { return }
+        advanceOrSubmit(request)
     }
 
     /// 질문 · 계획 승인 카드의 단축키: ↩ · ⌘↩ 다음 · 보내기 · 승인, 숫자 키 선택지. 거부 · 항상 허용은 없다 (키만 소비)

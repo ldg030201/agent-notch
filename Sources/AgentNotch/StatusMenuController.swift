@@ -62,10 +62,13 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         addSessionItems()
         menu.addItem(.separator())
 
+        // 어디서든 펼치기 단축키를 켰고 글자 하나짜리 키면 메뉴에 키를 보여준다 (설정 → 단축키)
+        let preferences = settings.preferences
+        let combo = preferences.globalShortcutEnabled ? Self.menuKey(preferences.globalShortcut) : nil
         menu.addItem(ClosureMenuItem(
             title: "노치 펼치기/접기",
-            keyEquivalent: "n",
-            modifiers: [.control, .option, .command]
+            keyEquivalent: combo?.key ?? "",
+            modifiers: combo?.modifiers ?? []
         ) { [weak self] in self?.host?.toggleIsland() })
 
         let demoRunning = host?.isDemoRunning ?? false
@@ -89,6 +92,17 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(ClosureMenuItem(title: "AgentNotch 종료", keyEquivalent: "q") {
             NSApp.terminate(nil)
         })
+    }
+
+    /// 메뉴 항목 키 (글자 하나짜리 키만. "Space" · "F5" 같은 이름은 메뉴 키로 못 쓴다)
+    static func menuKey(_ combo: KeyCombo) -> (key: String, modifiers: NSEvent.ModifierFlags)? {
+        guard combo.key.count == 1 else { return nil }
+        var flags: NSEvent.ModifierFlags = []
+        if combo.modifiers.contains(.control) { flags.insert(.control) }
+        if combo.modifiers.contains(.option) { flags.insert(.option) }
+        if combo.modifiers.contains(.shift) { flags.insert(.shift) }
+        if combo.modifiers.contains(.command) { flags.insert(.command) }
+        return (combo.key.lowercased(), flags)
     }
 
     private func addSessionItems() {

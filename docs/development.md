@@ -175,7 +175,7 @@ source scripts/lib.sh && dump_changelog      # 빌드한 뒤 docs/changelog.json
 - 묶음마다 `icon` 에 SF Symbol 이름을 단다 (`hand.raised.fill`, `display` 등). 버전 탭이 제목 앞에 그리고, 줄들은 그 아래 왼쪽 세로선으로 묶인다.
   macOS 14 에 있는 기호만 쓴다. 아이콘이 없는 예전 내역은 점으로 보인다.
 - 줄은 기능 위주로 짧게, 묶음마다 2–3줄. 세부 동작 · 조건은 사용 문서(`docs/usage.md`)에 둔다.
-- 설정 탭 이야기면 `tab` 에 그 탭(`general` / `display` / `version`)을 적는다. 탭에 없는 것(아일랜드 · 메뉴)은 비워 둔다.
+- 설정 탭 이야기면 `tab` 에 그 탭(`general` / `display` / `shortcuts` / `version`)을 적는다. 탭에 없는 것(아일랜드 · 메뉴)은 비워 둔다.
 - 항목마다 갈래를 단다: `.new` 신규 · `.improve` 개선 · `.change` 변경 · `.fix` 수정 · `.remove` 제거.
 - **새로 생긴 기능 묶음(`isNew: true`)** 은 무엇이 있는지만 적고(`.new`), 줄 끝에 `추가` 를 붙이지 않는다.
   그 기능을 만들면서 고친 오류 · 바꾼 동작은 나간 적이 없으니 적지 않는다.

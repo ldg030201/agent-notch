@@ -9,7 +9,9 @@ import os
 final class AppSettingsProvider: SettingsProvider {
     private let installer: HookInstaller
     private let loginItem: MainAppLoginItem
-    private let preferences: AppPreferences
+    let preferences: AppPreferences
+    /// 전역 단축키 등록 상태 (AppDelegate 가 켤 때 넣는다)
+    var globalShortcut: GlobalShortcutState?
 
     init(installer: HookInstaller, loginItem: MainAppLoginItem, preferences: AppPreferences) {
         self.installer = installer

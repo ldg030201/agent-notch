@@ -27,7 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
     private let demo: DemoScenario
 
     private var statusMenu: StatusMenuController?
-    private var hotKey: GlobalHotKey?
+    private var globalShortcut: GlobalShortcutController?
     private var pruneTimer: Timer?
     private var stallTimer: Timer?
     /// SIGTERM(launchd, 업데이트 교체 스크립트) · SIGINT 에도 정상 종료 경로를 타게 한다 (소켓 파일 정리)
@@ -67,10 +67,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
         // 하루 한 번 새 버전 확인 (설정에서 끄면 멈춤, 테스트판은 확인하지 않음)
         updates.start()
         statusMenu = StatusMenuController(store: store, settings: settings, actions: actions, host: self)
-        hotKey = GlobalHotKey(keyCode: GlobalHotKey.toggleKeyCode, modifiers: GlobalHotKey.toggleModifiers) { [weak self] in
-            self?.toggleIsland()
-        }
-        if hotKey == nil { Self.log.info("전역 단축키 등록 실패 (다른 앱이 사용 중)") }
+        // 어디서든 펼치기 · 접기 (설정 → 단축키, 처음엔 꺼짐)
+        let shortcut = GlobalShortcutController(preferences: preferences) { [weak self] in self?.toggleIsland() }
+        settings.globalShortcut = shortcut
+        shortcut.start()
+        globalShortcut = shortcut
 
         pruneTimer = Timer.scheduledTimer(withTimeInterval: Self.pruneInterval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.pruneStaleSessions() }
@@ -91,7 +92,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
         demo.stop()
         pruneTimer?.invalidate()
         stallTimer?.invalidate()
-        hotKey?.invalidate()
+        globalShortcut?.stop()
         uiController.stop()
         // 대기 중인 훅은 연결이 끊기면 결정 없이 종료된다 (Claude Code 기본 프롬프트로 넘어감)
         socketServer.stop()

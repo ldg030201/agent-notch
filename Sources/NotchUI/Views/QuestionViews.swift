@@ -101,7 +101,7 @@ private struct QuestionBody: View {
                 QuestionOtherRow(draft: draft, question: index) {
                     presentation.requestAlertKey()
                 } onSubmit: {
-                    presentation.advanceOrSubmit(request)
+                    presentation.submitFromOtherField(request)
                 }
             }
             .frame(height: card.choicesHeight, alignment: .top)
@@ -128,7 +128,7 @@ private struct QuestionBody: View {
                 }
                 .buttonStyle(IslandButtonStyle())
                 .accessibilityLabel("접기")
-                .help("질문은 그대로 두고 접기 (⎋). 아일랜드를 누르면 다시 펼쳐짐")
+                .help("질문은 그대로 두고 접기" + presentation.keyNote("⎋", .collapse) + ". 아일랜드를 누르면 다시 펼쳐짐")
 
                 Button {
                     presentation.sendToTerminal(request)
@@ -145,7 +145,7 @@ private struct QuestionBody: View {
                 Button {
                     presentation.advanceOrSubmit(request)
                 } label: {
-                    Text(draft.isLastPage ? "보내기 ↩" : "다음 ↩")
+                    Text((draft.isLastPage ? "보내기" : "다음") + presentation.keyLabel("↩", .interaction))
                 }
                 .buttonStyle(IslandButtonStyle(prominent: primaryEnabled))
                 .disabled(!primaryEnabled)
@@ -166,9 +166,9 @@ private struct QuestionBody: View {
 
     private var primaryHelp: String {
         if draft.isLastPage {
-            return draft.allAnswered ? "답 보내기 (↩)" : "모든 질문에 답하면 보낼 수 있음"
+            return draft.allAnswered ? "답 보내기" + presentation.keyNote("↩", .interaction) : "모든 질문에 답하면 보낼 수 있음"
         }
-        return "다음 질문 (↩)"
+        return "다음 질문" + presentation.keyNote("↩", .interaction)
     }
 }
 
@@ -470,7 +470,7 @@ struct PlanApprovalView: View {
                     }
                     .buttonStyle(IslandButtonStyle())
                     .accessibilityLabel("접기")
-                    .help("승인 요청은 그대로 두고 접기 (⎋). 아일랜드를 누르면 다시 펼쳐짐")
+                    .help("승인 요청은 그대로 두고 접기" + presentation.keyNote("⎋", .collapse) + ". 아일랜드를 누르면 다시 펼쳐짐")
 
                     Button {
                         presentation.sendToTerminal(request)
@@ -487,11 +487,11 @@ struct PlanApprovalView: View {
                     Button {
                         presentation.approvePlan(request)
                     } label: {
-                        Text("승인 ⌘↩")
+                        Text("승인" + presentation.keyLabel("⌘↩", .interaction))
                     }
                     .buttonStyle(IslandButtonStyle(prominent: true))
                     .accessibilityLabel("계획 승인")
-                    .help("계획 승인 (↩ · ⌘↩)")
+                    .help("계획 승인" + presentation.keyNote("↩ · ⌘↩", .interaction))
                 }
                 .padding(.top, 12)
             }

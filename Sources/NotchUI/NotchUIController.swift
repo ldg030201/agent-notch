@@ -14,6 +14,17 @@ public protocol SettingsProvider: AnyObject {
     var launchAtLoginEnabled: Bool { get }
     var launchAtLoginManagedByHomebrew: Bool { get }
     func setLaunchAtLogin(_ enabled: Bool) throws
+    /// 전역 단축키(어디서든 펼치기) 등록 상태. 없으면(스냅숏) 등록 실패 안내를 보여주지 않는다
+    var globalShortcut: GlobalShortcutState? { get }
+}
+
+/// 전역 단축키 등록 상태 (App 이 `@Observable` 객체로 구현해 설정 화면이 바로 다시 그린다)
+@MainActor
+public protocol GlobalShortcutState: AnyObject {
+    /// 켜 둔 키 조합을 다른 앱이 쓰고 있어 등록하지 못함
+    var registrationFailed: Bool { get }
+    /// 새 키 조합을 녹화하는 동안 지금 단축키를 잠깐 해제한다 (녹화 중 같은 키를 눌러도 아일랜드가 펼쳐지지 않게)
+    var isPaused: Bool { get set }
 }
 
 /// 노치 UI 진입점. 화면별 패널 생성, 표시 모드 계산, 설정 창을 묶는다.

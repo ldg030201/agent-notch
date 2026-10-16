@@ -131,6 +131,8 @@ enum SnapshotScenario: String, CaseIterable {
     case settings
     case settingsVersion = "settings-version"
     case settingsGeneral = "settings-general"
+    /// 단축키 탭 (처음 값: 모두 꺼짐)
+    case settingsShortcuts = "settings-shortcuts"
 
     /// 메뉴바 안 알약 장면은 style 과 관계없이 노치 없는 화면으로 그린다
     var forcesMenuBar: Bool {
@@ -141,7 +143,7 @@ enum SnapshotScenario: String, CaseIterable {
         }
     }
 
-    var isSettings: Bool { self == .settings || self == .settingsVersion || self == .settingsGeneral }
+    var isSettings: Bool { [.settings, .settingsVersion, .settingsGeneral, .settingsShortcuts].contains(self) }
 
     /// 노치 없는 화면 표시 방식 (메뉴바 아래 장면만 명시하고 나머지는 기본값: 메뉴바 안)
     var externalStyle: ExternalDisplayStyle {
@@ -573,7 +575,7 @@ enum SnapshotStage {
             }
             showCompact()
             presentation.toggleExpanded(on: screenID)
-        case .settings, .settingsVersion, .settingsGeneral:
+        case .settings, .settingsVersion, .settingsGeneral, .settingsShortcuts:
             break
         }
         return SnapshotSetup(bar: bar, presentation: presentation, world: world, uptime: uptime)
@@ -591,6 +593,8 @@ enum SnapshotStage {
         switch scene {
         case .settings:
             model.selectedSection = .display
+        case .settingsShortcuts:
+            model.selectedSection = .shortcuts
         case .settingsGeneral:
             model.selectedSection = .general
             // 초기화 확인 단계 (취소 · 초기화 버튼)

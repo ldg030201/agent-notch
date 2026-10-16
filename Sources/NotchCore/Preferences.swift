@@ -31,6 +31,42 @@ public enum ExternalDisplayStyle: String, CaseIterable, Codable, Sendable {
     case hidden
 }
 
+/// 키 조합: 가상 키 코드(Carbon `kVK_*`) + 수식키 + 표시 글자 (전역 단축키 녹화 · 등록 · 표시가 함께 쓴다)
+public struct KeyCombo: Codable, Hashable, Sendable {
+    public struct Modifiers: OptionSet, Codable, Hashable, Sendable {
+        public let rawValue: Int
+        public init(rawValue: Int) { self.rawValue = rawValue }
+        public static let control = Modifiers(rawValue: 1 << 0)
+        public static let option = Modifiers(rawValue: 1 << 1)
+        public static let shift = Modifiers(rawValue: 1 << 2)
+        public static let command = Modifiers(rawValue: 1 << 3)
+    }
+
+    public var keyCode: Int
+    public var modifiers: Modifiers
+    /// 키 이름 ("N", "Space", "F5", "←")
+    public var key: String
+
+    public init(keyCode: Int, modifiers: Modifiers, key: String) {
+        self.keyCode = keyCode
+        self.modifiers = modifiers
+        self.key = key
+    }
+
+    /// ⌃⌥⌘N (`kVK_ANSI_N` = 45)
+    public static let defaultToggle = KeyCombo(keyCode: 45, modifiers: [.control, .option, .command], key: "N")
+
+    /// 메뉴와 같은 순서로 쓴 이름 (⌃ ⌥ ⇧ ⌘ + 키). 예: "⌃⌥⌘N"
+    public var displayString: String {
+        var text = ""
+        if modifiers.contains(.control) { text += "⌃" }
+        if modifiers.contains(.option) { text += "⌥" }
+        if modifiers.contains(.shift) { text += "⇧" }
+        if modifiers.contains(.command) { text += "⌘" }
+        return text + key
+    }
+}
+
 /// 사용자 설정 (UserDefaults 에 저장, 비밀 정보 없음)
 @MainActor
 @Observable
@@ -50,12 +86,18 @@ public final class AppPreferences {
         static let restoresRecentSessions = "restoresRecentSessions"
         static let rotatesSessions = "rotatesSessions"
         static let sessionRotationInterval = "sessionRotationInterval"
+        static let globalShortcutEnabled = "globalShortcutEnabled"
+        static let globalShortcut = "globalShortcut"
+        static let permissionShortcutsEnabled = "permissionShortcutsEnabled"
+        static let interactionShortcutsEnabled = "interactionShortcutsEnabled"
+        static let collapseShortcutEnabled = "collapseShortcutEnabled"
 
         /// 설정 초기화가 지우는 키 (설정을 더하면 여기와 `resetToDefaults` 에도 넣는다)
         static let all = [
             displayPolicy, fullscreenBehavior, peekOnEdit, peekDuration, completionDisplayDuration, showStreamingText,
             permissionTimeout, staleSessionTimeout, passthroughWhenTerminalFrontmost, externalDisplayStyle,
             checksForUpdates, restoresRecentSessions, rotatesSessions, sessionRotationInterval,
+            globalShortcutEnabled, globalShortcut, permissionShortcutsEnabled, interactionShortcutsEnabled, collapseShortcutEnabled,
         ]
         /// 없앤 설정 (노치 화면 표시 방식 · 노치 아래 표시 모양). 노치 화면은 늘 노치 아래 띠라 저장된 값을 지운다
         static let removed = ["notchStyle", "compactOverlapStyle"]
@@ -94,6 +136,33 @@ public final class AppPreferences {
     /// 세션을 넘기는 간격(초)
     public var sessionRotationInterval: Double {
         didSet { defaults.set(sessionRotationInterval, forKey: Key.sessionRotationInterval) }
+    }
+
+    // MARK: 단축키 (모두 처음엔 꺼짐)
+
+    /// 어디서든 아일랜드를 펼치고 접는 전역 단축키를 쓸지
+    public var globalShortcutEnabled: Bool {
+        didSet { defaults.set(globalShortcutEnabled, forKey: Key.globalShortcutEnabled) }
+    }
+
+    /// 어디서든 펼치기 · 접기 키 조합
+    public var globalShortcut: KeyCombo {
+        didSet { defaults.set(try? JSONEncoder().encode(globalShortcut), forKey: Key.globalShortcut) }
+    }
+
+    /// 권한 카드 단축키: ⌘↩ 허용 · ⌥⌘↩ 항상 허용 · ⌘⌫ 거부 (아일랜드를 눌러 키 윈도우일 때만)
+    public var permissionShortcutsEnabled: Bool {
+        didSet { defaults.set(permissionShortcutsEnabled, forKey: Key.permissionShortcutsEnabled) }
+    }
+
+    /// 질문 · 계획 승인 카드 단축키: 1–4 선택지 · ↩ 다음 · 보내기 · 승인 ("기타" 입력란의 ↩ 보내기 포함)
+    public var interactionShortcutsEnabled: Bool {
+        didSet { defaults.set(interactionShortcutsEnabled, forKey: Key.interactionShortcutsEnabled) }
+    }
+
+    /// ⎋ 로 카드 접기
+    public var collapseShortcutEnabled: Bool {
+        didSet { defaults.set(collapseShortcutEnabled, forKey: Key.collapseShortcutEnabled) }
     }
 
     /// 응답 스트리밍 텍스트 표시 여부
@@ -147,6 +216,12 @@ public final class AppPreferences {
         restoresRecentSessions = defaults.object(forKey: Key.restoresRecentSessions) as? Bool ?? true
         rotatesSessions = defaults.object(forKey: Key.rotatesSessions) as? Bool ?? true
         sessionRotationInterval = defaults.object(forKey: Key.sessionRotationInterval) as? Double ?? 5
+        globalShortcutEnabled = defaults.object(forKey: Key.globalShortcutEnabled) as? Bool ?? false
+        globalShortcut = defaults.data(forKey: Key.globalShortcut).flatMap { try? JSONDecoder().decode(KeyCombo.self, from: $0) }
+            ?? .defaultToggle
+        permissionShortcutsEnabled = defaults.object(forKey: Key.permissionShortcutsEnabled) as? Bool ?? false
+        interactionShortcutsEnabled = defaults.object(forKey: Key.interactionShortcutsEnabled) as? Bool ?? false
+        collapseShortcutEnabled = defaults.object(forKey: Key.collapseShortcutEnabled) as? Bool ?? false
         for key in Key.removed { defaults.removeObject(forKey: key) }
     }
 
@@ -169,6 +244,11 @@ public final class AppPreferences {
         restoresRecentSessions = fresh.restoresRecentSessions
         rotatesSessions = fresh.rotatesSessions
         sessionRotationInterval = fresh.sessionRotationInterval
+        globalShortcutEnabled = fresh.globalShortcutEnabled
+        globalShortcut = fresh.globalShortcut
+        permissionShortcutsEnabled = fresh.permissionShortcutsEnabled
+        interactionShortcutsEnabled = fresh.interactionShortcutsEnabled
+        collapseShortcutEnabled = fresh.collapseShortcutEnabled
         checksForUpdates = fresh.checksForUpdates
         // 위 대입의 didSet 이 처음 값을 다시 적었으므로 한 번 더 지운다
         for key in Key.all { defaults.removeObject(forKey: key) }

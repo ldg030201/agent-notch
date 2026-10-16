@@ -72,6 +72,7 @@ final class SnapshotSettingsProvider: SettingsProvider {
     var launchAtLoginEnabled: Bool { true }
     var launchAtLoginManagedByHomebrew: Bool { false }
     func setLaunchAtLogin(_ enabled: Bool) throws {}
+    var globalShortcut: GlobalShortcutState? { nil }
 }
 
 /// 새 버전이 있는 상태의 가짜 업데이트 정보

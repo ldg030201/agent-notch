@@ -30,6 +30,11 @@ import Testing
             preferences.checksForUpdates = false
             preferences.rotatesSessions = false
             preferences.sessionRotationInterval = 12
+            preferences.globalShortcutEnabled = true
+            preferences.globalShortcut = KeyCombo(keyCode: 49, modifiers: [.option], key: "Space")
+            preferences.permissionShortcutsEnabled = true
+            preferences.interactionShortcutsEnabled = true
+            preferences.collapseShortcutEnabled = true
 
             preferences.resetToDefaults()
 
@@ -49,9 +54,35 @@ import Testing
                 #expect(preferences.checksForUpdates == fresh.checksForUpdates)
                 #expect(preferences.rotatesSessions == fresh.rotatesSessions)
                 #expect(preferences.sessionRotationInterval == fresh.sessionRotationInterval)
+                #expect(preferences.globalShortcutEnabled == fresh.globalShortcutEnabled)
+                #expect(preferences.globalShortcut == fresh.globalShortcut)
+                #expect(preferences.permissionShortcutsEnabled == fresh.permissionShortcutsEnabled)
+                #expect(preferences.interactionShortcutsEnabled == fresh.interactionShortcutsEnabled)
+                #expect(preferences.collapseShortcutEnabled == fresh.collapseShortcutEnabled)
             }
             // 저장된 값은 남기지 않는다 (나중 버전의 처음 값을 따르게)
             #expect((defaults.persistentDomain(forName: suite) ?? [:]).isEmpty)
+        }
+    }
+
+    /// 단축키는 처음엔 모두 꺼져 있고, 바꾼 키 조합은 다시 읽어도 그대로다
+    @Test func shortcutsStartOffAndPersist() {
+        Self.withDefaults { defaults, _ in
+            let preferences = AppPreferences(defaults: defaults)
+            #expect(!preferences.globalShortcutEnabled)
+            #expect(!preferences.permissionShortcutsEnabled)
+            #expect(!preferences.interactionShortcutsEnabled)
+            #expect(!preferences.collapseShortcutEnabled)
+            #expect(preferences.globalShortcut == .defaultToggle)
+            #expect(preferences.globalShortcut.displayString == "⌃⌥⌘N")
+
+            let combo = KeyCombo(keyCode: 49, modifiers: [.command, .shift], key: "Space")
+            preferences.globalShortcut = combo
+            preferences.globalShortcutEnabled = true
+            let reloaded = AppPreferences(defaults: defaults)
+            #expect(reloaded.globalShortcut == combo)
+            #expect(reloaded.globalShortcut.displayString == "⇧⌘Space")
+            #expect(reloaded.globalShortcutEnabled)
         }
     }
 

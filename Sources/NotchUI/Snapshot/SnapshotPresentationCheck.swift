@@ -6,7 +6,7 @@ import NotchShared
 // 표시 상태 · 클릭 · 키 처리 검사 (전환 시트가 함께 돌리는 순수 계산 검사).
 // - 승인 대기 (`SnapshotDecisionCheck`): 막 보인 요청은 클릭 · 단축키 모두 승인하지 않는다 (다음 요청이 제자리에 바뀌어 들어온 순간 포함)
 // - 숨김 → 카드 · 화면 재연결 (`SnapshotLayoutHistoryCheck`): 숨기기 전 · 화면이 빠지기 전 배치 이력을 쓰지 않는다
-// - 클릭 모양 · 숫자 키 · 상태 아이템 시작 (`SnapshotInputCheck`)
+// - 클릭 모양 · 숫자 키 · 키 녹화 · 상태 아이템 시작 (`SnapshotInputCheck`)
 
 // MARK: - 승인 대기
 
@@ -36,7 +36,10 @@ enum SnapshotDecisionCheck {
             world.startSessions()
             self.world = world
             let actions = SnapshotActions()
-            presentation = PresentationController(store: world.store, preferences: AppPreferences(defaults: defaults), actions: actions)
+            // 단축키는 처음엔 꺼져 있다. 단축키 승인 대기도 재려고 권한 단축키를 켠다
+            let preferences = AppPreferences(defaults: defaults)
+            preferences.permissionShortcutsEnabled = true
+            presentation = PresentationController(store: world.store, preferences: preferences, actions: actions)
             let bar = SnapshotMenuBar(style: .notch, crowding: .roomy)
             screenID = bar.geometry.screenID
             presentation.updateScreens([bar.geometry])
@@ -135,6 +138,10 @@ enum SnapshotDecisionCheck {
         expect("첫 요청 직후 항상 허용 클릭", h, delivered: false) { h.presentation.resolve(first, decision: .allowAlways) }
         expect("첫 요청 직후 ⌘↩", h, delivered: false) { _ = h.presentation.perform(.allow, on: h.screenID) }
         h.now += 0.5
+        // 권한 단축키를 끄면 기다린 뒤에도 ⌘↩ 로는 승인하지 않는다 (클릭은 그대로)
+        h.presentation.preferences.permissionShortcutsEnabled = false
+        expect("권한 단축키를 끄면 0.6초 뒤 ⌘↩ 무시", h, delivered: false) { _ = h.presentation.perform(.allow, on: h.screenID) }
+        h.presentation.preferences.permissionShortcutsEnabled = true
         expect("첫 요청 0.6초 뒤 허용 클릭", h, delivered: true) { h.presentation.resolve(first, decision: .allow) }
 
         // 다음 요청이 같은 카드 자리에 바뀌어 들어옴 → 두 번째 클릭(더블클릭)은 새 요청을 승인하지 않는다.
@@ -335,6 +342,7 @@ enum SnapshotInputCheck {
         var cases = 0
         hitShape(&cases, &problems)
         digits(&cases, &problems)
+        recordedCombos(&cases, &problems)
         statusStart(&cases, &problems)
         return (cases, problems)
     }
@@ -385,6 +393,29 @@ enum SnapshotInputCheck {
             let got = ScreenManager.optionDigit(characters: sample.characters, keyCode: sample.keyCode, flags: sample.flags)
             if got != sample.expected {
                 problems.append("숫자 키 \(sample.name): \(got.map { "\($0 + 1)번" } ?? "없음") (기대 \(sample.expected.map { "\($0 + 1)번" } ?? "없음"))")
+            }
+        }
+    }
+
+    /// 어디서든 펼치기 키 녹화: ⌘ · ⌃ · ⌥ 중 하나가 있어야 하고, 글자는 대문자 · 특수 키는 이름으로 (`KeyComboRecorder`)
+    private static func recordedCombos(_ cases: inout Int, _ problems: inout [String]) {
+        let samples: [(name: String, keyCode: UInt16, flags: NSEvent.ModifierFlags, characters: String?, expected: String?)] = [
+            ("⌃⌥⌘N", 45, [.control, .option, .command], "n", "⌃⌥⌘N"),
+            ("⇧⌘Space", 49, [.shift, .command], " ", "⇧⌘Space"),
+            ("⌥F5 (사용자 영역 글자)", 96, [.option], "\u{F708}", "⌥F5"),
+            ("⌘← ", 123, [.command], "\u{F702}", "⌘←"),
+            ("⌘1", 18, [.command], "1", "⌘1"),
+            ("N 만 (수식키 없음)", 45, [], "n", nil),
+            ("⇧N (⇧ 만)", 45, [.shift], "n", nil),
+            ("⌘ + 알 수 없는 사용자 영역 키", 200, [.command], "\u{F7FF}", nil),
+            ("⌘ + 제어 문자", 201, [.command], "\u{1B}", nil),
+            ("⌘ + 글자 없음", 202, [.command], "", nil),
+        ]
+        for sample in samples {
+            cases += 1
+            let got = KeyComboRecorder.combo(keyCode: sample.keyCode, flags: sample.flags, characters: sample.characters)?.displayString
+            if got != sample.expected {
+                problems.append("키 녹화 \(sample.name): \(got ?? "없음") (기대 \(sample.expected ?? "없음"))")
             }
         }
     }

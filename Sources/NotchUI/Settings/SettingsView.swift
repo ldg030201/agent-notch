@@ -7,6 +7,7 @@ import NotchCore
 enum SettingsSection: String, CaseIterable, Identifiable {
     case general
     case display
+    case shortcuts
     case version
 
     var id: String { rawValue }
@@ -15,6 +16,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "일반"
         case .display: return "표시"
+        case .shortcuts: return "단축키"
         case .version: return "버전"
         }
     }
@@ -23,6 +25,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "gearshape"
         case .display: return "menubar.rectangle"
+        case .shortcuts: return "keyboard"
         case .version: return "arrow.down.circle"
         }
     }
@@ -44,7 +47,12 @@ final class SettingsModel {
     private(set) var hookError: String?
     private(set) var loginError: String?
 
-    var selectedSection: SettingsSection = .general
+    var selectedSection: SettingsSection = .general {
+        didSet { if selectedSection != oldValue { stopRecordingShortcut() } }
+    }
+    /// 어디서든 펼치기 키 조합을 녹화하는 중 (다음에 누른 키 조합으로 바꾼다)
+    private(set) var isRecordingShortcut = false
+    @ObservationIgnored private var recordingMonitor: Any?
     /// 업데이트 상태 (없으면 버전 탭 숨김)
     var updateProvider: UpdateProvider?
     /// 다 받은 뒤 "나중에" 로 진행 창을 내렸는지 (버전 탭의 "다시 띄워서 마치기" 로 마저 끝낸다).
@@ -100,7 +108,43 @@ final class SettingsModel {
 
     /// 업데이트 기능이 없으면 버전 탭은 숨긴다
     var visibleSections: [SettingsSection] {
-        updateProvider == nil ? [.general, .display] : SettingsSection.allCases
+        updateProvider == nil ? SettingsSection.allCases.filter { $0 != .version } : SettingsSection.allCases
+    }
+
+    // MARK: 단축키 녹화
+
+    /// 전역 단축키 등록 상태 (App 이 관찰 가능한 객체로 준다. 스냅숏은 없음)
+    var globalShortcut: GlobalShortcutState? { provider.globalShortcut }
+
+    /// 녹화를 시작한다: 다음에 누른 키 조합(⌘ · ⌃ · ⌥ 중 하나 포함)을 `onCapture` 로 넘기고 끝낸다.
+    /// ⎋ 는 취소, 수식키가 모자란 키는 알림음. 녹화하는 동안 지금 전역 단축키는 잠깐 해제한다
+    func startRecordingShortcut(onCapture: @escaping (KeyCombo) -> Void) {
+        guard !isRecordingShortcut else { return }
+        isRecordingShortcut = true
+        globalShortcut?.isPaused = true
+        recordingMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            let consumed = MainActor.assumeIsolated { () -> Bool in
+                guard let self, self.isRecordingShortcut else { return false }
+                if let combo = KeyComboRecorder.combo(from: event) {
+                    onCapture(combo)
+                    self.stopRecordingShortcut()
+                } else if event.keyCode == KeyComboRecorder.cancelKeyCode {
+                    self.stopRecordingShortcut()
+                } else {
+                    NSSound.beep()
+                }
+                return true
+            }
+            return consumed ? nil : event
+        }
+    }
+
+    func stopRecordingShortcut() {
+        if let monitor = recordingMonitor { NSEvent.removeMonitor(monitor) }
+        recordingMonitor = nil
+        guard isRecordingShortcut else { return }
+        isRecordingShortcut = false
+        globalShortcut?.isPaused = false
     }
 
     var effectiveSection: SettingsSection {
@@ -141,6 +185,8 @@ struct SettingsView: View {
                         generalSection
                     case .display:
                         displaySection
+                    case .shortcuts:
+                        shortcutsSection
                     case .version:
                         if let provider = model.updateProvider {
                             VersionSettingsView(provider: provider, model: model)
@@ -362,6 +408,80 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - 단축키
+
+    private var shortcutsSection: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            SettingsNote(
+                text: "단축키는 처음엔 모두 꺼져 있어요. 쓰려는 것만 켜 주세요.",
+                systemImage: "info.circle"
+            )
+
+            SettingsGroup(title: "어디서든") {
+                switchRow(
+                    "노치 펼치기 · 접기",
+                    note: "다른 앱을 쓰는 중에도 이 키로 아일랜드를 펼치고 접어요",
+                    isOn: $preferences.globalShortcutEnabled
+                )
+                SettingsDivider()
+                SettingsRow(
+                    title: "키",
+                    note: model.isRecordingShortcut ? "새 키 조합을 눌러 주세요 (⌘ · ⌃ · ⌥ 중 하나 포함, esc 취소)" : nil
+                ) {
+                    shortcutRecorder
+                }
+                .disabled(!preferences.globalShortcutEnabled)
+                if preferences.globalShortcutEnabled, model.globalShortcut?.registrationFailed == true, !model.isRecordingShortcut {
+                    SettingsNote(
+                        text: "다른 앱이 이미 \(preferences.globalShortcut.displayString) 을 써서 등록하지 못했어요. 다른 키로 바꿔 주세요.",
+                        systemImage: "exclamationmark.triangle.fill",
+                        tint: SettingsPalette.orange,
+                        emphasized: true
+                    )
+                }
+            }
+
+            SettingsGroup(title: "알림 카드 (아일랜드를 눌러 선택한 동안만)") {
+                switchRow("권한 결정", note: "⌘↩ 허용 · ⌥⌘↩ 항상 허용 · ⌘⌫ 거부", isOn: $preferences.permissionShortcutsEnabled)
+                SettingsDivider()
+                switchRow(
+                    "질문 · 계획 승인",
+                    note: "1–4 선택지 · ↩ 다음 · 보내기 · 승인 (\"기타\" 입력란의 ↩ 포함)",
+                    isOn: $preferences.interactionShortcutsEnabled
+                )
+                SettingsDivider()
+                switchRow("접기", note: "esc 로 카드 접기 (요청은 그대로 기다려요)", isOn: $preferences.collapseShortcutEnabled)
+            }
+        }
+    }
+
+    /// 어디서든 펼치기 키: 누르면 녹화, 기본값과 다르면 되돌리기
+    private var shortcutRecorder: some View {
+        HStack(spacing: 6) {
+            if preferences.globalShortcut != .defaultToggle, !model.isRecordingShortcut {
+                Button("기본값") {
+                    preferences.globalShortcut = .defaultToggle
+                }
+                .buttonStyle(SettingsButtonStyle())
+            }
+            Button {
+                if model.isRecordingShortcut {
+                    model.stopRecordingShortcut()
+                } else {
+                    let preferences = preferences
+                    model.startRecordingShortcut { preferences.globalShortcut = $0 }
+                }
+            } label: {
+                Text(model.isRecordingShortcut ? "키를 눌러 주세요…" : preferences.globalShortcut.displayString)
+                    .monospacedDigit()
+                    .frame(minWidth: 72)
+            }
+            .buttonStyle(SettingsButtonStyle(prominent: model.isRecordingShortcut))
+            .accessibilityLabel(model.isRecordingShortcut ? "키 녹화 중, 누르면 취소" : "단축키 \(preferences.globalShortcut.displayString), 누르면 바꾸기")
+        }
+        .fixedSize()
+    }
+
     // MARK: - 부품
 
     private func switchRow(_ title: String, note: String? = nil, isOn: Binding<Bool>) -> some View {
@@ -424,6 +544,7 @@ final class SettingsWindowController {
         model.deferredUpgradeReady = false
         model.confirmingForceQuit = false
         model.confirmingReset = false
+        model.stopRecordingShortcut()
         let window = self.window ?? makeWindow()
         self.window = window
         // 메뉴바 앱(액세서리)이라 창을 앞으로 가져오려면 앱 활성화가 필요하다
@@ -445,6 +566,11 @@ final class SettingsWindowController {
         window.isReleasedWhenClosed = false
         window.setContentSize(SettingsView.windowSize)
         window.center()
+        // 녹화하던 중 창을 닫으면 녹화를 끝낸다 (전역 단축키를 다시 등록)
+        let model = model
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
+            MainActor.assumeIsolated { model.stopRecordingShortcut() }
+        }
         return window
     }
 }

@@ -112,12 +112,17 @@ struct IslandContainer: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("AgentNotch")
         .accessibilityAddTraits(.isButton)
-        .accessibilityHint(Self.accessibilityHint(for: mode))
+        .accessibilityHint(Self.accessibilityHint(for: mode, shortcuts: presentation.shortcutEnabled))
     }
 
     /// 아일랜드 배경을 클릭했을 때 일어나는 일 (`PresentationController.handleIslandClick`).
-    /// 알림 카드는 접거나 펼치지 않고 패널이 키 윈도우가 되어 단축키를 받는다
-    static func accessibilityHint(for mode: IslandMode) -> String {
+    /// 알림 카드는 접거나 펼치지 않고 패널이 키 윈도우가 되어 단축키를 받는다 (설정 → 단축키에서 켠 것만 알린다)
+    static func accessibilityHint(for mode: IslandMode, shortcuts: (PresentationController.ShortcutGroup) -> Bool) -> String {
+        /// 켠 단축키만 모아 "클릭하면 단축키로 …: a, b" 로 만든다
+        func keys(_ verb: String, _ items: [(String, PresentationController.ShortcutGroup)]) -> String {
+            let enabled = items.filter { shortcuts($0.1) }.map(\.0)
+            return enabled.isEmpty ? "" : "클릭하면 단축키로 \(verb): " + enabled.joined(separator: ", ")
+        }
         switch mode {
         case .hidden:
             return ""
@@ -127,12 +132,15 @@ struct IslandContainer: View {
             return "클릭하면 펼쳐져"
         case let .permission(request, _):
             switch request.kind {
-            case .permission: return "클릭하면 단축키로 결정할 수 있어: ⌘↩ 허용, ⌘⌫ 거부, ⎋ 접기"
-            case .question: return "클릭하면 단축키로 답할 수 있어: 숫자 키로 고르기, ↩ 다음 · 보내기, ⎋ 접기"
-            case .plan: return "클릭하면 단축키로 결정할 수 있어: ↩ 승인, ⎋ 접기"
+            case .permission:
+                return keys("결정할 수 있어", [("⌘↩ 허용", .permission), ("⌘⌫ 거부", .permission), ("⎋ 접기", .collapse)])
+            case .question:
+                return keys("답할 수 있어", [("숫자 키로 고르기", .interaction), ("↩ 다음 · 보내기", .interaction), ("⎋ 접기", .collapse)])
+            case .plan:
+                return keys("결정할 수 있어", [("↩ 승인", .interaction), ("⎋ 접기", .collapse)])
             }
         case .needsInput:
-            return "클릭하면 ⎋ 로 접을 수 있어"
+            return shortcuts(.collapse) ? "클릭하면 ⎋ 로 접을 수 있어" : ""
         }
     }
 

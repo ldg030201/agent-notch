@@ -25,10 +25,10 @@ enum Changelog {
             ChangelogGroup(title: "노치 아일랜드", icon: "rectangle.topthird.inset.filled", isNew: true, notes: [
                 .new("세션 상태 · 지금 쓰는 툴 · 바뀐 줄 수 표시"),
                 .new("파일 수정 미리보기 · 완료 요약"),
-                .new("펼쳐 보는 세션 목록 · 타임라인 (⌃⌥⌘N)"),
+                .new("펼쳐 보는 세션 목록 · 타임라인"),
             ]),
             ChangelogGroup(title: "권한 · 질문", icon: "hand.raised.fill", tab: "general", isNew: true, notes: [
-                .new("노치에서 허용 · 항상 허용 · 거부 (⌘↩ · ⌥⌘↩ · ⌘⌫)"),
+                .new("노치에서 허용 · 항상 허용 · 거부"),
                 .new("질문 답하기 · 계획 승인 (권장 선택지 표시)"),
                 .new("터미널 · Claude 앱으로 넘기기"),
             ]),
@@ -41,6 +41,9 @@ enum Changelog {
                 .new("노치 아래 띠 (메뉴바를 가리지 않음)"),
                 .new("외부 모니터 메뉴바 알약"),
                 .new("열린 메뉴와 겹치면 피하기"),
+            ]),
+            ChangelogGroup(title: "단축키", icon: "keyboard", tab: "shortcuts", isNew: true, notes: [
+                .new("어디서든 펼치기 · 카드 단축키 (처음엔 꺼짐, 키 바꾸기)"),
             ]),
             ChangelogGroup(title: "시작하기", icon: "power", tab: "general", isNew: true, notes: [
                 .new("첫 실행 안내 (훅 설치 · 로그인 시 실행)"),

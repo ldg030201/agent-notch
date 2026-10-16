@@ -155,12 +155,12 @@ struct PermissionView: View {
                     Button {
                         presentation.resolve(request, decision: .allow)
                     } label: {
-                        Text("허용 ⌘↩")
+                        Text("허용" + presentation.keyLabel("⌘↩", .permission))
                     }
                     .buttonStyle(IslandButtonStyle(prominent: card.canAllow))
                     .disabled(!card.canAllow)
                     .accessibilityLabel("허용")
-                    .help(card.canAllow ? "허용 (⌘↩)" : Self.clippedHelp(host))
+                    .help(card.canAllow ? "허용" + presentation.keyNote("⌘↩", .permission) : Self.clippedHelp(host))
 
                     Button {
                         presentation.resolve(request, decision: .allowAlways)
@@ -175,11 +175,11 @@ struct PermissionView: View {
                     Button {
                         presentation.resolve(request, decision: .deny(message: nil))
                     } label: {
-                        Text("거부 ⌘⌫")
+                        Text("거부" + presentation.keyLabel("⌘⌫", .permission))
                     }
                     .buttonStyle(IslandButtonStyle())
                     .accessibilityLabel("거부")
-                    .help("거부 (⌘⌫)")
+                    .help("거부" + presentation.keyNote("⌘⌫", .permission))
 
                     Spacer(minLength: 0)
 
@@ -190,7 +190,7 @@ struct PermissionView: View {
                     }
                     .buttonStyle(IslandButtonStyle())
                     .accessibilityLabel("접기")
-                    .help("요청은 그대로 두고 접기 (⎋). 아일랜드를 누르면 다시 펼쳐져")
+                    .help("요청은 그대로 두고 접기" + presentation.keyNote("⎋", .collapse) + ". 아일랜드를 누르면 다시 펼쳐져")
 
                     Button {
                         presentation.sendToTerminal(request)
@@ -220,7 +220,7 @@ struct PermissionView: View {
     private func allowAlwaysHelp(_ card: PermissionCardModel, host: SessionHost) -> String {
         if card.isClipped { return Self.clippedHelp(host) }
         if !card.canAllowAlways { return "이 요청은 항상 허용 규칙이 없어" }
-        return "다음부터 묻지 않음 (⌥⌘↩)"
+        return "다음부터 묻지 않음" + presentation.keyNote("⌥⌘↩", .permission)
     }
 }
 
@@ -265,7 +265,7 @@ struct NeedsInputView: View {
                     }
                     .buttonStyle(IslandButtonStyle())
                     .accessibilityLabel("접기")
-                    .help("접기 (⎋)")
+                    .help("접기" + presentation.keyNote("⎋", .collapse))
 
                     Button {
                         presentation.actions.jumpToTerminal(sessionID: sessionID)
