@@ -24,12 +24,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # 최소 지원은 formula 의 depends_on macos: :sonoma 가 정한다. 여기는 "빌드되는지" 만 본다.
-          - os: macos-15   # arm64 Sequoia
+          # 최소 지원은 formula 의 depends_on macos: :sonoma 가 정한다. 여기는 "빌드되는지" 만 본다. Apple Silicon 만.
+          # macOS 14 는 깔린 Xcode 16 중 가장 낮은 것(Swift 6.0)으로: 예전 Swift 는 긴 식의 타입 추론이 느려 빌드가 멈출 수 있다
+          - os: macos-14   # arm64 Sonoma
+            oldest_swift: true
+          - os: macos-15   # arm64 Sequoia (Swift 6.1)
           - os: macos-26   # arm64 (macOS 26)
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+
+      - name: 가장 낮은 Swift 고르기
+        if: matrix.oldest_swift
+        run: |
+          XCODE="$(ls -d /Applications/Xcode_16.[0-9]*.app 2>/dev/null | sort -V | head -1)"
+          if [ -n "$XCODE" ]; then sudo xcode-select -s "$XCODE"; echo "선택: $XCODE"; fi
 
       - name: 도구 버전
         run: swift --version

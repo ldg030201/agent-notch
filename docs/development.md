@@ -31,7 +31,9 @@ VARIANT=test scripts/build.sh     # build/AgentNotch-Test.app 만 만들기
 
 ## 툴체인
 
-- **Command Line Tools 만** 있으면 된다 (Xcode 불필요). Swift 6.0 이상, Swift 5 언어 모드, macOS 14+.
+- **Command Line Tools 만** 있으면 된다 (Xcode 불필요). Swift 6.0 이상, Swift 5 언어 모드, macOS 14+, Apple Silicon 만 (Intel 맥은 지원하지 않음).
+- 예전 Swift(6.0 · 6.1)는 긴 산술식 · 큰 클로저의 타입 추론이 느려 "unable to type-check this expression in reasonable time" 으로 멈춘다.
+  CI(macOS 14 · 15)가 잡아 주지만, 여러 항을 한 식에 몰지 말고 타입을 적은 중간 값으로 나눈다
 - CLT 의 SDK 에는 SwiftUI 매크로 플러그인이 없다. `@State` · `#Preview` · `@Entry` · `@Previewable` · `@Animatable` 를 쓰면
   빌드가 깨진다. 상태는 `@Observable` 모델 객체에 둔다.
 - `swift test` 는 CLT 에서 Swift Testing 매크로 플러그인을 못 찾는다. 항상 `scripts/test.sh` 로 돌린다.

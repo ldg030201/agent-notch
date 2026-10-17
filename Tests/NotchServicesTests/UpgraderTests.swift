@@ -320,6 +320,32 @@ struct UpgradeHandoffTests {
 @MainActor
 @Suite("Upgrader")
 struct UpgraderTests {
+    /// 가짜 brew 가 기다리는 문. 기다리기 시작할 때마다 한 줄 적고(`started`), `open()` 하면 지나간다
+    private struct Gate {
+        let startedFile: URL
+        let openFile: URL
+
+        init(_ temp: TempDirectory) {
+            startedFile = temp.url.appendingPathComponent("gate-started")
+            openFile = temp.url.appendingPathComponent("gate-open")
+        }
+
+        /// 가짜 brew 스크립트에 넣는 셸 명령
+        var waitCommand: String {
+            "echo . >> \(Upgrader.shellQuoted(startedFile.path)); "
+                + "while [ ! -e \(Upgrader.shellQuoted(openFile.path)) ]; do sleep 0.05; done"
+        }
+
+        /// 문 앞까지 온 횟수
+        var started: Int {
+            ((try? String(contentsOf: startedFile, encoding: .utf8)) ?? "").split(separator: "\n").count
+        }
+
+        func open() throws {
+            try Data().write(to: openFile)
+        }
+    }
+
     private func makeFakeBrew(_ body: String) throws -> (TempDirectory, String) {
         let temp = try TempDirectory()
         let brew = temp.url.appendingPathComponent("\(awkwardName)/brew")
@@ -368,22 +394,23 @@ struct UpgraderTests {
     @Test func cancelStopsRunningBrew() async throws {
         let temp = try TempDirectory()
         defer { temp.remove() }
+        let gate = Gate(temp)
         let marker = temp.url.appendingPathComponent("finished")
         let brew = temp.url.appendingPathComponent("brew")
+        // brew upgrade 는 시작을 알리고 문이 열릴 때까지 기다렸다가 표시 파일을 만든다 (시간에 기대지 않게)
         try writeExecutable("""
         #!/bin/bash
-        if [ "$1" = "upgrade" ]; then sleep 2; touch \(Upgrader.shellQuoted(marker.path)); fi
+        if [ "$1" = "upgrade" ]; then \(gate.waitCommand); touch \(Upgrader.shellQuoted(marker.path)); fi
         """, to: brew)
         let upgrader = Upgrader(isTestBuild: false, isAppBundle: true, resolveBrew: { brew.path }, terminate: {})
         upgrader.start()
-        _ = await waitUntil(timeout: 5) { upgrader.log.contains("brew update") }
-        try await Task.sleep(nanoseconds: 300_000_000)
+        #expect(await waitUntil(timeout: 10) { gate.started == 1 })
         upgrader.cancel()
         #expect(upgrader.phase == .idle)
-        try await Task.sleep(nanoseconds: 800_000_000)
+        // 문을 열어도 자식(가짜 brew)까지 끝나 있어서 표시 파일이 생기지 않는다
+        try gate.open()
+        try await Task.sleep(nanoseconds: 1_000_000_000)
         #expect(upgrader.phase == .idle)
-        // 자식(가짜 brew)까지 끝나서 표시 파일이 생기지 않는다
-        try await Task.sleep(nanoseconds: 2_500_000_000)
         #expect(!FileManager.default.fileExists(atPath: marker.path))
     }
 
@@ -456,24 +483,28 @@ struct UpgraderTests {
     /// 취소한 실행의 늦은 종료 알림이 바로 다시 시작한 실행을 끝내지 않는다
     /// (예전엔 프로세스 주소로 가려서, 새 Process 가 같은 주소를 쓰면 새 실행이 취소도 안 되고 끝나지도 않았다)
     @Test func staleTerminationDoesNotFinishNextRun() async throws {
-        let (temp, brew) = try makeFakeBrew("""
-        if [ "$1" = "upgrade" ]; then sleep 1.5; fi
+        let temp = try TempDirectory()
+        defer { temp.remove() }
+        let gate = Gate(temp)
+        // brew upgrade 는 문이 열릴 때까지 끝나지 않는다: 취소 전에 실행이 저절로 끝나는 일이 없다 (느린 CI 에서도)
+        let (brewTemp, brew) = try makeFakeBrew("""
+        if [ "$1" = "upgrade" ]; then \(gate.waitCommand); fi
         echo "fake brew $*"
         """)
-        defer { temp.remove() }
+        defer { brewTemp.remove() }
         let upgrader = Upgrader(isTestBuild: false, isAppBundle: true, resolveBrew: { brew }, terminate: {})
-        for _ in 0..<3 {
+        for round in 1...3 {
             upgrader.start()
-            #expect(await waitUntil { upgrader.log.contains("brew update") })
-            try await Task.sleep(nanoseconds: 200_000_000)
+            #expect(await waitUntil(timeout: 10) { gate.started == round })
             upgrader.cancel()
             #expect(upgrader.phase == .idle)
         }
         upgrader.start()
-        #expect(await waitUntil { upgrader.log.contains("brew update") })
+        #expect(await waitUntil(timeout: 10) { gate.started == 4 })
         // 취소한 실행들의 종료 처리(0.3초 뒤)가 지나도 새 실행은 그대로 돈다
         try await Task.sleep(nanoseconds: 700_000_000)
         #expect(upgrader.phase == .running)
+        try gate.open()
         #expect(await waitUntil(timeout: 10) { upgrader.phase != .running })
         #expect(upgrader.phase == .ready)
     }

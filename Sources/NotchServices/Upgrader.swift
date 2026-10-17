@@ -113,8 +113,13 @@ public final class Upgrader {
         process = nil
         if let running, running.isRunning {
             // bash 만 끝내면 그 밑의 brew 가 남는다. 직접 띄운 자식부터 끝낸다.
-            Self.terminateChildren(of: running.processIdentifier)
+            // bash 를 먼저 멈춰 둔다: 자식을 끝내는 사이 bash 가 다음 단계(brew upgrade 등)를 띄우면 그 프로세스는
+            // 아무도 끝내지 않아 남는다. 멈춘 동안 받은 종료 신호는 다시 움직일 때 바로 처리된다
+            let pid = running.processIdentifier
+            kill(pid, SIGSTOP)
+            Self.terminateChildren(of: pid)
             running.terminate()
+            kill(pid, SIGCONT)
         }
         removeVersionFile()
         if phase == .running {

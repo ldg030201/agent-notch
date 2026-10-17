@@ -828,6 +828,29 @@ enum SnapshotShapeCheck {
         return reports
     }
 
+    /// 2차 베지어 곡선 위의 점. 식을 한 줄로 쓰면 예전 Swift(6.1)가 타입 추론 시간 초과로 빌드를 멈춰서 항마다 나눈다
+    private static func quadPoint(_ start: CGPoint, _ control: CGPoint, _ end: CGPoint, t: CGFloat) -> CGPoint {
+        let u: CGFloat = 1 - t
+        let w0: CGFloat = u * u
+        let w1: CGFloat = 2 * u * t
+        let w2: CGFloat = t * t
+        let x: CGFloat = w0 * start.x + w1 * control.x + w2 * end.x
+        let y: CGFloat = w0 * start.y + w1 * control.y + w2 * end.y
+        return CGPoint(x: x, y: y)
+    }
+
+    /// 3차 베지어 곡선 위의 점 (`quadPoint` 처럼 항마다 나눈다)
+    private static func cubicPoint(_ start: CGPoint, _ c1: CGPoint, _ c2: CGPoint, _ end: CGPoint, t: CGFloat) -> CGPoint {
+        let u: CGFloat = 1 - t
+        let w0: CGFloat = u * u * u
+        let w1: CGFloat = 3 * u * u * t
+        let w2: CGFloat = 3 * u * t * t
+        let w3: CGFloat = t * t * t
+        let x: CGFloat = w0 * start.x + w1 * c1.x + w2 * c2.x + w3 * end.x
+        let y: CGFloat = w0 * start.y + w1 * c1.y + w2 * c2.y + w3 * end.y
+        return CGPoint(x: x, y: y)
+    }
+
     /// 경로를 꺾은선으로 (곡선은 잘게 나눈다). 하위 경로마다 하나
     static func flatten(_ path: Path) -> [[CGPoint]] {
         var polygons: [[CGPoint]] = []
@@ -844,22 +867,12 @@ enum SnapshotShapeCheck {
                 last = point
             case let .quadCurve(to: point, control: control):
                 for step in 1...10 {
-                    let t = CGFloat(step) / 10
-                    let u = 1 - t
-                    current.append(CGPoint(
-                        x: u * u * last.x + 2 * u * t * control.x + t * t * point.x,
-                        y: u * u * last.y + 2 * u * t * control.y + t * t * point.y
-                    ))
+                    current.append(quadPoint(last, control, point, t: CGFloat(step) / 10))
                 }
                 last = point
             case let .curve(to: point, control1: c1, control2: c2):
                 for step in 1...12 {
-                    let t = CGFloat(step) / 12
-                    let u = 1 - t
-                    current.append(CGPoint(
-                        x: u * u * u * last.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * point.x,
-                        y: u * u * u * last.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * point.y
-                    ))
+                    current.append(cubicPoint(last, c1, c2, point, t: CGFloat(step) / 12))
                 }
                 last = point
             case .closeSubpath:

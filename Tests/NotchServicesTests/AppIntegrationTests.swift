@@ -393,6 +393,11 @@ private final class RecordingWorkspace: NSWorkspace {
         Self.editorURL
     }
 
+    /// 파일의 기본 앱은 없는 것으로 (돌리는 맥의 연결에 따라 결과가 달라지지 않게. CI 맥은 .sh 기본 앱이 Xcode 다)
+    override func urlForApplication(toOpen url: URL) -> URL? {
+        nil
+    }
+
     override func open(
         _ urls: [URL],
         withApplicationAt applicationURL: URL,
