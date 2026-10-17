@@ -21,6 +21,15 @@ enum Changelog {
 
     /// 최신이 위로 온다
     static let entries: [ChangelogEntry] = [
+        ChangelogEntry(version: "1.0.1", date: nil, groups: [
+            ChangelogGroup(title: "설치", icon: "shippingbox.fill", notes: [
+                .fix("macOS 15 에서 설치(소스 빌드)가 실패하던 문제"),
+                .change("Apple Silicon 맥만 지원"),
+            ]),
+            ChangelogGroup(title: "업데이트", icon: "arrow.down.circle.fill", tab: "version", notes: [
+                .fix("업데이트를 취소해도 Homebrew 가 계속 돌던 문제"),
+            ]),
+        ]),
         ChangelogEntry(version: "1.0.0", date: "2026-10-17", groups: [
             ChangelogGroup(title: "노치 아일랜드", icon: "rectangle.topthird.inset.filled", isNew: true, notes: [
                 .new("세션 상태 · 지금 쓰는 툴 · 바뀐 줄 수 표시"),
