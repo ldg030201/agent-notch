@@ -272,9 +272,9 @@ struct SettingsView: View {
                 )
                 SettingsDivider()
                 switchRow(
-                    "Claude 앱 권한 요청은 노치에서 받기",
-                    note: "Claude 앱을 보고 있어도 노치에서 바로 허용 · 거부해요. Claude 앱 승인 창도 같이 떠서 먼저 누른 쪽으로 정해져요",
-                    isOn: $preferences.claudeAppPermissionsInNotch
+                    "Claude 앱 권한 요청 · 질문은 노치에서 받기",
+                    note: "Claude 앱을 보고 있어도 노치에서 바로 허용 · 거부하고 답해요. 앱에서 답하려면 노치의 Claude로를 눌러요",
+                    isOn: $preferences.claudeAppRequestsInNotch
                 )
                 .disabled(!preferences.passthroughWhenTerminalFrontmost)
                 SettingsDivider()

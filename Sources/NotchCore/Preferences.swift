@@ -81,7 +81,8 @@ public final class AppPreferences {
         static let permissionTimeout = "permissionTimeout"
         static let staleSessionTimeout = "staleSessionTimeout"
         static let passthroughWhenTerminalFrontmost = "passthroughWhenTerminalFrontmost"
-        static let claudeAppPermissionsInNotch = "claudeAppPermissionsInNotch"
+        /// 권한 요청만 받던 때의 이름 그대로 (저장된 설정을 이어 쓴다)
+        static let claudeAppRequestsInNotch = "claudeAppPermissionsInNotch"
         static let externalDisplayStyle = "externalDisplayStyle"
         static let checksForUpdates = "checksForUpdates"
         static let restoresRecentSessions = "restoresRecentSessions"
@@ -96,7 +97,7 @@ public final class AppPreferences {
         /// 설정 초기화가 지우는 키 (설정을 더하면 여기와 `resetToDefaults` 에도 넣는다)
         static let all = [
             displayPolicy, fullscreenBehavior, peekOnEdit, peekDuration, completionDisplayDuration, showStreamingText,
-            permissionTimeout, staleSessionTimeout, passthroughWhenTerminalFrontmost, claudeAppPermissionsInNotch, externalDisplayStyle,
+            permissionTimeout, staleSessionTimeout, passthroughWhenTerminalFrontmost, claudeAppRequestsInNotch, externalDisplayStyle,
             checksForUpdates, restoresRecentSessions, rotatesSessions, sessionRotationInterval,
             globalShortcutEnabled, globalShortcut, permissionShortcutsEnabled, interactionShortcutsEnabled, collapseShortcutEnabled,
         ]
@@ -183,25 +184,24 @@ public final class AppPreferences {
 
     /// 권한 요청 · 질문 · 계획 승인이 왔을 때 그 세션의 앱(터미널 · Claude 앱)이 이미 앞에 있으면 노치에서 기다리지 않고
     /// 바로 그 앱의 프롬프트로 넘긴다 (훅이 대기하는 동안 터미널 다이얼로그가 보류될 수 있어서, 터미널을 보고 있는 사용자를 막지 않기 위함).
-    /// Claude 앱의 권한 요청은 `claudeAppPermissionsInNotch` 가 켜져 있으면 넘기지 않는다 (`passesThroughToFrontmostHost`)
+    /// Claude 앱 세션은 `claudeAppRequestsInNotch` 가 켜져 있으면 넘기지 않는다 (`passesThroughToFrontmostHost`)
     public var passthroughWhenTerminalFrontmost: Bool {
         didSet { defaults.set(passthroughWhenTerminalFrontmost, forKey: Key.passthroughWhenTerminalFrontmost) }
     }
 
-    /// Claude 앱 세션의 권한 요청은 Claude 앱이 앞에 있어도 넘기지 않고 노치에서 받는다 (질문 카드처럼 바로 허용 · 거부).
-    /// Claude 앱은 훅이 기다리는 동안에도 자기 승인 창을 함께 띄우고 먼저 결정한 쪽을 따르므로, 노치가 들고 있어도 앱 쪽이 막히지 않는다
-    public var claudeAppPermissionsInNotch: Bool {
-        didSet { defaults.set(claudeAppPermissionsInNotch, forKey: Key.claudeAppPermissionsInNotch) }
+    /// Claude 앱 세션의 권한 요청 · 질문 · 계획 승인은 Claude 앱이 앞에 있어도 넘기지 않고 노치에서 받는다.
+    /// - 권한 요청: Claude 앱은 훅이 기다리는 동안에도 자기 승인 창을 함께 띄우고 먼저 결정한 쪽을 따른다
+    /// - 질문 · 계획 승인: 노치가 기다리는 동안엔 툴이 아직 실행 전이라 앱에 질문이 뜨지 않는다.
+    ///   앱에서 답하려면 노치의 "Claude로"(결정 없이 넘기고 앱 안의 그 세션을 연다)
+    public var claudeAppRequestsInNotch: Bool {
+        didSet { defaults.set(claudeAppRequestsInNotch, forKey: Key.claudeAppRequestsInNotch) }
     }
 
-    /// 세션 앱이 앞에 있을 때 노치에서 기다리지 않고 그 앱으로 바로 넘길지.
-    /// 질문 · 계획 승인은 노치가 기다리는 동안 Claude 앱에도 질문이 뜨지 않으므로(툴이 아직 실행 전) Claude 앱이어도 넘긴다
+    /// 세션 앱이 앞에 있을 때 노치에서 기다리지 않고 그 앱으로 바로 넘길지
     /// - isClaudeApp: Claude 데스크톱 앱 세션 (`TerminalContext.isClaudeDesktopApp`)
-    /// - isInteraction: 질문 · 계획 승인 (`PermissionRequestInfo.isInteraction`)
-    public func passesThroughToFrontmostHost(isClaudeApp: Bool, isInteraction: Bool) -> Bool {
+    public func passesThroughToFrontmostHost(isClaudeApp: Bool) -> Bool {
         guard passthroughWhenTerminalFrontmost else { return false }
-        if isClaudeApp, !isInteraction, claudeAppPermissionsInNotch { return false }
-        return true
+        return !(isClaudeApp && claudeAppRequestsInNotch)
     }
 
     public var externalDisplayStyle: ExternalDisplayStyle {
@@ -229,7 +229,7 @@ public final class AppPreferences {
         permissionTimeout = defaults.object(forKey: Key.permissionTimeout) as? Double ?? 120
         staleSessionTimeout = defaults.object(forKey: Key.staleSessionTimeout) as? Double ?? 2 * 60 * 60
         passthroughWhenTerminalFrontmost = defaults.object(forKey: Key.passthroughWhenTerminalFrontmost) as? Bool ?? true
-        claudeAppPermissionsInNotch = defaults.object(forKey: Key.claudeAppPermissionsInNotch) as? Bool ?? true
+        claudeAppRequestsInNotch = defaults.object(forKey: Key.claudeAppRequestsInNotch) as? Bool ?? true
         externalDisplayStyle = defaults.string(forKey: Key.externalDisplayStyle).flatMap(ExternalDisplayStyle.init(rawValue:)) ?? .inMenuBar
         checksForUpdates = defaults.object(forKey: Key.checksForUpdates) as? Bool ?? true
         restoresRecentSessions = defaults.object(forKey: Key.restoresRecentSessions) as? Bool ?? true
@@ -259,7 +259,7 @@ public final class AppPreferences {
         permissionTimeout = fresh.permissionTimeout
         staleSessionTimeout = fresh.staleSessionTimeout
         passthroughWhenTerminalFrontmost = fresh.passthroughWhenTerminalFrontmost
-        claudeAppPermissionsInNotch = fresh.claudeAppPermissionsInNotch
+        claudeAppRequestsInNotch = fresh.claudeAppRequestsInNotch
         externalDisplayStyle = fresh.externalDisplayStyle
         restoresRecentSessions = fresh.restoresRecentSessions
         rotatesSessions = fresh.rotatesSessions

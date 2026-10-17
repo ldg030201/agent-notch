@@ -30,6 +30,7 @@ enum Changelog {
             ChangelogGroup(title: "권한 · 질문", icon: "hand.raised.fill", tab: "general", isNew: true, notes: [
                 .new("노치에서 허용 · 항상 허용 · 거부"),
                 .new("질문 답하기 · 계획 승인 (권장 선택지 표시)"),
+                .new("Claude 앱을 보고 있어도 노치에서 승인 · 답하기"),
                 .new("터미널 · Claude 앱으로 넘기기 (Claude 앱은 그 세션을 바로 열기)"),
             ]),
             ChangelogGroup(title: "여러 세션", icon: "square.stack.3d.up.fill", isNew: true, notes: [

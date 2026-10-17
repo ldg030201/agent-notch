@@ -140,14 +140,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
     }
 
     /// 훅 이벤트 반영. 세션 앱(터미널 · Claude 앱)을 보고 있으면 권한 요청 · 질문 · 계획 승인은 노치에 보여만 주고
-    /// 바로 그 앱의 프롬프트로 넘긴다. Claude 앱의 권한 요청은 (설정이 켜져 있으면) 넘기지 않고 노치에서 받는다
+    /// 바로 그 앱의 프롬프트로 넘긴다. Claude 앱 세션은 (설정이 켜져 있으면) 넘기지 않고 노치에서 받는다
     /// (`AppPreferences.passesThroughToFrontmostHost`)
     private func receive(_ envelope: HookEnvelope) -> UUID? {
         guard let requestID = store.ingest(envelope) else { return nil }
         let host = TerminalContext(environment: envelope.env)
-        let isInteraction = store.pendingPermissions.first { $0.id == requestID }?.isInteraction ?? false
-        if frontmost.isFrontmost(host),
-           preferences.passesThroughToFrontmostHost(isClaudeApp: host.isClaudeDesktopApp, isInteraction: isInteraction) {
+        if frontmost.isFrontmost(host), preferences.passesThroughToFrontmostHost(isClaudeApp: host.isClaudeDesktopApp) {
             store.resolvePermission(id: requestID, decision: .passthrough)
         }
         return requestID
