@@ -15,6 +15,7 @@ class AgentNotch < Formula
   head "https://github.com/ldg030201/agent-notch.git", branch: "main"
 
   # Xcode 는 필요 없다. Command Line Tools 의 Swift 만으로 빌드된다 (depends_on xcode 를 넣지 않는다).
+  depends_on arch: :arm64   # Apple Silicon 맥만 (Intel 맥은 지원하지 않는다)
   depends_on macos: :sonoma
 
   def install

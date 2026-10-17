@@ -82,9 +82,10 @@
 
 | | 최소 | 비고 |
 |---|---|---|
+| **맥** | Apple Silicon (M1 이상) | Intel 맥은 지원하지 않아요 |
 | **macOS** | 14 (Sonoma) | 노치 없는 맥 · 외부 모니터도 지원 |
 | **Claude Code** | 훅을 지원하는 버전 | 터미널 · IDE 확장 · 데스크톱 앱 |
-| **미리 빌드한 결과물 (bottle)** | Apple Silicon · macOS 15 / 26 | 그 외(macOS 14, Intel)는 소스에서 빌드해요 (조금 오래 걸릴 뿐 실패하지 않아요) |
+| **미리 빌드한 결과물 (bottle)** | macOS 15 / 26 | macOS 14 는 소스에서 빌드해요 (조금 오래 걸릴 뿐 실패하지 않아요) |
 | **Swift 툴체인** | 6.0 | **소스에서 빌드할 때만.** Command Line Tools 로 충분해요: `xcode-select --install` |
 
 **왜 cask 가 아니라 formula 인가요?** 애플 개발자 계정이 없어서 앱을 서명 · 공증할 수 없어요. cask 로 미리 빌드한 `.app` 을

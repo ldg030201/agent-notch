@@ -22,8 +22,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # bottle 은 macOS 버전마다 따로 만들고 그 버전에서만 쓰인다.
-          # 여기 없는 버전(macOS 14, Intel)은 소스에서 빌드한다 (느릴 뿐 실패하지는 않는다).
+          # bottle 은 macOS 버전마다 따로 만들고 그 버전에서만 쓰인다. Apple Silicon 만 (formula 가 Intel 을 막는다).
+          # 여기 없는 버전(macOS 14)은 소스에서 빌드한다 (느릴 뿐 실패하지는 않는다).
           - os: macos-15   # arm64 Sequoia
           - os: macos-26   # arm64 (macOS 26)
     runs-on: ${{ matrix.os }}

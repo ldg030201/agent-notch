@@ -45,7 +45,7 @@
 brew tap ldg030201/agent-notch https://github.com/ldg030201/agent-notch && brew trust ldg030201/agent-notch && brew install -y agent-notch && cp -R "$(brew --prefix agent-notch)/AgentNotch.app" /Applications/ && open /Applications/AgentNotch.app
 ```
 
-macOS 14 이상과 Homebrew만 있으면 돼요. Xcode는 필요 없어요.
+Apple Silicon(M1 이상) 맥, macOS 14 이상, Homebrew만 있으면 돼요. Xcode는 필요 없어요. Intel 맥은 지원하지 않아요.
 애플 개발자 서명과 공증을 받지 못해서 cask 대신 formula로 배포해요. 그래서 Gatekeeper에 막히지 않아요.
 
 ## 시작하기
