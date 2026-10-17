@@ -173,6 +173,33 @@ struct SnapshotWorld {
         send(Self.mobileApp, "SessionStart", at: 420, ["source": "startup"])
     }
 
+    /// 펼친 목록 장면용 다른 세션들: blog 는 오타를 고치고 끝남(미확인 완료), docs-site 는 답변은 끝나고 문서 서버(백그라운드 셸)만 도는 중,
+    /// web-app 은 파일을 고치는 중. `startMoreSessions` 다음, `apiServerEdits` 전에 부른다 (mobile-app 은 쉬는 중 그대로)
+    mutating func otherSessionsAtWork() {
+        let blog = Self.blog
+        send(blog, "UserPromptSubmit", at: 430, ["prompt": "글 오타 고쳐줘"])
+        let post = "\(blog.cwd)/posts/hello.md"
+        tool(blog, "Edit", at: 440, input: ["file_path": post], response: [
+            "filePath": post, "structuredPatch": [Self.hunk(newStart: 3, removed: ["안녕하새요"], added: ["안녕하세요"])],
+        ])
+        send(blog, "Stop", at: 445, ["stop_hook_active": false, "last_assistant_message": "오타 한 군데 고쳤어."])
+
+        let docs = Self.docsSite
+        send(docs, "UserPromptSubmit", at: 460, ["prompt": "문서 사이트 띄워줘"])
+        tool(docs, "Bash", at: 465, input: ["command": "npm run docs", "description": "문서 서버", "run_in_background": true], response: [
+            "stdout": "", "stderr": "", "interrupted": false, "backgroundTaskId": "snapshot-docs-shell",
+        ])
+        send(docs, "Stop", at: 470, ["stop_hook_active": false, "last_assistant_message": "문서 서버 띄워 뒀어."])
+        // 끝난 답변은 이미 확인함 (목록에 "완료" 대신 "백그라운드 1개 작업 중")
+        store.markSeen(sessionID: docs.id)
+
+        let web = Self.webApp
+        send(web, "UserPromptSubmit", at: 560, ["prompt": "로그인 폼에 입력 검사 넣어줘"])
+        let form = "\(web.cwd)/src/LoginForm.tsx"
+        tool(web, "Read", at: 565, input: ["file_path": form], response: ["type": "text"])
+        start(web, "Edit", at: 570, input: ["file_path": form, "old_string": "onSubmit(values)", "new_string": "if (validate(values)) onSubmit(values)"])
+    }
+
     /// api-server: Read → Edit(+12 −3) → 응답 한 줄 (피크 직전 상태). 수정된 diff 를 돌려준다.
     @discardableResult
     mutating func apiServerEdits() -> DiffSnippet? {

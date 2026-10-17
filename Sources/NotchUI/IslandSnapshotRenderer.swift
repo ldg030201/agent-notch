@@ -99,6 +99,8 @@ enum SnapshotScenario: String, CaseIterable {
     case permissionDesktop = "permission-desktop"
     /// 노치에서 답하는 질문: 한 개 고르기 (선택지 설명 있음)
     case question
+    /// `question` 인데 질문한 세션이 Claude 데스크톱 앱에서 돌아감: 앱을 보고 있어도 노치에서 고름 (버튼이 "Claude로")
+    case questionDesktop = "question-desktop"
     /// 여러 개 고르는 질문 (둘 고름)
     case questionMulti = "question-multi"
     /// 질문 두 개 (1/2 쪽, 첫 질문 답 고름)
@@ -552,7 +554,10 @@ enum SnapshotStage {
             showCompact()
             world.blogAsksQuestion()
             presentation.handleLatestSignal()
-        case .question, .questionMulti, .questionPages, .questionOther, .menubarQuestion:
+        case .question, .questionDesktop, .questionMulti, .questionPages, .questionOther, .menubarQuestion:
+            if scene == .questionDesktop {
+                world.hostEnvironment[SnapshotWorld.blog.id] = SnapshotWorld.desktopEnvironment
+            }
             world.apiServerEdits()
             world.apiServerRunsTests()
             showCompact()
@@ -598,6 +603,12 @@ enum SnapshotStage {
             world.webAppFails()
             world.clock.set(1302)
         case .expanded, .expandedUpdate:
+            if scene == .expanded {
+                // README: 상태 묶음 순 목록. 진행 중(고정한 api-server 가 묶음 맨 앞, web-app) → 백그라운드만 도는 docs-site
+                // → 끝남(방금 끝난 blog, 쉬는 mobile-app)
+                world.startMoreSessions()
+                world.otherSessionsAtWork()
+            }
             world.apiServerEdits()
             world.apiServerRunsTests()
             world.store.togglePin(sessionID: api)

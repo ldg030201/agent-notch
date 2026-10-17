@@ -8,7 +8,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 # README 에 쓰는 장면 (파일 이름 = 장면 이름)
-SCENES=(working menubar-working expanded permission-desktop question peek done)
+SCENES=(working menubar-working expanded permission-desktop question-desktop peek done)
 
 swift_build >&2
 BIN_DIR="$(swift_bin_dir)"
