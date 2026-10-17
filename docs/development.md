@@ -33,7 +33,7 @@ VARIANT=test scripts/build.sh     # build/AgentNotch-Test.app 만 만들기
 
 - **Command Line Tools 만** 있으면 된다 (Xcode 불필요). Swift 6.0 이상, Swift 5 언어 모드, macOS 14+, Apple Silicon 만 (Intel 맥은 지원하지 않음).
 - 예전 Swift(6.0 · 6.1)는 긴 산술식 · 큰 클로저의 타입 추론이 느려 "unable to type-check this expression in reasonable time" 으로 멈춘다.
-  CI(macOS 14 · 15)가 잡아 주지만, 여러 항을 한 식에 몰지 말고 타입을 적은 중간 값으로 나눈다
+  CI(macOS 15, Swift 6.1)가 잡아 주지만, 여러 항을 한 식에 몰지 말고 타입을 적은 중간 값으로 나눈다
 - CLT 의 SDK 에는 SwiftUI 매크로 플러그인이 없다. `@State` · `#Preview` · `@Entry` · `@Previewable` · `@Animatable` 를 쓰면
   빌드가 깨진다. 상태는 `@Observable` 모델 객체에 둔다.
 - `swift test` 는 CLT 에서 Swift Testing 매크로 플러그인을 못 찾는다. 항상 `scripts/test.sh` 로 돌린다.
@@ -133,7 +133,7 @@ scripts/release.sh 0.2.0
 3. 정식판을 빌드해서 `--version` 과 `notch-hook --version` 이 맞는지 확인, `docs/changelog.json` 다시 뽑기
 4. 커밋 `🔖 v<버전>` → 주석 태그 → 푸시
 5. 태그 tarball 의 sha256 을 구해 `Formula/agent-notch.rb` 의 url · sha256 갱신, 지난 bottle 블록 삭제, `ruby -c` → 커밋 `📦 formula를 v<버전> 로 갱신` → 푸시
-6. `gh release create` (제목 `AgentNotch <버전>`). 릴리스가 나가면 `.github/workflows/bottle.yml` 이 macOS 15 · 26 bottle 을 만들어 붙이고 formula 에 `📦 bottle 추가` 커밋을 올린다
+6. `gh release create` (제목 `AgentNotch <버전>`). 릴리스가 나가면 `.github/workflows/bottle.yml` 이 macOS 15 에서 bottle 하나를 만들어 붙이고 (macOS 26 도 같은 파일을 쓴다) formula 에 `📦 bottle 추가` 커밋을 올린다
 
 - 중간에 멈추면(실패 · Ctrl+C) 커밋 전의 버전 · 변경 내역 변경을 되돌린다. 태그를 올린 뒤에 멈췄으면 formula 만 손으로 갱신하면 된다.
 - `.github/workflows/build.yml` 은 태그 · PR 마다 macOS 15 · 26 에서 빌드, 명령줄 통로, `docs/changelog.json` 일치, 테스트를 확인한다.

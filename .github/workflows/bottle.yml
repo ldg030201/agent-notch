@@ -18,15 +18,10 @@ permissions:
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # bottle 은 macOS 버전마다 따로 만들고 그 버전에서만 쓰인다. Apple Silicon 만 (formula 가 Intel 을 막는다).
-          # 여기 없는 버전(macOS 14)은 소스에서 빌드한다 (느릴 뿐 실패하지는 않는다).
-          - os: macos-15   # arm64 Sequoia
-          - os: macos-26   # arm64 (macOS 26)
-    runs-on: ${{ matrix.os }}
+    # bottle 은 macOS 15(arm64 Sequoia)에서 **하나만** 만든다. Homebrew 는 예전 macOS 용 bottle 을 새 macOS 에서도 쓰므로
+    # (같은 아키텍처일 때, Homebrew 의 find_older_compatible_tag) macOS 15 · 26 이 같은 파일을 받는다.
+    # macOS 14 는 맞는 bottle 이 없어 소스에서 빌드한다 (느릴 뿐 실패하지는 않는다). Apple Silicon 만 (formula 가 Intel 을 막는다)
+    runs-on: macos-15
     steps:
       - name: Homebrew 준비
         uses: Homebrew/actions/setup-homebrew@2026.08.03.2
@@ -46,7 +41,7 @@ jobs:
       - name: 결과 수집
         uses: actions/upload-artifact@v7
         with:
-          name: bottle-${{ matrix.os }}
+          name: bottle
           path: |
             *.bottle.tar.gz
             *.bottle.json

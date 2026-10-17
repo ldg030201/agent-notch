@@ -556,7 +556,8 @@ brew tap ldg030201/agent-notch https://github.com/ldg030201/agent-notch && brew 
 
 - cask 로 빌드된 .app 을 배포하면 quarantine 속성 때문에 공증되지 않은 앱이 Gatekeeper 에 막힌다.
   formula 는 사용자 맥에서 빌드(또는 CI 가 만든 bottle 을 설치)하므로 quarantine 이 붙지 않는다.
-- `Formula/agent-notch.rb` (저장소 루트), `.github/workflows/bottle.yml` 이 릴리스마다 macOS 판별 bottle 을 올리고 formula 에 기록.
+- `Formula/agent-notch.rb` (저장소 루트), `.github/workflows/bottle.yml` 이 릴리스마다 macOS 15 에서 만든 bottle 하나를 올리고 formula 에 기록
+  (Homebrew 가 예전 macOS 용 bottle 을 새 macOS 에서도 써서 macOS 15 · 26 이 같은 파일, macOS 14 는 소스 빌드).
 - `scripts/build.sh` 가 `.app` 번들을 만든다. 버전은 `Sources/AgentNotch/Version.swift` 의 `agentNotchVersion`,
   `Resources/Info.plist`, `notch-hook` 의 버전 상수 세 곳에 있고, 다르면 빌드 실패. `agent-notch --version` → `agent-notch 0.1.0`.
 - 번들 ID `com.ldg.agent-notch` (테스트판 `AgentNotch-Test` / `com.ldg.agent-notch-test`, `scripts/dev.sh`).
