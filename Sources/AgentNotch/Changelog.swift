@@ -21,7 +21,7 @@ enum Changelog {
 
     /// 최신이 위로 온다
     static let entries: [ChangelogEntry] = [
-        ChangelogEntry(version: "1.0.0", date: nil, groups: [
+        ChangelogEntry(version: "1.0.0", date: "2026-10-17", groups: [
             ChangelogGroup(title: "노치 아일랜드", icon: "rectangle.topthird.inset.filled", isNew: true, notes: [
                 .new("세션 상태 · 지금 쓰는 툴 · 바뀐 줄 수 표시"),
                 .new("파일 수정 미리보기 · 완료 요약"),
