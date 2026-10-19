@@ -375,6 +375,11 @@ Claude 의 객관식 질문과 계획 승인을 다이얼로그 대신 노치에
 
 - `NSPanel`, `styleMask: [.borderless, .nonactivatingPanel]`, 투명 배경, 그림자 없음.
 - `level`: 메뉴바 위 (`.statusBar` 보다 높게). `collectionBehavior: [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]`.
+- 화면에서 빠진 패널 다시 만들기 (`ScreenManager.reviveMissingPanels`, 풀스크린 감지와 같은 2초 창 목록): 모든 Space 에 나오는 패널이어도
+  macOS 가 다른 앱의 전체 화면 Space 에 넣지 않는 경우가 있다 (모니터를 다시 연결하며 전체 화면 앱의 Space 가 먼저 복원됨 등).
+  그 Space 로 넘어가면 아일랜드가 사라지고, 이렇게 빠진 패널은 다시 올리거나(orderFront) 동작 설정을 다시 넣어도 돌아오지 않는다.
+  패널은 지울 때 말고는 내리지 않으므로, 창 목록에 두 번 연속 없으면 그 화면 패널만 새로 만든다 (새 패널은 그 Space 에도 들어간다).
+  잠금 화면처럼 모든 창이 빠지는 동안 계속 다시 만들지 않게, 다시 만든 패널을 아직 못 봤으면 약 30초 기다린다
 - 패널은 최대 크기로 고정해 두고(아일랜드가 커져도 창 크기를 애니메이션하지 않음), 마우스가 아일랜드 영역 밖이면
   `ignoresMouseEvents = true` 로 클릭을 아래 앱에 통과시킨다 (전역/로컬 mouseMoved 모니터).
 

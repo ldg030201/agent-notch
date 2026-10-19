@@ -15,7 +15,7 @@ final class ScreenManager {
 
     /// 화면 하나의 패널과 마지막으로 적용한 표시 상태
     private struct Screen {
-        let panel: NotchPanel
+        var panel: NotchPanel
         var lastMode: IslandMode?
         /// 마지막으로 그린 모양(애니메이션 값)과 바뀐 시각 (부팅 후 초). 모양이 바뀌는 동안엔 접힌 상태를 새로 숨기지 않는다
         var lastShape: IslandLayout?
@@ -24,6 +24,10 @@ final class ScreenManager {
         var hitRects: [CGRect] = []
         /// 열린 메뉴 겹침 감시 영역 (아일랜드가 보일 때만). 0.25초마다 레이아웃을 다시 계산하지 않도록 상태가 바뀔 때만 갱신한다
         var overlapTarget: OverlapScanner.Target?
+        /// 패널이 화면에 없다고 본 연속 횟수 (`reviveMissingPanels`)
+        var missingChecks = 0
+        /// 다시 만든 뒤로 아직 화면에서 보지 못함 (잠금 화면처럼 모든 창이 빠지는 동안 계속 다시 만들지 않게 더 오래 기다린다)
+        var revivedUnseen = false
     }
 
     private var screens: [ScreenID: Screen] = [:]
@@ -42,8 +46,12 @@ final class ScreenManager {
 
     private let logger = Logger(subsystem: NotchWire.logSubsystem, category: "Screens")
 
-    /// 풀스크린 감지 주기(초). 설정이 "전부 표시"면 감지하지 않는다.
+    /// 풀스크린 감지 · 패널 확인 주기(초). 설정이 "전부 표시"면 풀스크린은 감지하지 않는다 (패널 확인은 늘 한다)
     private static let fullscreenPollInterval: Double = 2
+    /// 패널이 이 횟수만큼 연속으로 화면에 없으면 다시 만든다 (Space 전환 중 잠깐 빠지는 것과 헷갈리지 않게).
+    /// 다시 만든 패널도 아직 못 봤으면 훨씬 오래 기다린다 (약 30초)
+    private static let missingChecksBeforeRevive = 2
+    private static let missingChecksAfterRevive = 15
 
     init(presentation: PresentationController, makeRootView: @escaping @MainActor (ScreenID) -> AnyView) {
         self.presentation = presentation
@@ -467,28 +475,72 @@ final class ScreenManager {
         }
     }
 
-    /// 창 목록 조회(수 ms)는 메인 스레드 밖에서 한다.
+    /// 창 목록 조회(수 ms)는 메인 스레드 밖에서 한다. 같은 목록으로 풀스크린 화면과 화면에 떠 있는 우리 패널을 함께 본다
     private func refreshFullscreen() async {
         guard running else { return }
-        guard presentation.preferences.fullscreenBehavior != .showAll else {
-            presentation.setFullscreenScreens([])
-            return
-        }
+        let detectsFullscreen = presentation.preferences.fullscreenBehavior != .showAll
         let geometries = presentation.screenOrder.compactMap { presentation.geometries[$0] }
         // CG 좌표(원점 왼쪽 위, 주 화면 기준) → Cocoa 좌표 변환용
         let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-        let result = await Task.detached(priority: .utility) {
-            FullscreenDetector.fullscreenScreens(geometries, primaryHeight: primaryHeight)
+        let (fullscreen, ownOnScreen) = await Task.detached(priority: .utility) {
+            let snapshot = WindowSnapshot.capture(primaryHeight: primaryHeight)
+            let ownPID = Int(ProcessInfo.processInfo.processIdentifier)
+            let own = Set(snapshot.windows.lazy.filter { $0.pid == ownPID }.map(\.number))
+            let fullscreen = detectsFullscreen ? FullscreenDetector.fullscreenScreens(geometries, snapshot: snapshot) : []
+            return (fullscreen, own)
         }.value
         guard running, !Task.isCancelled else { return }
-        presentation.setFullscreenScreens(result)
+        presentation.setFullscreenScreens(fullscreen)
+        reviveMissingPanels(onScreen: ownOnScreen)
+    }
+
+    // MARK: - 화면에서 빠진 패널 다시 만들기
+
+    /// 화면에 떠 있어야 할 패널이 창 목록에 없으면 다시 만든다.
+    ///
+    /// 패널은 모든 Space 에 나오지만(`canJoinAllSpaces`), macOS 는 패널을 띄울 때 그 화면이 보고 있지 않던 다른 앱의
+    /// 전체 화면 Space 에는 넣지 않는다. 모니터를 다시 연결하며 전체 화면 앱의 Space 가 먼저 복원되면, 그 화면이 전체 화면
+    /// Space 로 넘어가는 순간 아일랜드가 사라진다. 이렇게 빠진 패널은 다시 올리거나(orderFront) 내렸다 올려도, 동작 설정을
+    /// 다시 넣어도 그 Space 에 들어가지 않고, 새로 만든 패널만 들어간다 (실제 화면에서 확인).
+    /// 패널은 지울 때 말고는 내리지 않으므로(내용만 투명) 창 목록에 없으면 빠진 것이다
+    private func reviveMissingPanels(onScreen: Set<Int>) {
+        for (id, screen) in screens {
+            if onScreen.contains(screen.panel.windowNumber) {
+                if screen.missingChecks != 0 || screen.revivedUnseen {
+                    screens[id]?.missingChecks = 0
+                    screens[id]?.revivedUnseen = false
+                }
+                continue
+            }
+            let misses = screen.missingChecks + 1
+            let limit = screen.revivedUnseen ? Self.missingChecksAfterRevive : Self.missingChecksBeforeRevive
+            guard misses >= limit else {
+                screens[id]?.missingChecks = misses
+                continue
+            }
+            recreatePanel(id)
+        }
+    }
+
+    /// 화면 상태(표시 이력 · 클릭 영역 등)는 그대로 두고 패널만 새로 만든다
+    private func recreatePanel(_ id: ScreenID) {
+        guard var screen = screens[id], let geometry = presentation.geometries[id] else { return }
+        let old = screen.panel
+        old.orderOut(nil)
+        old.contentView = nil
+        screen.panel = makePanel(for: geometry)
+        screen.missingChecks = 0
+        screen.revivedUnseen = true
+        screens[id] = screen
+        logger.info("화면에 없는 패널을 다시 만듦 (다른 앱의 전체 화면 Space 등)")
+        updateMouseState()
     }
 }
 
 /// 화면 녹화 권한 없이 얻을 수 있는 창 정보(경계, 레이어, 소유 PID)만으로 풀스크린을 추정한다.
 /// 레이어 0 창이 화면 전체를 덮고, 그 화면에 메뉴바 창이 없으면 풀스크린으로 본다.
 enum FullscreenDetector {
-    static func fullscreenScreens(_ geometries: [NotchGeometry], primaryHeight: CGFloat) -> Set<ScreenID> {
+    static func fullscreenScreens(_ geometries: [NotchGeometry], snapshot: WindowSnapshot) -> Set<ScreenID> {
         guard !geometries.isEmpty else { return [] }
         let ownPID = Int(ProcessInfo.processInfo.processIdentifier)
         let menuBarLevels: Set<Int> = [WindowLevels.mainMenu, WindowLevels.status]
@@ -496,7 +548,7 @@ enum FullscreenDetector {
         var covered = Set<ScreenID>()
         var menuBarVisible = Set<ScreenID>()
 
-        for window in WindowSnapshot.capture(primaryHeight: primaryHeight).windows where window.pid != ownPID {
+        for window in snapshot.windows where window.pid != ownPID {
             let rect = window.frame
             for geometry in geometries {
                 let screen = geometry.frame
