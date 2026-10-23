@@ -1,0 +1,15 @@
+AgentNotch 에 들어 있는 다른 회사의 그림
+
+AgentNotch 는 어느 에이전트(Claude Code · Codex)의 세션인지 구분하려고 아래 두 그림을 써요.
+두 그림은 이 프로젝트의 것이 아니고, 모든 권리는 각 권리자에게 있어요.
+
+- Clawd (Claude Code 캐릭터)
+  위치: Sources/NotchUI/Views/AgentIcon.swift 의 ClawdIcon, README 스크린샷(docs/images)
+  © Anthropic, PBC. Clawd · Claude · Claude Code 는 Anthropic 의 저작물 · 상표예요.
+
+- Codex 아이콘
+  위치: Sources/NotchUI/Views/AgentIcon.swift 의 CodexIcon (codexMarkPNG), README 스크린샷(docs/images)
+  © OpenAI. Codex · OpenAI 는 OpenAI 의 저작물 · 상표예요.
+
+위 그림은 MIT 라이선스(LICENSE)에 포함되지 않아요.
+AgentNotch 는 Anthropic · OpenAI 와 관계없는 비공식 프로젝트예요. 권리자가 요청하면 바로 내릴게요.

@@ -1,14 +1,15 @@
 # AgentNotch 아키텍처
 
-맥북 노치를 다이나믹 아일랜드처럼 확장해서 Claude Code 세션의 **현재 작업 / 미니 diff / 권한 요청 / 완료**를
+맥북 노치를 다이나믹 아일랜드처럼 확장해서 Claude Code · Codex 세션의 **현재 작업 / 미니 diff / 권한 요청 / 완료**를
 실시간으로 보여주는 메뉴바 앱. 노치가 없는 외부 모니터에서는 메뉴바 아래 떠 있는 알약(pill) 형태로 같은 내용을 보여준다.
 
 ## 1. 전체 흐름
 
 ```
-Claude Code (CLI · 데스크톱 앱)
+Claude Code (CLI · 데스크톱 앱)   ~/.claude/settings.json
+Codex (CLI · Codex 앱)           ~/.codex/hooks.json  (명령에 --agent codex)
   └─ hook (type: command) ─▶ notch-hook  (앱이 설치 시 ~/Library/Application Support/AgentNotch/bin 에 복사)
-        │  stdin 의 훅 JSON + 화이트리스트 환경변수 → HookEnvelope
+        │  stdin 의 훅 JSON + 화이트리스트 환경변수 + 에이전트 이름 → HookEnvelope
         ▼
   Unix 소켓  ~/Library/Application Support/AgentNotch/notch.sock  (디렉터리 0700, 소켓 0600)
         ▼
@@ -128,6 +129,45 @@ Claude Code (CLI · 데스크톱 앱)
     둘째 줄로 내리고(요약과 함께), 제목 줄 요소는 배지 없이 골라 메뉴바 알약과 같은 제목을 보여준다 (6장).
     펼친 화면은 세션 줄에 배지, 상세 머리에 "⧉ 3 서브에이전트 2 · 셸 1" (한 종류뿐이면 이름만).
 - 모든 payload 필드는 선택적으로 취급한다 (버전에 따라 필드가 없거나 늘어날 수 있음). 세부 스키마는 `docs/hook-events.md`.
+
+## 4-1. Codex
+
+Codex 훅은 Claude Code 훅과 이벤트 이름 · payload 모양이 거의 같아서(`hook_event_name` · `session_id` · `cwd` · `tool_name` ·
+`tool_input` · `tool_use_id`, 출력도 `hookSpecificOutput`) 같은 헬퍼 · 소켓 · `SessionStore` 를 쓴다. 다른 점만 따로 다룬다
+(세부 스키마는 `docs/hook-events.md` 7장).
+
+- **에이전트 구분**: 훅 명령의 `--agent codex` → 헬퍼가 `HookEnvelope.agent` 로 넘김 → `AgentSession.agent`.
+  Claude Code 훅 명령에는 붙이지 않는다 (agent 가 없으면 Claude Code: 예전 헬퍼 · 이미 설치한 훅과 같은 모양).
+- **훅 설치** (`HookInstaller(agent: .codex)`): `~/.codex/hooks.json` 의 `hooks` 에 같은 모양으로 넣는다.
+  이벤트는 Codex 훅 스키마의 12개 (SessionStart · SessionEnd · UserPromptSubmit · PreToolUse · PostToolUse · PermissionRequest · Stop ·
+  SubagentStart · SubagentStop · PreCompact · PostCompact · Interrupt). 응답을 기다리는 건 PermissionRequest 만(`--reply-timeout 590`,
+  timeout 600, `statusMessage` 로 Codex 화면에 노치 대기 표시). SessionEnd · Interrupt 는 timeout 2 (Codex 상한 3초).
+  - **Codex 는 새 · 바뀐 사용자 훅을 사용자가 검토해 믿을 때까지 실행하지 않는다** (Codex 앱 훅 검토, CLI `/hooks`, 믿음은 항목 내용의 해시에 묶임).
+    그래서 이미 지금 모양인 항목은 다시 쓰지 않고, 바꿀 때만 고친다 (바꾸면 다시 검토해야 한다). 앱이 믿음을 대신 적지 않는다.
+  - 헬퍼는 두 에이전트가 같이 쓴다. 제거는 둘 다 지워졌을 때만 헬퍼를 지운다.
+- **세션 앱**: Codex 앱은 앱 서버에 `CODEX_INTERNAL_ORIGINATOR_OVERRIDE="Codex"` 를 넣는다 (실행 중인 앱 서버 프로세스로 확인).
+  번들 ID → 이 값("Codex" · "… Desktop") → `TERM_PROGRAM` 순서로 세션 앱을 정한다 (`TerminalContext.hostBundleIdentifier`,
+  Codex 앱 번들 ID `com.openai.codex`, 설치 이름은 ChatGPT.app 일 수 있음). 환경변수는 에이전트마다 자기 키만 읽는다
+  (Claude 앱 터미널에서 띄운 Codex · Codex 앱 터미널에서 띄운 Claude Code 가 다른 앱 세션으로 보이지 않게).
+  - "Codex로": `codex://threads/<스레드 ID>` 를 Codex 앱으로 연다 (앱이 받는 링크, UUID 모양만). Codex 의 `session_id` 가 스레드 ID 다.
+  - 권한 요청은 Codex 앱이 앞에 있으면 터미널처럼 바로 넘긴다: Codex 는 훅이 결정하지 않을 때만 자기 승인 창을 띄운다.
+- **이벤트 차이**
+  - `Interrupt`(사용자 중단): Claude Code 의 `PostToolUseFailure.is_interrupt` 와 같이 턴을 끝내고 대기를 푼다 (`releases`).
+  - `Notification` · `MessageDisplay` · `StopFailure` · `PostToolUseFailure` 는 없다: 응답 스트리밍 · API 오류 카드는 Codex 세션에 없고,
+    `idle_prompt` 정리 대신 다음 이벤트(툴 · Stop · Interrupt · 새 프롬프트)로 대기가 풀린다.
+  - 서브에이전트 훅은 부모의 `session_id` 로 온다 (`agent_id` 로 구분, Claude Code 와 같은 규칙).
+- **툴**: 셸은 `Bash`(`command`), MCP 는 `mcp__<서버>__<툴>` 로 와서 Claude Code 와 같다.
+  - `apply_patch`(파일 수정): `tool_input.command` 의 패치 글(`*** Begin Patch` …)을 `ApplyPatch` 가 읽어 제목 · 바뀐 줄 수 · 미리보기를 만든다.
+    줄 번호가 없어 첫 변경 줄은 모른다(새 파일만 1). 상대 경로는 작업 폴더 기준. 권한 카드는 파일마다 추가 · 수정 · 삭제 · 이동 한 줄.
+  - `request_user_input`(질문): 훅으로 답할 수 없어 늘 세션 앱 입력 대기(`userInteractionTools`)로 알리고 그 툴 결과로 푼다.
+  - 그 밖: `update_plan`(Todo) · `spawn_agent`(Agent) · `view_image`(Read) · 코드 모드 `exec` · `js`(Code).
+- **권한 결정**: 출력은 Claude Code 와 같은 `decision.behavior` (allow · deny + message). Codex 는 `updatedPermissions` 를 받지 않아
+  (넣으면 훅 실패로 막힘) 항상 허용이 없다 — `permission_suggestions` 가 없어 출력에 넣지 않고, 카드에서 버튼을 뺀다.
+- **되살리기** (`CodexRolloutTail`): `~/.codex/sessions/<연>/<월>/<일>/rollout-*.jsonl` 중 30분 안에 바뀐 것. 첫 줄 `session_meta` 로
+  스레드 · 작업 폴더 · 앱 이름 · 브랜치를 읽고 서브에이전트 스레드(`thread_source: subagent` · `parent_thread_id`)는 버린다.
+  끝부분의 `task_started` · `task_complete` · `turn_aborted` 와 결과 없는 툴 호출로 상태를 고른다 (`exec_command` → Bash, `apply_patch` → 패치 글).
+- **아이콘** (`AgentIcon`): 세션 앞에 Clawd(Claude Code) · Codex 구름. 16×14pt 칸. 접힌 띠 · 알약 폭 계산(`LineChrome.base`)에 칸을 더한다.
+  노치 185pt 띠에서는 그만큼 툴 이름 → 프로젝트명이 먼저 줄어든다. 그림의 권리는 Anthropic · OpenAI 에 있다 (README · NOTICE).
 
 ## 5. 주로 볼 세션 (포커스) 규칙
 
@@ -524,7 +564,7 @@ Claude 의 객관식 질문과 계획 승인을 다이얼로그 대신 노치에
 ## 9. 보안 · 개인정보 원칙 (GitHub 공개 저장소)
 
 - 비밀 정보(API 키, 토큰, 개인 경로 등)를 코드·픽스처·로그에 넣지 않는다. 경로는 `homeDirectoryForCurrentUser` 로 계산.
-- 훅 헬퍼는 **화이트리스트 환경변수만** 전달한다 (`NotchWire.forwardedEnvironmentKeys`).
+- 훅 헬퍼는 **화이트리스트 환경변수만** 전달한다 (`NotchWire.forwardedEnvironmentKeys`). Codex 키는 앱 표시 · 스레드 ID 둘뿐이다.
 - 소켓 디렉터리 0700, 소켓 0600, 연결 시 `getpeereid` 로 같은 사용자만 허용.
 - 프롬프트·코드·응답 내용을 디스크에 기록하지 않는다. 메모리에만 두고 오래된 세션은 정리한다.
 - **앱은 프로젝트 폴더를 읽지 않는다.** 앱이 읽으면 문서 · 데스크탑 같은 보호 폴더에서 "AgentNotch 가 '문서' 폴더에 접근하려고 합니다" 창이
@@ -542,11 +582,11 @@ Claude 의 객관식 질문과 계획 승인을 다이얼로그 대신 노치에
 - 메인 스레드를 오래 막는 일은 하지 않는다: 모달 알림은 GCD 메인 큐 블록이 아니라 런루프에서 띄우고(`AppDelegate.presentModal`,
   모달 동안 소켓 전달이 멈추지 않게), iTerm2 AppleScript 는 전용 큐에서 `with timeout of 5 seconds` 로, brew 찾기는 백그라운드에서
   사용자 로그인 셸(`$SHELL`)로 8초 제한, 정밀 diff 는 3,000줄 예산(넘으면 근사) 안에서만 한다.
-- 앱을 켤 때만 최근 Claude Code 대화 기록 끝부분을 **읽는다** (세션 되살리기, 설정에서 끌 수 있음). 쓰지 않고, 상태 · 툴 요약만 메모리에 둔다.
+- 앱을 켤 때만 최근 Claude Code · Codex 대화 기록 끝부분을 **읽는다** (세션 되살리기, 설정에서 끌 수 있음). 쓰지 않고, 상태 · 툴 요약만 메모리에 둔다.
   디버그 로그는 `os.Logger` + `privacy: .private`. 레이아웃 변화 로그(`Presentation`)만 숫자 · 모드 종류 · 자리 종류를 `.public` 으로 남긴다.
 - 네트워크 통신은 **업데이트 확인 하나뿐** — 하루 한 번 GitHub 의 `docs/changelog.json` (raw) 을 받는다. 설정에서 끌 수 있다.
   분석/텔레메트리 없음.
-- `~/.claude/settings.json` 수정 전 타임스탬프 백업(0600). AgentNotch 항목만 추가/제거하고 다른 훅(예: iTerm2 `cc-status`)은 보존.
+- `~/.claude/settings.json` · `~/.codex/hooks.json` 수정 전 타임스탬프 백업(0600). AgentNotch 항목만 추가/제거하고 다른 훅(예: iTerm2 `cc-status`)은 보존.
   앱 업데이트 후 예전 형태의 우리 항목을 고칠 때(`updateInstalledHooks`)도 같은 규칙 (우리 항목만 그 자리에서, 백업 후).
 - 테스트 픽스처는 가짜 데이터만 사용 (`/Users/dev/projects/api-server` 같은 예시 경로).
 

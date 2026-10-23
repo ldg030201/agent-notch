@@ -9,18 +9,20 @@
 | **쉬는 중** | 작업 중인 세션이 없을 때 | 세션 상태 요약 (기다리는 중 주황 · 진행 중 초록 · 끝남 회색 점과 개수) |
 | **작업 중** | 보고 있는 세션이 일하는 중 | 스피너 · 프로젝트명 · 툴 이름 · `+N −M`, 전체 세션 상태 요약, 백그라운드 작업 수 `⧉ N` |
 | **수정 미리보기** | 파일을 고쳤을 때 | 몇 초 동안 살짝 펼쳐서 파일명 · 줄 번호 · 미니 diff · 응답 한 줄 |
-| **권한 요청** | Claude 가 권한을 물을 때 | 다른 세션을 보고 있어도 바로 펼침. **허용 · 항상 허용 · 거부 · 터미널로**. 정할 때까지 유지 |
-| **입력 필요** | 질문 · 계획 승인 · MCP 입력 요청 · Claude 앱 확인 창 | 질문 내용 + 터미널로 (데스크톱 앱 세션은 Claude로) |
+| **권한 요청** | Claude Code · Codex 가 권한을 물을 때 | 다른 세션을 보고 있어도 바로 펼침. **허용 · 항상 허용 · 거부 · 터미널로** (Codex 는 항상 허용 없음). 정할 때까지 유지 |
+| **입력 필요** | 질문 · 계획 승인 · MCP 입력 요청 · Claude 앱 확인 창 · Codex 질문 | 질문 내용 + 터미널로 (데스크톱 앱 세션은 Claude로 · Codex로) |
 | **완료 / 실패** | 턴이 끝났을 때 | 걸린 시간 · 바뀐 파일 수 `+N −M` · 마지막 응답 한 줄. 잠시 뒤 자동으로 접힘 |
 | **전체 펼침** | 아일랜드를 클릭 | 왼쪽: 세션 목록 (기다리는 중 → 진행 중 → 끝남 순, 상태가 바뀌면 위아래로 자리를 옮김, 고정 가능) / 오른쪽: 보고 있는 세션의 타임라인 · diff · 최근 응답 |
 
+- **Claude Code · Codex 함께**: 두 에이전트의 세션을 한 목록에 보여주고, 세션 앞의 아이콘으로 구분해요 (Claude Code 는 Clawd, Codex 는 Codex 구름).
+  접힌 띠 · 알약에도 보여주는 세션의 아이콘이 붙어요. 띠가 좁으면 툴 이름 → 프로젝트명 순으로 줄여요.
 - **여러 세션 자동 넘기기**: 일하는 세션이 여럿이면 접힌 아일랜드가 몇 초마다(기본 5초) 옆으로 넘기며 번갈아 보여줘요.
   쉬는 세션은 건너뛰고, 펼쳐 보고 있거나 마우스를 올려 둔 동안은 넘기지 않아요.
 - **알림 온 세션 먼저**: 완료 · 실패 · 권한 요청 · 입력 필요가 오면 그 세션으로 바로 넘어가요. 승인 · 입력을 기다리는 세션은 답할 때까지 그대로예요.
 - **고정**: 펼친 목록에서 세션을 **우클릭 → 고정** 하면(핀 표시) 넘기지 않고 그 세션만 보여줘요. 다시 우클릭 → 고정 해제 하면 다시 넘겨요.
 - **접힌 상태는 짧게**: 툴은 이름만 보여줘요 (`Bash`, `Edit`, MCP 는 서버 이름). 명령 · 경로는 펼친 화면에 있어요.
-- **터미널로 이동**: 세션을 띄운 터미널을 앞으로 가져와요. iTerm2 는 해당 탭까지 찾아가요.
-- **메뉴바 메뉴**: 세션 목록 (클릭하면 포커스, `⌥` 를 누르면 고정/해제), 노치 펼치기, 데모, 훅 설치 · 제거, 설정.
+- **터미널로 이동**: 세션을 띄운 터미널을 앞으로 가져와요. iTerm2 는 해당 탭까지 찾아가요. Claude 앱 · Codex 앱 세션은 그 앱 안의 세션을 바로 열어요.
+- **메뉴바 메뉴**: 세션 목록 (앞에 에이전트 아이콘, 클릭하면 포커스, `⌥` 를 누르면 고정/해제), 노치 펼치기, 데모, Claude Code · Codex 훅 설치 · 제거, 설정.
 - **데모 모드**: 훅을 설치하지 않아도 약 40초짜리 가짜 시나리오로 모든 상태를 미리 볼 수 있어요.
 
 ## 노치 · 외부 모니터
@@ -66,7 +68,7 @@
 
 | 탭 | 내용 |
 |---|---|
-| **일반** | 권한 요청 (세션 앱을 보고 있으면 그 앱으로 넘기기, Claude 앱 권한 요청 · 질문은 노치에서 받기, 대기 시간), 앱을 켤 때 돌고 있던 세션 바로 보여주기, Claude Code 훅 설치 · 제거, 로그인 시 실행, 설정 초기화 (훅 · 로그인 시 실행은 그대로) |
+| **일반** | 권한 요청 (세션 앱을 보고 있으면 그 앱으로 넘기기, Claude 앱 권한 요청 · 질문은 노치에서 받기, 대기 시간), 앱을 켤 때 돌고 있던 세션 바로 보여주기, 훅 (Claude Code · Codex 따로 설치 · 제거), 로그인 시 실행, 설정 초기화 (훅 · 로그인 시 실행은 그대로) |
 | **단축키** | 어디서든 노치 펼치기 · 접기 (키 바꾸기), 권한 결정, 질문 · 계획 승인, 접기. 모두 처음엔 꺼짐 |
 | **표시** | 표시 화면, 풀스크린에서, 파일 수정 시 미리보기, 응답 스트리밍, 세션 자동으로 넘기기 · 넘기는 간격, 외부 모니터 표시 |
 | **버전** | 지금 버전, 새 버전 확인 · 업데이트, 변경 내역 |
@@ -85,6 +87,7 @@
 | **맥** | Apple Silicon (M1 이상) | Intel 맥은 지원하지 않아요 |
 | **macOS** | 14 (Sonoma) | 노치 없는 맥 · 외부 모니터도 지원 |
 | **Claude Code** | 훅을 지원하는 버전 | 터미널 · IDE 확장 · 데스크톱 앱 |
+| **Codex** (선택) | 훅을 지원하는 버전 (`codex features list` 에 `hooks … true`) | 터미널(CLI) · Codex 앱 |
 | **미리 빌드한 결과물 (bottle)** | macOS 15 이상 | 파일 하나를 macOS 15 · 26 이 같이 써요. macOS 14 는 소스에서 빌드해요 (조금 오래 걸릴 뿐 실패하지 않아요) |
 | **Swift 툴체인** | 6.0 | **소스에서 빌드할 때만.** Command Line Tools 로 충분해요: `xcode-select --install` |
 
@@ -93,9 +96,32 @@
 직접 풀기 때문에 quarantine 이 붙지 않고, ad-hoc 서명으로 바로 실행돼요.
 
 **훅 설치가 하는 일**
-- `notch-hook` 을 `~/Library/Application Support/AgentNotch/bin/` 에 복사해요 (업데이트로 Homebrew 경로가 바뀌어도 훅이 깨지지 않게).
-- `~/.claude/settings.json` 을 `settings.json.agentnotch-backup-<날짜>` (0600) 로 백업한 뒤 AgentNotch 항목만 추가해요. **다른 훅과 설정은 그대로 둬요.**
+- `notch-hook` 을 `~/Library/Application Support/AgentNotch/bin/` 에 복사해요 (업데이트로 Homebrew 경로가 바뀌어도 훅이 깨지지 않게). Claude Code · Codex 가 같이 써요.
+- Claude Code: `~/.claude/settings.json` 을 `settings.json.agentnotch-backup-<날짜>` (0600) 로 백업한 뒤 AgentNotch 항목만 추가해요. **다른 훅과 설정은 그대로 둬요.**
+- Codex: `~/.codex/hooks.json` 을 같은 방식으로 백업하고 AgentNotch 항목만 추가해요 (명령에 `--agent codex` 가 붙어요).
 - 이미 열려 있던 세션도 Claude Code 가 바뀐 설정을 다시 읽으면 바로 나타나요 (안 나타나면 세션을 다시 시작하세요). 데모는 `open /Applications/AgentNotch.app --args --demo` 로도 볼 수 있어요.
+- 명령줄로도 돼요: `agent-notch --install-hooks` (Claude Code), `agent-notch --install-hooks --codex` (Codex), `agent-notch --hook-status` (둘 다).
+
+## Codex
+
+Codex(CLI · Codex 앱) 세션도 Claude Code 세션과 같은 노치에 같이 보여요.
+
+1. 설정 → 일반 → **훅** 의 Codex 줄에서 **설치** (메뉴바 아이콘 → **Codex 훅 설치** 도 같아요).
+   첫 실행 안내에서 Codex 를 쓰는 맥이면 같이 물어봐요.
+2. **Codex 는 새 훅을 사용자가 한 번 검토해야 실행해요.** Codex 앱 입력창 위에 훅 검토가 뜨면 허용하고, CLI 는 `/hooks` 에서 허용하세요.
+   허용하기 전까지는 Codex 세션이 노치에 나타나지 않아요. 훅 항목이 바뀌면(드물어요) 다시 물어봐요.
+3. 새로 시작하는 Codex 세션부터 노치에 보여요.
+
+Claude Code 와 다른 점
+- **권한 요청**: 허용 · 거부만 있어요 (Codex 훅은 규칙을 저장하는 항상 허용을 받지 않아요).
+  Codex 는 훅이 결정하지 않을 때만 자기 승인 창을 띄워서(공식 문서), 노치가 기다리는 동안엔 Codex 쪽 승인 창이 안 떠요
+  (Codex 화면에는 훅 상태 문구 "AgentNotch: 노치에서 승인 기다리는 중" 이 보여요).
+  Codex 에서 답하려면 **Codex로** (Codex 앱 안의 그 스레드가 열려요) · **터미널로** 를 누르세요. Codex 앱 · 터미널을 보고 있으면 노치에서 기다리지 않고 바로 넘겨요.
+- **질문**(`request_user_input`): 노치에서 답할 수 없어서 입력 필요 카드로 알리고, Codex 앱 · 터미널에서 답해요.
+- **파일 수정**: `apply_patch` 패치를 읽어 바뀐 줄 수 · 수정 미리보기를 보여줘요.
+- **응답 스트리밍 · 실패 알림**: Codex 훅에는 응답 글 · API 오류 이벤트가 없어서 완료 때 마지막 답만 보여요.
+- **세션 되살리기**: 앱을 켤 때 최근 Codex 기록(`~/.codex/sessions`)도 읽어요. 서브에이전트 스레드는 부모 세션 안에서 세요.
+- Codex 설정 폴더를 `CODEX_HOME` 으로 옮겼다면 앱은 기본 위치(`~/.codex`)만 봐요.
 
 ## 업데이트
 
@@ -119,7 +145,7 @@ rm -rf /Applications/AgentNotch.app && cp -R "$(brew --prefix agent-notch)/Agent
 
 ## 제거
 
-1. 메뉴바 아이콘 → **훅 제거** (settings.json 에서 AgentNotch 항목만 지워요). **앱을 지우기 전에 먼저 하세요.**
+1. 메뉴바 아이콘 → **Claude Code 훅 제거** · **Codex 훅 제거** (설정 파일에서 AgentNotch 항목만 지워요). **앱을 지우기 전에 먼저 하세요.**
 2. 로그인 시 실행을 켰다면 설정 → 일반 에서 끄세요.
 3. 앱을 끄고 지우기
 
@@ -132,18 +158,19 @@ rm -rf /Applications/AgentNotch.app && cp -R "$(brew --prefix agent-notch)/Agent
    defaults delete com.ldg.agent-notch              # (선택) 설정값
    ```
 
-훅을 지우지 않고 앱만 지웠다면 `~/.claude/settings.json` 에서 명령에 `AgentNotch/bin/notch-hook` 이 들어간 항목을 지우면 돼요.
+훅을 지우지 않고 앱만 지웠다면 `~/.claude/settings.json` · `~/.codex/hooks.json` 에서 명령에 `AgentNotch/bin/notch-hook` 이 들어간 항목을 지우면 돼요.
 
 ## 문제 해결
 
 **노치에 아무것도 안 떠요**
-- 메뉴바 아이콘에서 훅 상태가 **설치됨** 인지 확인하세요. 설치 직후라면 Claude Code 세션을 새로 시작하세요.
+- 메뉴바 아이콘에서 훅 상태가 **설치됨** 인지 확인하세요. 설치 직후라면 Claude Code · Codex 세션을 새로 시작하세요.
+- Codex 세션만 안 뜨면 Codex 에서 훅을 허용했는지 확인하세요 (Codex 앱 훅 검토, CLI `/hooks`).
 - 앱이 이벤트를 받을 수 있는지 확인: `~/Library/"Application Support"/AgentNotch/bin/notch-hook --ping && echo OK`
 - 세션이 하나도 없으면 아일랜드는 숨어 있어요. 메뉴바 아이콘 → **노치 펼치기/접기** 로 펼쳐 볼 수 있어요.
 
 **권한 요청은 어떻게 처리되나요?**
-- 노치에서 고른 결정이 Claude Code 에 그대로 전달돼요.
-- **터미널로** 를 누르거나, 설정한 대기 시간(기본 120초)이 지나면 결정을 Claude Code 기본 권한 프롬프트로 넘겨요.
+- 노치에서 고른 결정이 Claude Code · Codex 에 그대로 전달돼요.
+- **터미널로** 를 누르거나, 설정한 대기 시간(기본 120초)이 지나면 결정을 Claude Code · Codex 기본 승인 창으로 넘겨요.
 - 세션을 띄운 터미널이 이미 앞에 있으면(설정에서 끌 수 있음) 노치는 알려주기만 하고 바로 터미널 프롬프트로 넘겨요.
 - **Claude 앱 세션은 Claude 앱을 보고 있어도 노치에서 바로 허용 · 거부하고 질문에 답할 수 있어요.**
   권한 요청은 Claude 앱 승인 창도 같이 떠서 먼저 누른 쪽으로 정해져요.
@@ -184,20 +211,23 @@ AGENT_NOTCH_DEBUG=1 ~/Library/"Application Support"/AgentNotch/bin/notch-hook --
 - 헬퍼와 앱은 Unix 소켓으로만 통신해요. 소켓 폴더는 0700, 소켓은 0600 이고, 연결한 프로세스가 같은 사용자인지 확인해요.
 - 훅 프로세스의 환경변수는 **허용 목록에 있는 것만** 넘겨요
   (`TERM_PROGRAM`, `ITERM_SESSION_ID`, `__CFBundleIdentifier`, `CLAUDE_CODE_ENTRYPOINT`,
-  Claude 앱 세션 ID `CLAUDE_CODE_HOST_SESSION_ID` — "Claude로" 가 그 세션을 바로 열 때 써요).
+  Claude 앱 세션 ID `CLAUDE_CODE_HOST_SESSION_ID` — "Claude로" 가 그 세션을 바로 열 때 써요,
+  Codex 앱 표시 `CODEX_INTERNAL_ORIGINATOR_OVERRIDE` · 스레드 ID `CODEX_THREAD_ID` — "Codex로" 가 그 스레드를 열 때 써요).
   API 키 같은 다른 환경변수는 앱으로 가지 않아요.
 - 프롬프트 · 코드 · 응답은 메모리에만 두고 디스크에 쓰지 않아요. 오래된 세션은 자동으로 정리해요.
-- 앱을 켤 때 최근 30분 안의 Claude Code 대화 기록(`~/.claude/projects`) 끝부분을 **읽기만** 해서, 이미 돌고 있던 세션을 바로 보여줘요.
+- 앱을 켤 때 최근 30분 안의 Claude Code 대화 기록(`~/.claude/projects`) · Codex 기록(`~/.codex/sessions`) 끝부분을 **읽기만** 해서, 이미 돌고 있던 세션을 바로 보여줘요.
   상태와 툴 이름 정도만 메모리에 두고 아무것도 저장하지 않아요. 설정 → 일반 → **앱을 켤 때 돌고 있던 세션 바로 보여주기** 로 끌 수 있어요.
   로그는 `os.Logger` 로 남기고 내용이 들어가는 값은 `private` 으로 가려요.
-- `~/.claude/settings.json` 을 바꾸기 전에 항상 백업하고, AgentNotch 항목만 추가 · 제거해요.
+- `~/.claude/settings.json` · `~/.codex/hooks.json` 을 바꾸기 전에 항상 백업하고, AgentNotch 항목만 추가 · 제거해요.
 - 노치에서 파일을 열 때 실행될 수 있는 파일(앱, `.command`, `.term`, 구성 프로필 등)은 열지 않고 Finder 에서 위치만 보여줘요.
   스크립트나 모르는 형식은 기본 앱이 코드 편집기(VS Code 등)면 그 앱으로, 아니면 텍스트 편집기로 열어요.
 
 ## 동작 방식
 
 ```
-Claude Code ── 훅(command) ──▶ notch-hook                     ~/Library/Application Support/AgentNotch/bin
+Claude Code ─┐
+             ├ 훅(command) ──▶ notch-hook                     ~/Library/Application Support/AgentNotch/bin
+Codex ───────┘  (--agent codex)
                                   │ stdin JSON + 허용된 환경변수만
                                   ▼
                        Unix 소켓 notch.sock (0600, 같은 사용자만)
@@ -208,5 +238,5 @@ Claude Code ── 훅(command) ──▶ notch-hook                     ~/Libra
 ```
 
 - 훅이 실행될 때마다 작은 헬퍼(`notch-hook`)가 이벤트를 앱으로 넘기고 바로 끝나요.
-  **권한 요청만** 노치에서 결정할 때까지 기다리고, 그 결정을 Claude Code 에 돌려줘요.
-- 앱이 꺼져 있으면 헬퍼는 아무것도 하지 않고 조용히 끝나요. Claude Code 동작에는 영향이 없어요.
+  **권한 요청 · 질문 · 계획 승인만** 노치에서 결정할 때까지 기다리고, 그 결정을 Claude Code · Codex 에 돌려줘요.
+- 앱이 꺼져 있으면 헬퍼는 아무것도 하지 않고 조용히 끝나요. Claude Code · Codex 동작에는 영향이 없어요.

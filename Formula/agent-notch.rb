@@ -6,7 +6,7 @@
 #
 # url · sha256 · bottle 블록은 scripts/release.sh 와 .github/workflows/bottle.yml 이 갱신한다. 손으로 고치지 않는다.
 class AgentNotch < Formula
-  desc "Claude Code 세션을 맥북 노치에 다이나믹 아일랜드처럼 보여주는 메뉴바 앱"
+  desc "Claude Code · Codex 세션을 맥북 노치에 다이나믹 아일랜드처럼 보여주는 메뉴바 앱"
   homepage "https://github.com/ldg030201/agent-notch"
   url "https://github.com/ldg030201/agent-notch/archive/refs/tags/v1.0.1.tar.gz"
   # 첫 릴리스 전 자리표시자. scripts/release.sh 가 태그를 올린 뒤 tarball 해시로 채운다.
@@ -42,8 +42,9 @@ class AgentNotch < Formula
       brew upgrade 로 올렸다면 /Applications 쪽도 다시 복사해야 새 버전이 돼요.
       (앱의 설정 > 버전 > 업데이트 를 쓰면 교체 · 재실행까지 알아서 해요)
 
-      처음 실행하면 메뉴바 아이콘에서 "Claude Code 훅 설치" 를 눌러 주세요.
-      ~/.claude/settings.json 은 백업한 뒤 AgentNotch 항목만 추가해요.
+      처음 실행하면 메뉴바 아이콘에서 "Claude Code 훅 설치" (Codex 를 쓰면 "Codex 훅 설치" 도) 를 눌러 주세요.
+      ~/.claude/settings.json · ~/.codex/hooks.json 은 백업한 뒤 AgentNotch 항목만 추가해요.
+      Codex 는 새 훅을 한 번 검토해야 실행해요 (Codex 앱 훅 검토, CLI 는 /hooks).
 
       지우기 전에는 메뉴에서 "훅 제거" 를 먼저 눌러 주세요. 그다음 brew uninstall agent-notch.
       로그인할 때 자동으로 켜려면 설정 > 일반 > 로그인 시 실행 을 켜세요.

@@ -246,3 +246,96 @@ command 훅은 제어 터미널이 없어 `/dev/tty` 를 열 수 없다.
 - 클라우드 세션은 로컬 `~/.claude/settings.json` 을 읽지 않음
 - Agent SDK / `claude -p`: 기본적으로 사용자 설정 훅 실행 (`--bare` 제외)
 - `"disableAllHooks": true` 로 전체 비활성화 가능
+
+---
+
+## 7. Codex 훅
+
+조사 시점: 2026-10 (Codex CLI 0.163, Codex 앱에 들어 있는 CLI). 출처: <https://developers.openai.com/codex/hooks>
+(지금은 learn.chatgpt.com/docs/hooks 로 옮김), Codex 실행 파일에 들어 있는 훅 입력 · 출력 JSON 스키마(`*.command.input` · `*.command.output`).
+**(추정)** 표시는 문서 · 스키마에 직접 나오지 않는 내용.
+
+### 설정 위치 · 모양
+
+- `~/.codex/hooks.json` · `~/.codex/config.toml` 의 `[hooks]` · 저장소 `.codex/` · 플러그인 · 관리 설정. 모든 곳의 훅이 함께 돈다.
+  한 곳에 `hooks.json` 과 `[hooks]` 가 함께 있으면 합치고 시작할 때 경고한다. AgentNotch 는 `~/.codex/hooks.json` 만 쓴다.
+- 모양은 Claude Code 와 같다: `{"hooks": {"<Event>": [{"matcher": "…", "hooks": [{"type": "command", "command": "…", "timeout": 10}]}]}}`.
+  항목 필드: `type`(command · mcp_tool, prompt · agent 는 읽기만 하고 건너뜀) · `command` · `timeout`(초) · `statusMessage` · `async` ·
+  `additionalContextLimit` · `commandWindows`.
+- `[features] hooks = false` 로 끈다 (`codex features list` 의 `hooks`).
+- **믿음(trust)**: 관리 설정이 아닌 훅(사용자 훅 포함)은 사용자가 검토해 믿어야 돈다. 항목의 지금 해시에 믿음을 적고
+  (`config.toml` 의 `hooks.state."<키>".trusted_hash`), 새로 생기거나 바뀐 훅은 믿을 때까지 건너뛴다. Codex 앱은 입력창 위에 검토를 띄우고
+  ("New" · "Modified"), CLI 는 `/hooks`. `--dangerously-bypass-hook-trust` 는 그 실행에서만 믿음을 건너뛴다.
+
+### 이벤트 · matcher
+
+| 이벤트 | matcher | 비고 |
+|---|---|---|
+| PreToolUse · PostToolUse · PermissionRequest | 툴 이름 (정규식, 생략 · `""` · `"*"` 는 전부) | |
+| SessionStart | `source` (`startup` `resume` `clear` `compact` `fork`) | |
+| SessionEnd | `reason` (지금은 `other` 만) | 기본 1초, 최대 3초. 서브에이전트에는 없음 |
+| SubagentStart · SubagentStop | `agent_type` | 서브에이전트 훅은 부모의 `session_id` |
+| PreCompact · PostCompact | `trigger` (`manual` `auto`) | |
+| UserPromptSubmit · Stop · Interrupt | 없음 (무시) | Interrupt 는 기본 1초, 최대 3초. 서브에이전트에는 없음 |
+
+Claude Code 에 있는 Notification · MessageDisplay · StopFailure · PostToolUseFailure · PostToolBatch 등은 없다.
+기본 timeout 600초 (SessionEnd · Interrupt 제외).
+
+### stdin 필드
+
+공통: `session_id` · `transcript_path`(없을 수 있음) · `cwd` · `hook_event_name` · `model`. 턴 안의 이벤트는 `turn_id`(Codex 확장),
+여러 이벤트에 `permission_mode`(`default` `acceptEdits` `plan` `dontAsk` `bypassPermissions`), 서브에이전트 안이면 `agent_id` · `agent_type`.
+
+| 이벤트 | 필드 |
+|---|---|
+| SessionStart | `source` |
+| SessionEnd | `reason` |
+| UserPromptSubmit | `prompt` |
+| PreToolUse | `tool_name` · `tool_input` · `tool_use_id` |
+| PermissionRequest | `tool_name` · `tool_input` (`tool_input.description` 에 승인 이유가 있을 수 있음). **`tool_use_id` 없음** |
+| PostToolUse | `tool_name` · `tool_input` · `tool_response` · `tool_use_id` |
+| Stop | `stop_hook_active` · `last_assistant_message` (`background_tasks` 없음) |
+| SubagentStart | `agent_id` · `agent_type` |
+| SubagentStop | `agent_id` · `agent_type` · `agent_transcript_path` · `stop_hook_active` · `last_assistant_message` |
+| PreCompact · PostCompact | `trigger` |
+| Interrupt | (공통 필드만) |
+
+### 툴 이름 · 입력
+
+- 셸(`exec_command` · unified exec): `Bash`, `tool_input.command` (문자열). `write_stdin` 은 다시 훅을 부르지 않는다.
+- 파일 수정: `apply_patch`, `tool_input.command` 에 패치 글. matcher 로는 `Edit` · `Write` 도 맞지만 입력의 `tool_name` 은 `apply_patch`.
+- MCP: `mcp__<서버>__<툴>`, 입력은 인자.
+- 그 밖의 로컬 툴: 함수 이름 그대로 (`update_plan` · `spawn_agent`(matcher `Agent` 도 맞음) · `request_user_input` · `view_image` …), 입력은 인자.
+- 웹 검색 같은 호스팅 툴은 훅을 거치지 않는다.
+- 코드 모드(모델이 JS 로 다른 툴을 부르는 `exec`)의 안쪽 툴 호출도 각자 훅이 온다 **(추정: 바깥 `exec` 자체에도 오는지는 확인 못 함)**.
+
+### 출력
+
+- PermissionRequest: `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}`,
+  거부는 `"behavior":"deny"` + `"message"`. 여러 훅 중 하나라도 거부면 거부. 아무도 정하지 않으면 평소 승인 흐름.
+  `updatedInput` · `updatedPermissions` · `interrupt: true` 는 **넣으면 훅 실패로 막힌다** → 항상 허용(규칙 저장)은 할 수 없다.
+- PreToolUse: `permissionDecision: "deny"` + 이유로 막기, `"allow"` + `updatedInput` 으로 입력 바꾸기(Bash · apply_patch 는 `command` 필수).
+  `"ask"` · `continue: false` · `stopReason` · `suppressOutput` 은 아직 지원하지 않아 훅 실패. AgentNotch 는 PreToolUse 에 아무것도 출력하지 않는다.
+- exit 2 + stderr 이유도 막기로 본다.
+
+### 환경변수
+
+문서에 일반 `CODEX_*` 변수는 없다. 실제로 확인한 것:
+- Codex 앱의 앱 서버 프로세스: `CODEX_INTERNAL_ORIGINATOR_OVERRIDE=Codex` (기록의 `originator` 는 "Codex Desktop").
+- `CODEX_THREAD_ID` 는 Codex 가 띄우는 명령에 들어간다 **(추정: 훅 프로세스에도 들어가는지는 확인 못 함 → 없으면 `session_id` 를 스레드 ID 로 쓴다)**.
+- Codex CLI 는 기본으로 공유 백그라운드 앱 서버(`codex app-server`)에 붙을 수 있어서, 훅 프로세스의 터미널 환경(`TERM_PROGRAM` 등)이
+  그 서버를 처음 띄운 터미널 것일 수 있다 **(추정)**.
+
+### Codex 앱 링크
+
+앱(`com.openai.codex`, URL 스킴 `codex`)이 `codex://threads/<스레드 ID>` 를 받아 그 스레드를 연다 (앱 번들 코드로 확인, 공개 문서 없음).
+
+### 대화 기록 (`~/.codex/sessions/<연>/<월>/<일>/rollout-<시각>-<스레드 ID>.jsonl`)
+
+줄마다 `{"timestamp","type","payload"}`.
+- 첫 줄 `session_meta`: `id`(스레드) · `session_id`(서브에이전트는 부모) · `cwd` · `originator` · `source` · `thread_source`(`user` · `subagent`) ·
+  `parent_thread_id` · `git.branch` · 아주 긴 `base_instructions`.
+- `event_msg`: `task_started` · `task_complete`(`last_agent_message`) · `turn_aborted` · `token_count` · `item_completed` …
+- `response_item`: `function_call`(`name` · `arguments` JSON 글 · `call_id`) · `custom_tool_call`(`name` · `input` 글) · `local_shell_call` ·
+  `…_output`(`call_id`) · `message` · `reasoning` …
+- `turn_context`: 턴의 `cwd` 등.
