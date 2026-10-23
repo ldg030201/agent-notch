@@ -95,6 +95,7 @@ struct CompactSessionView: View {
         case let .pill(items):
             HStack(spacing: 6) {
                 StatusIndicator(session: session, reduceMotion: reduceMotion, size: min(14, layout.size.height - 6))
+                AgentIcon(agent: session.agent)
                 pillTitle(session, items: items)
                 Spacer(minLength: 0)
                 // 그릴 것이 없으면 빼서 사이 간격이 겹치지 않게 (제목 자리가 그만큼 넓어진다)
@@ -128,6 +129,7 @@ struct CompactSessionView: View {
         let wraps = layout.hasTwoLineStrip && (showsSummary || badgeCount > 0)
         let line = HStack(spacing: 5) {
             StatusIndicator(session: session, reduceMotion: reduceMotion, size: 12)
+            AgentIcon(agent: session.agent)
             pillTitle(session, items: items)
             if Self.hasTrailing(session, badge: !wraps) {
                 trailing(session, badge: !wraps)
@@ -193,7 +195,7 @@ struct CompactSessionView: View {
             || (badge && session.backgroundTaskCount > 0)
     }
 
-    /// 알약 · 노치 아래 띠 제목: 프로젝트명(끝 줄임) · 짧은 툴 이름(가운데 줄임). 자리가 모자라면 `PillTitleLayout` 이 줄인다.
+    /// 알약 · 노치 아래 띠 제목: 에이전트 아이콘 뒤에 프로젝트명(끝 줄임) · 짧은 툴 이름(가운데 줄임). 자리가 모자라면 `PillTitleLayout` 이 줄인다.
     /// 레이아웃(`IslandLayoutEngine.lineItems`)은 둘 다 최소 폭까지 줄인 폭으로 요소를 고른다
     @ViewBuilder
     private func pillTitle(_ session: AgentSession, items: CompactItems) -> some View {
@@ -338,7 +340,7 @@ struct MenuBarDotView: View {
 
 // MARK: - 카드 상단 행 왼쪽
 
-/// 펼친 카드 상단 행 왼쪽: 상태 + 프로젝트명
+/// 펼친 카드 상단 행 왼쪽: 상태 + 에이전트 아이콘 + 프로젝트명
 struct CardHeaderLeading: View {
     let session: AgentSession?
     let reduceMotion: Bool
@@ -351,7 +353,10 @@ struct CardHeaderLeading: View {
             } else if let session {
                 StatusIndicator(session: session, reduceMotion: reduceMotion)
             }
-            Text(session?.projectName ?? "Claude Code")
+            if let session {
+                AgentIcon(agent: session.agent)
+            }
+            Text(session?.projectName ?? "세션")
                 .truncationMode(.tail)
         }
     }

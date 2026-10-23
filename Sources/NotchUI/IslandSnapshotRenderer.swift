@@ -97,6 +97,10 @@ enum SnapshotScenario: String, CaseIterable {
     case permissionHandoffDesktop = "permission-handoff-desktop"
     /// Claude 데스크톱 앱 세션의 삭제 권한 요청: 앱을 보고 있어도 노치에서 바로 허용 · 거부 (버튼이 "Claude로")
     case permissionDesktop = "permission-desktop"
+    /// Codex 앱 세션의 권한 요청: Codex 아이콘 · "Codex로", 항상 허용 없음
+    case permissionCodex = "permission-codex"
+    /// Codex 앱 세션이 작업 중 (접힌 띠에 Codex 아이콘)
+    case workingCodex = "working-codex"
     /// 노치에서 답하는 질문: 한 개 고르기 (선택지 설명 있음)
     case question
     /// `question` 인데 질문한 세션이 Claude 데스크톱 앱에서 돌아감: 앱을 보고 있어도 노치에서 고름 (버튼이 "Claude로")
@@ -536,6 +540,15 @@ enum SnapshotStage {
             world.apiServerRunsTests()
             showCompact()
             world.webAppAsksDeletePermission()
+        case .permissionCodex:
+            world.useCodexApp(SnapshotWorld.webApp)
+            world.apiServerEdits()
+            world.apiServerRunsTests()
+            showCompact()
+            world.codexWebAppAsksPermission()
+        case .workingCodex:
+            world.useCodexApp(SnapshotWorld.webApp)
+            world.codexWebAppEdits()
         case .permissionHandoffDesktop:
             world.hostEnvironment[SnapshotWorld.webApp.id] = SnapshotWorld.desktopEnvironment
             world.apiServerEdits()
@@ -604,8 +617,9 @@ enum SnapshotStage {
             world.clock.set(1302)
         case .expanded, .expandedUpdate:
             if scene == .expanded {
-                // README: 상태 묶음 순 목록. 진행 중(고정한 api-server 가 묶음 맨 앞, web-app) → 백그라운드만 도는 docs-site
+                // README: 상태 묶음 순 목록. 진행 중(고정한 api-server 가 묶음 맨 앞, Codex 앱의 web-app) → 백그라운드만 도는 docs-site
                 // → 끝남(방금 끝난 blog, 쉬는 mobile-app)
+                world.useCodexApp(SnapshotWorld.webApp)
                 world.startMoreSessions()
                 world.otherSessionsAtWork()
             }

@@ -1,28 +1,42 @@
+import AppKit
 import Foundation
 import NotchCore
 import NotchServices
+import NotchShared
 import NotchUI
 import os
 
-/// 설정 화면·메뉴가 쓰는 훅 설치 / 로그인 시 실행 / 버전 정보
+/// 설정 화면·메뉴가 쓰는 훅 설치 / 로그인 시 실행 / 버전 정보.
+/// 훅은 에이전트마다 설치기가 따로 있고(Claude Code `~/.claude/settings.json` · Codex `~/.codex/hooks.json`) 헬퍼는 하나를 같이 쓴다
 @MainActor
 final class AppSettingsProvider: SettingsProvider {
-    private let installer: HookInstaller
+    private let installers: [AgentKind: HookInstaller]
     private let loginItem: MainAppLoginItem
     let preferences: AppPreferences
     /// 전역 단축키 등록 상태 (AppDelegate 가 켤 때 넣는다)
     var globalShortcut: GlobalShortcutState?
 
-    init(installer: HookInstaller, loginItem: MainAppLoginItem, preferences: AppPreferences) {
-        self.installer = installer
+    init(installers: [AgentKind: HookInstaller], loginItem: MainAppLoginItem, preferences: AppPreferences) {
+        self.installers = installers
         self.loginItem = loginItem
         self.preferences = preferences
     }
 
     var appVersion: String { AppInfo.displayVersion }
 
-    /// 읽을 때마다 settings.json 을 다시 읽는다. 상태와 문구가 둘 다 필요하면 한 번 읽고 `hookStatusText(for:)` 를 쓴다
-    var hookStatus: HookInstallStatus { installer.status() }
+    private func installer(_ agent: AgentKind) -> HookInstaller {
+        installers[agent] ?? HookInstaller(agent: agent)
+    }
+
+    /// 읽을 때마다 설정 파일을 다시 읽는다. 상태와 문구가 둘 다 필요하면 한 번 읽고 `hookStatusText(for:)` 를 쓴다
+    func hookStatus(for agent: AgentKind) -> HookInstallStatus { installer(agent).status() }
+
+    /// Codex 를 쓰는 맥인지 (`~/.codex` 폴더나 Codex 앱이 있음). 첫 실행 안내가 Codex 훅도 물어볼지 정한다
+    var codexAvailable: Bool {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        if FileManager.default.fileExists(atPath: home.appendingPathComponent(".codex").path) { return true }
+        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: TerminalContext.codexDesktopBundleID) != nil
+    }
 
     static func hookStatusText(for status: HookInstallStatus) -> String {
         switch status {
@@ -35,23 +49,23 @@ final class AppSettingsProvider: SettingsProvider {
         }
     }
 
-    /// 설정 화면용: settings.json 을 한 번 읽어 문구와 설치 여부(우리 훅 항목이 하나라도 있으면 true, 제거 버튼 활성화 기준)를 함께 만든다
-    var hookState: (text: String, installed: Bool) {
-        let status = hookStatus
+    /// 설정 화면용: 설정 파일을 한 번 읽어 문구와 설치 여부(우리 훅 항목이 하나라도 있으면 true, 제거 버튼 활성화 기준)를 함께 만든다
+    func hookState(for agent: AgentKind) -> (text: String, installed: Bool) {
+        let status = hookStatus(for: agent)
         return (Self.hookStatusText(for: status), status != .notInstalled)
     }
 
-    /// 헬퍼를 복사하고 `~/.claude/settings.json` 에 훅을 등록한다 (기존 파일은 백업)
-    func installHooks() throws {
+    /// 헬퍼를 복사하고 그 에이전트의 훅 설정에 AgentNotch 항목을 등록한다 (기존 파일은 백업)
+    func installHooks(for agent: AgentKind) throws {
         guard let helper = AppInfo.helperURL() else { throw HookInstallerError.helperSourceMissing }
-        try installer.install(helperSource: helper, includeMessageDisplay: preferences.showStreamingText)
+        try installer(agent).install(helperSource: helper, includeMessageDisplay: preferences.showStreamingText)
     }
 
-    /// AgentNotch 훅만 제거하고, 남은 항목이 없으면 복사해 둔 헬퍼도 지운다
-    func uninstallHooks() throws {
-        try installer.uninstall()
-        if installer.status() == .notInstalled {
-            try? installer.removeHelper()
+    /// 그 에이전트의 AgentNotch 훅만 제거하고, 어느 에이전트에도 남은 항목이 없으면 복사해 둔 헬퍼도 지운다
+    func uninstallHooks(for agent: AgentKind) throws {
+        try installer(agent).uninstall()
+        if AgentKind.allCases.allSatisfy({ installer($0).status() == .notInstalled }) {
+            try? installer(agent).removeHelper()
         }
     }
 
@@ -60,13 +74,16 @@ final class AppSettingsProvider: SettingsProvider {
     /// 설치한 적 없으면 아무것도 안 한다. 설정은 우리 항목만 고치고 바꾸기 전에 백업을 남긴다
     func refreshHelperIfNeeded() {
         guard let helper = AppInfo.helperURL() else { return }
-        _ = try? installer.refreshHelperIfInstalled(helperSource: helper)
-        do {
-            if try installer.updateInstalledHooks() != nil {
-                Self.log.info("예전 훅 설정을 고침 (백업 남김)")
+        for agent in AgentKind.allCases {
+            let installer = installer(agent)
+            _ = try? installer.refreshHelperIfInstalled(helperSource: helper)
+            do {
+                if try installer.updateInstalledHooks() != nil {
+                    Self.log.info("예전 훅 설정을 고침 (\(agent.rawValue, privacy: .public), 백업 남김)")
+                }
+            } catch {
+                Self.log.error("훅 설정을 고치지 못함 (\(agent.rawValue, privacy: .public)): \(error.localizedDescription, privacy: .public)")
             }
-        } catch {
-            Self.log.error("훅 설정을 고치지 못함: \(error.localizedDescription, privacy: .public)")
         }
     }
 

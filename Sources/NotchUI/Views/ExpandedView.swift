@@ -88,7 +88,7 @@ struct ExpandedView: View {
                 .foregroundStyle(Palette.muted)
             Text("세션 없음")
                 .foregroundStyle(Palette.secondary)
-            Text("Claude Code 세션이 시작되면 여기에 표시돼")
+            Text("Claude Code · Codex 세션이 시작되면 여기에 표시돼")
                 .font(IslandFont.caption)
                 .foregroundStyle(Palette.muted)
         }
@@ -161,6 +161,8 @@ struct SessionRow: View {
             } label: {
                 HStack(spacing: 8) {
                     SessionDot(session: session, size: 7, reduceMotion: reduceMotion)
+                    AgentIcon(agent: session.agent)
+                        .padding(.leading, -2)
                     VStack(alignment: .leading, spacing: 0) {
                         Text(session.projectName)
                             .foregroundStyle(Palette.text)
@@ -220,9 +222,10 @@ struct SessionRow: View {
 extension SessionRow {
     static func spokenLabel(_ session: AgentSession, subtitle: String) -> String {
         let count = session.backgroundTaskCount
+        let name = "\(session.agent.displayName) \(session.projectName)"
         return count > 0
-            ? "\(session.projectName), \(subtitle), 백그라운드 작업 \(count)개"
-            : "\(session.projectName), \(subtitle)"
+            ? "\(name), \(subtitle), 백그라운드 작업 \(count)개"
+            : "\(name), \(subtitle)"
     }
 }
 
@@ -240,6 +243,7 @@ struct SessionDetailView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
+                AgentIcon(agent: session.agent)
                 titleText
                     .lineLimit(1)
                     .truncationMode(.tail)

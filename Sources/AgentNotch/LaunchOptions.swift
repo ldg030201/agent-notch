@@ -1,3 +1,5 @@
+import NotchShared
+
 /// 명령줄 인자 (`open AgentNotch.app --args --demo`, `agent-notch --version`)
 ///
 /// | 인자 | 하는 일 |
@@ -7,9 +9,9 @@
 /// | `--dump-changelog [경로]` | 변경 내역 JSON 출력 (경로가 없으면 stdout) |
 /// | `--render-island <장면\|all> <폴더> [--style notch\|menubar\|both] [--crop]` | 아일랜드 장면을 PNG 로 저장 (`--crop`: 아일랜드 둘레만, README 용) |
 /// | `--probe-upgrade` | brew 위치와 업데이트 스크립트 문법 점검 (실행하지 않음) |
-/// | `--install-hooks [--no-message-display]` | Claude Code 훅 설치 (settings.json 백업 후 AgentNotch 항목만 추가) |
-/// | `--uninstall-hooks` | AgentNotch 훅만 제거 |
-/// | `--hook-status` | 훅 설치 상태 출력 |
+/// | `--install-hooks [--codex] [--no-message-display]` | Claude Code 훅 설치 (settings.json 백업 후 AgentNotch 항목만 추가). `--codex` 면 Codex 훅 (~/.codex/hooks.json) |
+/// | `--uninstall-hooks [--codex]` | AgentNotch 훅만 제거 |
+/// | `--hook-status` | 훅 설치 상태 출력 (Claude Code · Codex) |
 /// | `--demo` | 데모 시나리오로 시작 |
 /// | `--dock` | (개발용) Dock 아이콘을 보이게 띄움 — 화면 캡처 도구가 앱으로 인식하게 |
 struct LaunchOptions {
@@ -37,6 +39,8 @@ struct LaunchOptions {
     var dumpChangelog: DumpChangelog?
     var renderIsland: RenderIsland?
     var hookAction: HookCommand.Action?
+    /// 훅 설치 · 제거 대상 (`--codex` 면 Codex, 아니면 Claude Code)
+    var hookAgent: AgentKind = .claude
     /// 인자 형식 오류 (값이 빠진 경우 등)
     var usageError: String?
 
@@ -70,6 +74,7 @@ struct LaunchOptions {
             case "--install-hooks": hookAction = .install(includeMessageDisplay: true)
             case "--no-message-display": includeMessageDisplay = false
             case "--uninstall-hooks": hookAction = .uninstall
+            case "--codex": hookAgent = .codex
             case "--hook-status": hookAction = .status
             case "--dump-changelog":
                 dumpChangelog = DumpChangelog(path: optionalValue())
@@ -101,7 +106,7 @@ struct LaunchOptions {
     }
 
     static let knownFlags: Set<String> = [
-        "--demo", "--dock", "--version", "--help", "--probe-upgrade", "--install-hooks", "--no-message-display",
+        "--demo", "--dock", "--version", "--help", "--probe-upgrade", "--install-hooks", "--no-message-display", "--codex",
         "--uninstall-hooks", "--hook-status", "--dump-changelog", "--render-island", "--style", "--crop",
     ]
 
@@ -112,8 +117,9 @@ struct LaunchOptions {
           --version, -v                       버전 출력
           --help, -h                          이 사용법 출력
           --install-hooks [--no-message-display]  Claude Code 훅 설치 (settings.json 백업 후 AgentNotch 항목만)
-          --uninstall-hooks                   AgentNotch 훅만 제거
-          --hook-status                       훅 설치 상태 출력
+          --install-hooks --codex             Codex 훅 설치 (~/.codex/hooks.json 백업 후 AgentNotch 항목만)
+          --uninstall-hooks [--codex]         AgentNotch 훅만 제거
+          --hook-status                       훅 설치 상태 출력 (Claude Code · Codex)
           --dump-changelog [경로]             변경 내역 JSON 출력
           --render-island <장면|all> <폴더> [--style notch|menubar|both] [--crop]  아일랜드 장면 PNG 저장 (--crop: 아일랜드 둘레만)
           --probe-upgrade                     brew 위치 · 업데이트 스크립트 문법 점검 (실행 안 함)

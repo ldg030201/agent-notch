@@ -67,9 +67,11 @@ final class SnapshotActions: IslandActions {
 @MainActor
 final class SnapshotSettingsProvider: SettingsProvider {
     var appVersion: String { "0.1.0" }
-    var hookState: (text: String, installed: Bool) { ("설치됨 · 이벤트 14개", true) }
-    func installHooks() throws {}
-    func uninstallHooks() throws {}
+    func hookState(for agent: AgentKind) -> (text: String, installed: Bool) {
+        agent == .claude ? ("설치됨", true) : ("설치 안 됨", false)
+    }
+    func installHooks(for agent: AgentKind) throws {}
+    func uninstallHooks(for agent: AgentKind) throws {}
     var launchAtLoginEnabled: Bool { true }
     var launchAtLoginManagedByHomebrew: Bool { false }
     func setLaunchAtLogin(_ enabled: Bool) throws {}
@@ -145,12 +147,23 @@ struct SnapshotWorld {
     private var toolSeq = 0
     /// 프로젝트(세션 ID)별 훅 환경변수 (세션을 띄운 앱). 없으면 빈 환경
     var hostEnvironment: [String: [String: String]] = [:]
+    /// 프로젝트(세션 ID)별 에이전트. 없으면 Claude Code
+    var agents: [String: AgentKind] = [:]
 
     /// Claude 데스크톱 앱에서 돌아가는 세션의 환경변수 (예시 값)
     static let desktopEnvironment = [
         "__CFBundleIdentifier": TerminalContext.claudeDesktopBundleID,
         "CLAUDE_CODE_ENTRYPOINT": "claude-desktop",
     ]
+
+    /// Codex 앱에서 돌아가는 세션의 환경변수 (예시 값)
+    static let codexDesktopEnvironment = ["CODEX_INTERNAL_ORIGINATOR_OVERRIDE": "Codex"]
+
+    /// 이 프로젝트를 Codex 앱 세션으로 (세션 ID 는 예시 스레드 ID 모양이 아니라 "Codex로" 링크 없이 앱만 연다)
+    mutating func useCodexApp(_ project: Project) {
+        agents[project.id] = .codex
+        hostEnvironment[project.id] = Self.codexDesktopEnvironment
+    }
 
     init() {
         let clock = SnapshotClock()
@@ -196,8 +209,43 @@ struct SnapshotWorld {
         let web = Self.webApp
         send(web, "UserPromptSubmit", at: 560, ["prompt": "로그인 폼에 입력 검사 넣어줘"])
         let form = "\(web.cwd)/src/LoginForm.tsx"
-        tool(web, "Read", at: 565, input: ["file_path": form], response: ["type": "text"])
-        start(web, "Edit", at: 570, input: ["file_path": form, "old_string": "onSubmit(values)", "new_string": "if (validate(values)) onSubmit(values)"])
+        if agents[web.id] == .codex {
+            // Codex: 셸로 찾아보고 apply_patch 로 고친다
+            tool(web, "Bash", at: 565, input: ["command": "rg -n onSubmit src"], response: ["stdout": "src/LoginForm.tsx:31"])
+            start(web, "apply_patch", at: 570, input: ["command": Self.loginFormPatch])
+        } else {
+            tool(web, "Read", at: 565, input: ["file_path": form], response: ["type": "text"])
+            start(web, "Edit", at: 570, input: ["file_path": form, "old_string": "onSubmit(values)", "new_string": "if (validate(values)) onSubmit(values)"])
+        }
+    }
+
+    /// web-app 로그인 폼 입력 검사 (Codex apply_patch 패치 글)
+    static let loginFormPatch = """
+    *** Begin Patch
+    *** Update File: src/LoginForm.tsx
+    @@ function LoginForm
+    -  onSubmit(values)
+    +  if (validate(values)) onSubmit(values)
+    *** End Patch
+    """
+
+    /// web-app(Codex): 로그인 폼을 apply_patch 로 고치는 중 (Bash 한 번 뒤)
+    mutating func codexWebAppEdits() {
+        let web = Self.webApp
+        send(web, "UserPromptSubmit", at: 560, ["prompt": "로그인 폼에 입력 검사 넣어줘"])
+        tool(web, "Bash", at: 565, input: ["command": "rg -n onSubmit src"], response: ["stdout": "src/LoginForm.tsx:31"])
+        start(web, "apply_patch", at: 570, input: ["command": Self.loginFormPatch])
+        clock.set(574)
+    }
+
+    /// web-app(Codex): 배포 스크립트 실행 승인 요청 (Codex 는 항상 허용 규칙을 주지 않는다)
+    mutating func codexWebAppAsksPermission() {
+        let web = Self.webApp
+        send(web, "UserPromptSubmit", at: 820, ["prompt": "스테이징에 배포해줘"])
+        let command: [String: Any] = ["command": "npm run deploy -- --env staging", "description": "스테이징 배포 (네트워크 필요)"]
+        start(web, "Bash", at: 830, input: command)
+        send(web, "PermissionRequest", at: 831, ["tool_name": "Bash", "tool_input": command, "turn_id": "snapshot-turn"])
+        clock.set(842)
     }
 
     /// api-server: Read → Edit(+12 −3) → 응답 한 줄 (피크 직전 상태). 수정된 diff 를 돌려준다.
@@ -486,7 +534,8 @@ struct SnapshotWorld {
             sentAt: clock.now.timeIntervalSince1970,
             env: hostEnvironment[project.id] ?? [:],
             expectsReply: expectsReply ?? NotchWire.replyEvents.contains(event),
-            payload: .object(payload)
+            payload: .object(payload),
+            agent: agents[project.id]?.rawValue
         ))
     }
 

@@ -162,15 +162,18 @@ struct PermissionView: View {
                     .accessibilityLabel("허용")
                     .help(card.canAllow ? "허용" + presentation.keyNote("⌘↩", .permission) : Self.clippedHelp(host))
 
-                    Button {
-                        presentation.resolve(request, decision: .allowAlways)
-                    } label: {
-                        Text("항상 허용")
+                    // Codex 훅은 규칙을 저장하는 허용(항상 허용)을 받지 않는다 → 버튼을 두지 않는다
+                    if session?.agent != .codex {
+                        Button {
+                            presentation.resolve(request, decision: .allowAlways)
+                        } label: {
+                            Text("항상 허용")
+                        }
+                        .buttonStyle(IslandButtonStyle())
+                        .disabled(!card.canAllowAlways)
+                        .accessibilityLabel("항상 허용")
+                        .help(allowAlwaysHelp(card, host: host))
                     }
-                    .buttonStyle(IslandButtonStyle())
-                    .disabled(!card.canAllowAlways)
-                    .accessibilityLabel("항상 허용")
-                    .help(allowAlwaysHelp(card, host: host))
 
                     Button {
                         presentation.resolve(request, decision: .deny(message: nil))

@@ -82,6 +82,8 @@ enum IslandMetrics {
     static let backgroundLead: CGFloat = 6
     /// 노치 아래 띠에 백그라운드 배지 · 요약이 제목 줄에 함께 안 들어가면 띠를 이만큼 높여 둘째 줄에 둔다 (폭은 노치 폭 그대로)
     static let stripSecondLineHeight: CGFloat = 14
+    /// 세션 앞 에이전트 아이콘 칸 폭 (`AgentIcon`, Clawd 16pt · Codex 14pt 를 같은 칸에)
+    static let agentIconWidth: CGFloat = 16
 
     static let lineHeight: CGFloat = 18
     static let diffRowHeight: CGFloat = 17

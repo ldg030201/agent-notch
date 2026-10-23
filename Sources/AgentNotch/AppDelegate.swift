@@ -19,7 +19,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
     private let store: SessionStore
     private let socketServer: SocketServer
     private let frontmost: FrontmostAppMonitor
-    private let hookInstaller: HookInstaller
     private let settings: AppSettingsProvider
     private let actions: AppActions
     private let uiController: NotchUIController
@@ -39,9 +38,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
         store = SessionStore()
         socketServer = SocketServer()
         frontmost = FrontmostAppMonitor()
-        hookInstaller = HookInstaller()
         settings = AppSettingsProvider(
-            installer: hookInstaller,
+            installers: Dictionary(uniqueKeysWithValues: AgentKind.allCases.map { ($0, HookInstaller(agent: $0)) }),
             loginItem: MainAppLoginItem(),
             preferences: preferences
         )
@@ -139,12 +137,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
         }
     }
 
-    /// 훅 이벤트 반영. 세션 앱(터미널 · Claude 앱)을 보고 있으면 권한 요청 · 질문 · 계획 승인은 노치에 보여만 주고
+    /// 훅 이벤트 반영. 세션 앱(터미널 · Claude 앱 · Codex 앱)을 보고 있으면 권한 요청 · 질문 · 계획 승인은 노치에 보여만 주고
     /// 바로 그 앱의 프롬프트로 넘긴다. Claude 앱 세션은 (설정이 켜져 있으면) 넘기지 않고 노치에서 받는다
-    /// (`AppPreferences.passesThroughToFrontmostHost`)
+    /// (`AppPreferences.passesThroughToFrontmostHost`). Codex 앱은 훅이 끝나야 자기 승인 창을 띄우므로 터미널처럼 넘긴다
     private func receive(_ envelope: HookEnvelope) -> UUID? {
         guard let requestID = store.ingest(envelope) else { return nil }
-        let host = TerminalContext(environment: envelope.env)
+        let host = TerminalContext(environment: envelope.env, agent: envelope.agentKind)
         if frontmost.isFrontmost(host), preferences.passesThroughToFrontmostHost(isClaudeApp: host.isClaudeDesktopApp) {
             store.resolvePermission(id: requestID, decision: .passthrough)
         }
@@ -202,46 +200,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
 
     // MARK: - 훅 설치
 
-    /// 첫 실행 때 한 번만 훅 설치 · 로그인 시 실행을 한 창에서 묻는다 (둘 다 처음부터 켜 둔 체크박스).
-    /// 이미 된 것은 빼고, 할 게 없으면 묻지 않는다
+    /// 첫 실행 때 한 번만 훅 설치(Claude Code · Codex) · 로그인 시 실행을 한 창에서 묻는다 (모두 처음부터 켜 둔 체크박스).
+    /// 이미 된 것은 빼고, 할 게 없으면 묻지 않는다. Codex 는 Codex 를 쓰는 맥에서만 묻고, 첫 실행 안내를 Codex 지원 전에 본
+    /// 사람에게도 한 번 묻는다 (`didOfferCodexHookInstallKey`)
     private func offerFirstLaunchSetupIfNeeded() {
         let defaults = UserDefaults.standard
-        guard !defaults.bool(forKey: AppInfo.didOfferHookInstallKey) else { return }
+        let firstLaunch = !defaults.bool(forKey: AppInfo.didOfferHookInstallKey)
+        let codexUnasked = !defaults.bool(forKey: AppInfo.didOfferCodexHookInstallKey)
+        guard firstLaunch || codexUnasked else { return }
         defaults.set(true, forKey: AppInfo.didOfferHookInstallKey)
+        defaults.set(true, forKey: AppInfo.didOfferCodexHookInstallKey)
 
-        let offersHooks = settings.hookStatus == .notInstalled
-        let offersLogin = settings.launchAtLoginAvailable && !settings.launchAtLoginEnabled
+        let offersClaude = firstLaunch && settings.hookStatus(for: .claude) == .notInstalled
+        let offersCodex = codexUnasked && settings.codexAvailable && settings.hookStatus(for: .codex) == .notInstalled
+        let offersLogin = firstLaunch && settings.launchAtLoginAvailable && !settings.launchAtLoginEnabled
             && !settings.launchAtLoginManagedByHomebrew
-        guard offersHooks || offersLogin else { return }
+        guard offersClaude || offersCodex || offersLogin else { return }
 
-        let hooksBox = NSButton(checkboxWithTitle: "Claude Code 훅 설치", target: nil, action: nil)
+        let claudeBox = NSButton(checkboxWithTitle: "Claude Code 훅 설치", target: nil, action: nil)
+        let codexBox = NSButton(checkboxWithTitle: "Codex 훅 설치", target: nil, action: nil)
         let loginBox = NSButton(checkboxWithTitle: "로그인할 때 자동으로 켜기", target: nil, action: nil)
-        hooksBox.state = .on
-        loginBox.state = .on
-        let stack = NSStackView(views: (offersHooks ? [hooksBox] : []) + (offersLogin ? [loginBox] : []))
+        for box in [claudeBox, codexBox, loginBox] { box.state = .on }
+        let boxes = (offersClaude ? [claudeBox] : []) + (offersCodex ? [codexBox] : []) + (offersLogin ? [loginBox] : [])
+        let stack = NSStackView(views: boxes)
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 6
         stack.setFrameSize(stack.fittingSize)
 
         var lines: [String] = []
-        if offersHooks {
-            lines.append("세션을 노치에 보여주려면 Claude Code 훅이 필요해요. ~/.claude/settings.json 을 백업한 뒤 AgentNotch 항목만 더하고 다른 훅은 그대로 둬요.")
+        if offersClaude {
+            lines.append("세션을 노치에 보여주려면 훅이 필요해요. Claude Code 는 ~/.claude/settings.json 을 백업한 뒤 AgentNotch 항목만 더하고 다른 훅은 그대로 둬요.")
+        }
+        if offersCodex {
+            lines.append(offersClaude
+                ? "Codex 는 ~/.codex/hooks.json 에 같은 방식으로 더해요. Codex 에 새 훅 검토가 뜨면 한 번 허용해 주세요."
+                : "Codex 세션도 노치에 보여줄 수 있어요. ~/.codex/hooks.json 을 백업한 뒤 AgentNotch 항목만 더하고, Codex 에 새 훅 검토가 뜨면 한 번 허용해 주세요.")
         }
         lines.append("나중에 메뉴바 아이콘이나 설정에서도 바꿀 수 있어요.")
 
         let alert = NSAlert()
-        alert.messageText = "AgentNotch 시작하기"
+        alert.messageText = firstLaunch ? "AgentNotch 시작하기" : "Codex 도 노치에 보여줄까요?"
         alert.informativeText = lines.joined(separator: "\n")
         alert.accessoryView = stack
-        alert.addButton(withTitle: "시작하기")
+        alert.addButton(withTitle: firstLaunch ? "시작하기" : "설치")
         alert.addButton(withTitle: "나중에")
         NSApp.activate()
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         var failures: [String] = []
-        if offersHooks, hooksBox.state == .on {
-            do { try settings.installHooks() } catch { failures.append("훅 설치: \(error.localizedDescription)") }
+        if offersClaude, claudeBox.state == .on {
+            do { try settings.installHooks(for: .claude) } catch { failures.append("Claude Code 훅 설치: \(error.localizedDescription)") }
+        }
+        if offersCodex, codexBox.state == .on {
+            do { try settings.installHooks(for: .codex) } catch { failures.append("Codex 훅 설치: \(error.localizedDescription)") }
         }
         if offersLogin, loginBox.state == .on {
             do { try settings.setLaunchAtLogin(true) } catch { failures.append("로그인 시 실행: \(error.localizedDescription)") }
@@ -251,24 +263,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
         }
     }
 
-    func installHooksFromMenu() {
+    func installHooksFromMenu(for agent: AgentKind) {
         do {
-            try settings.installHooks()
-            showAlert(
-                title: "Claude Code 훅을 설치했어요",
-                message: "새로 시작하는 Claude Code 세션부터 노치에 표시돼요. 이미 열려 있는 세션은 다시 시작해야 할 수 있어요."
-            )
+            try settings.installHooks(for: agent)
+            let message: String
+            switch agent {
+            case .claude:
+                message = "새로 시작하는 Claude Code 세션부터 노치에 표시돼요. 이미 열려 있는 세션은 다시 시작해야 할 수 있어요."
+            case .codex:
+                message = "Codex 에 새 훅 검토가 뜨면 한 번 허용해 주세요 (CLI 는 /hooks). 허용한 뒤 새로 시작하는 Codex 세션부터 노치에 표시돼요."
+            }
+            showAlert(title: "\(agent.displayName) 훅을 설치했어요", message: message)
         } catch {
-            showAlert(title: "훅을 설치하지 못했어요", message: error.localizedDescription)
+            showAlert(title: "\(agent.displayName) 훅을 설치하지 못했어요", message: error.localizedDescription)
         }
     }
 
-    func uninstallHooksFromMenu() {
+    func uninstallHooksFromMenu(for agent: AgentKind) {
         do {
-            try settings.uninstallHooks()
-            showAlert(title: "Claude Code 훅을 제거했어요", message: "AgentNotch 항목만 지웠고 다른 훅은 그대로예요.")
+            try settings.uninstallHooks(for: agent)
+            showAlert(title: "\(agent.displayName) 훅을 제거했어요", message: "AgentNotch 항목만 지웠고 다른 훅은 그대로예요.")
         } catch {
-            showAlert(title: "훅을 제거하지 못했어요", message: error.localizedDescription)
+            showAlert(title: "\(agent.displayName) 훅을 제거하지 못했어요", message: error.localizedDescription)
         }
     }
 

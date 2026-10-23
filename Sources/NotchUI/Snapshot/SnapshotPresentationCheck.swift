@@ -309,6 +309,10 @@ enum SnapshotLayoutHistoryCheck {
             if let request = setup.world.store.pendingPermissions.first {
                 setup.world.store.resolvePermission(id: request.id, decision: .allow)
             }
+            // 남은 세션을 web-app 하나로: 새 접힌 모양은 요약 없는 한 줄 띠라 붙잡은 두 줄 카드 띠와 다르다
+            // (에이전트 아이콘이 들어간 띠에서는 요약이 남으면 새 접힌 모양도 두 줄이 되어 둘이 같아진다)
+            setup.world.store.dismiss(sessionID: SnapshotWorld.apiServer.id)
+            setup.world.store.dismiss(sessionID: SnapshotWorld.blog.id)
             setup.presentation.handleLatestSignal()
             return setup
         }

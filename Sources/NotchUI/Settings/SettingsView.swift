@@ -2,6 +2,7 @@ import AppKit
 import Observation
 import SwiftUI
 import NotchCore
+import NotchShared
 
 /// 설정 화면 탭
 enum SettingsSection: String, CaseIterable, Identifiable {
@@ -40,8 +41,8 @@ final class SettingsModel {
     @ObservationIgnored let now: () -> Date
 
     private(set) var appVersion = ""
-    private(set) var hookStatusText = ""
-    private(set) var hooksInstalled = false
+    /// 에이전트별 훅 상태 문구 · 설치 여부
+    private(set) var hookStates: [AgentKind: (text: String, installed: Bool)] = [:]
     private(set) var launchAtLoginEnabled = false
     private(set) var launchAtLoginManagedByHomebrew = false
     private(set) var hookError: String?
@@ -71,27 +72,35 @@ final class SettingsModel {
 
     func refresh() {
         appVersion = provider.appVersion
-        (hookStatusText, hooksInstalled) = provider.hookState
+        hookStates = Dictionary(uniqueKeysWithValues: AgentKind.allCases.map { ($0, provider.hookState(for: $0)) })
         launchAtLoginEnabled = provider.launchAtLoginEnabled
         launchAtLoginManagedByHomebrew = provider.launchAtLoginManagedByHomebrew
     }
 
-    func installHooks() {
+    func hookStatusText(for agent: AgentKind) -> String {
+        hookStates[agent]?.text ?? ""
+    }
+
+    func hooksInstalled(for agent: AgentKind) -> Bool {
+        hookStates[agent]?.installed ?? false
+    }
+
+    func installHooks(for agent: AgentKind) {
         do {
-            try provider.installHooks()
+            try provider.installHooks(for: agent)
             hookError = nil
         } catch {
-            hookError = "설치 실패: \(error.localizedDescription)"
+            hookError = "\(agent.displayName) 훅 설치 실패: \(error.localizedDescription)"
         }
         refresh()
     }
 
-    func uninstallHooks() {
+    func uninstallHooks(for agent: AgentKind) {
         do {
-            try provider.uninstallHooks()
+            try provider.uninstallHooks(for: agent)
             hookError = nil
         } catch {
-            hookError = "제거 실패: \(error.localizedDescription)"
+            hookError = "\(agent.displayName) 훅 제거 실패: \(error.localizedDescription)"
         }
         refresh()
     }
@@ -267,7 +276,7 @@ struct SettingsView: View {
             SettingsGroup(title: "권한 요청") {
                 switchRow(
                     "세션 앱을 보고 있으면 그 앱으로 넘기기",
-                    note: "터미널 · Claude 앱이 앞에 있으면 노치에서 기다리지 않고 그 앱의 승인 창 · 질문으로 넘겨요",
+                    note: "터미널 · Claude · Codex 앱이 앞에 있으면 노치에서 기다리지 않고 그 앱으로 넘겨요",
                     isOn: $preferences.passthroughWhenTerminalFrontmost
                 )
                 SettingsDivider()
@@ -278,7 +287,7 @@ struct SettingsView: View {
                 )
                 .disabled(!preferences.passthroughWhenTerminalFrontmost)
                 SettingsDivider()
-                SettingsRow(title: "권한 대기 시간", note: "지나면 Claude Code 기본 프롬프트로 넘겨요") {
+                SettingsRow(title: "권한 대기 시간", note: "지나면 Claude Code · Codex 기본 승인 창으로 넘겨요") {
                     SettingsStepper(value: $preferences.permissionTimeout, range: 15...540, step: 15) { "\(Int($0))초" }
                 }
             }
@@ -286,31 +295,15 @@ struct SettingsView: View {
             SettingsGroup(title: "세션") {
                 switchRow(
                     "앱을 켤 때 돌고 있던 세션 바로 보여주기",
-                    note: "최근 30분 안의 Claude Code 대화 기록 끝부분을 읽어요 (읽기만 하고 저장하지 않아요)",
+                    note: "최근 30분 안의 Claude Code · Codex 대화 기록 끝부분을 읽어요 (읽기만 하고 저장하지 않아요)",
                     isOn: $preferences.restoresRecentSessions
                 )
             }
 
-            SettingsGroup(title: "Claude Code 훅") {
-                SettingsRow(title: "상태") {
-                    Text(model.hookStatusText)
-                        .foregroundStyle(model.hooksInstalled ? .primary : .secondary)
-                        .multilineTextAlignment(.trailing)
-                }
+            SettingsGroup(title: "훅") {
+                hookRow(.claude, note: "~/.claude/settings.json")
                 SettingsDivider()
-                HStack(spacing: 8) {
-                    Button(model.hooksInstalled ? "다시 설치" : "설치") {
-                        model.installHooks()
-                    }
-                    Button("제거") {
-                        model.uninstallHooks()
-                    }
-                    .disabled(!model.hooksInstalled)
-                    Spacer(minLength: 0)
-                }
-                .buttonStyle(SettingsButtonStyle())
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
+                hookRow(.codex, note: "~/.codex/hooks.json · 설치 뒤 Codex 의 훅 검토에서 한 번 허용 (CLI 는 /hooks)")
                 if let error = model.hookError {
                     SettingsNote(text: error, systemImage: "exclamationmark.triangle.fill", tint: SettingsPalette.red, emphasized: true)
                         .textSelection(.enabled)
@@ -495,6 +488,26 @@ struct SettingsView: View {
 
     // MARK: - 부품
 
+    /// 에이전트 훅 한 줄: 이름 · 상태(설명) · 설치(다시 설치) · 제거
+    private func hookRow(_ agent: AgentKind, note: String) -> some View {
+        let installed = model.hooksInstalled(for: agent)
+        return SettingsRow(title: "\(agent.displayName) · \(model.hookStatusText(for: agent))", note: note) {
+            HStack(spacing: 8) {
+                Button(installed ? "다시 설치" : "설치") {
+                    model.installHooks(for: agent)
+                }
+                .accessibilityLabel("\(agent.displayName) 훅 \(installed ? "다시 설치" : "설치")")
+                Button("제거") {
+                    model.uninstallHooks(for: agent)
+                }
+                .disabled(!installed)
+                .accessibilityLabel("\(agent.displayName) 훅 제거")
+            }
+            .buttonStyle(SettingsButtonStyle())
+            .fixedSize()
+        }
+    }
+
     private func switchRow(_ title: String, note: String? = nil, isOn: Binding<Bool>) -> some View {
         Toggle(isOn: isOn) {
             VStack(alignment: .leading, spacing: 2) {
@@ -503,6 +516,7 @@ struct SettingsView: View {
                     Text(note)
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }

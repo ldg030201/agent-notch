@@ -422,12 +422,13 @@ enum SnapshotStripCheck {
         if userStrip != [.project, .tool] { problems.append("agent-notch · 생각 중: 노치 아래 띠 요소 \(String(describing: userStrip)) (프로젝트 · 툴 기대)") }
         if userStrip != userPill { problems.append("agent-notch · 생각 중: 띠 \(String(describing: userStrip)) ≠ 알약 \(String(describing: userPill))") }
 
-        // 1-1) 백그라운드 배지가 있어도 두 화면 제목이 같다 ("api-server · Bash +12 −3 ⧉ 3", `working-background` 장면).
-        //      띠는 배지(와 요약)를 둘째 줄로 내리고, 알약은 끝에 그대로 둔다
+        // 1-1) 백그라운드 배지가 있어도 두 화면 제목이 같다 ("blog · Bash +12 −3 ⧉ 3").
+        //      띠는 배지(와 요약)를 둘째 줄로 내리고, 알약은 끝에 그대로 둔다.
+        //      (에이전트 아이콘이 들어간 노치 185pt 띠에는 "api-server · Bash +12 −3" 이 들어가지 않아 짧은 프로젝트로 본다)
         for (summaryName, summary) in [("요약 없음", SessionStatusSummary.empty), ("요약 ● 2", SessionStatusSummary(done: 2))] {
             cases += 1
-            let name = "api-server · Bash +12 −3 ⧉ 3 · \(summaryName)"
-            let background = metrics(project: "api-server", tool: "Bash", stat: (12, 3), summary: summary, background: 3)
+            let name = "blog · Bash +12 −3 ⧉ 3 · \(summaryName)"
+            let background = metrics(project: "blog", tool: "Bash", stat: (12, 3), summary: summary, background: 3)
             let strip = stripEngine.compactLayout(for: .session(background))
             guard let stripItems = items(strip), let pillItems = items(pillEngine.compactLayout(for: .session(background))) else {
                 problems.append("\(name): 띠 · 알약이 아님")

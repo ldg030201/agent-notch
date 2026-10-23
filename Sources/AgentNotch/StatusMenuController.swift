@@ -1,5 +1,8 @@
 import AppKit
 import NotchCore
+import NotchServices
+import NotchShared
+import NotchUI
 
 /// 메뉴바 메뉴에서 App 에 요청하는 동작
 @MainActor
@@ -9,8 +12,8 @@ protocol StatusMenuHost: AnyObject {
     func toggleIsland()
     func toggleDemo()
     func clearDemoSessions()
-    func installHooksFromMenu()
-    func uninstallHooksFromMenu()
+    func installHooksFromMenu(for agent: AgentKind)
+    func uninstallHooksFromMenu(for agent: AgentKind)
     func openSettings()
 }
 
@@ -107,19 +110,16 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             menu.addItem(Self.disabledItem("세션 없음"))
             return
         }
-        menu.addItem(Self.disabledItem("Claude Code 세션"))
+        menu.addItem(Self.disabledItem("세션"))
         for session in sessions.prefix(Self.maxSessionItems) {
             let id = session.id
             let pinned = store.pinnedSessionID == id
-            let title = Self.truncate("\(session.projectName) — \(Self.statusText(for: session))")
+            // 앞에는 에이전트 아이콘 (Clawd · Codex), 고정한 세션은 끝에 "· 고정"
+            let title = Self.truncate("\(session.projectName) — \(Self.statusText(for: session))\(pinned ? " · 고정" : "")")
 
             let item = ClosureMenuItem(title: title) { [weak self] in self?.actions.focus(sessionID: id) }
             item.state = store.focusedSessionID == id ? .on : .off
-            if pinned {
-                let pin = NSImage(systemSymbolName: "pin.fill", accessibilityDescription: "고정됨")
-                pin?.isTemplate = true
-                item.image = pin
-            }
+            item.image = AgentIconImage.image(for: session.agent)
             item.toolTip = session.cwd.isEmpty ? nil : session.cwd
             menu.addItem(item)
 
@@ -137,14 +137,17 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     }
 
     private func addHookItems() {
-        let status = settings.hookStatus
-        menu.addItem(Self.disabledItem("Claude Code 훅: \(AppSettingsProvider.hookStatusText(for: status))"))
-        if status != .installed {
-            let title = status == .notInstalled ? "Claude Code 훅 설치" : "Claude Code 훅 다시 설치"
-            menu.addItem(ClosureMenuItem(title: title) { [weak self] in self?.host?.installHooksFromMenu() })
-        }
-        if status != .notInstalled {
-            menu.addItem(ClosureMenuItem(title: "훅 제거") { [weak self] in self?.host?.uninstallHooksFromMenu() })
+        for agent in AgentKind.allCases {
+            let status = settings.hookStatus(for: agent)
+            let name = agent.displayName
+            menu.addItem(Self.disabledItem("\(name) 훅: \(AppSettingsProvider.hookStatusText(for: status))"))
+            if status != .installed {
+                let title = status == .notInstalled ? "\(name) 훅 설치" : "\(name) 훅 다시 설치"
+                menu.addItem(ClosureMenuItem(title: title) { [weak self] in self?.host?.installHooksFromMenu(for: agent) })
+            }
+            if status != .notInstalled {
+                menu.addItem(ClosureMenuItem(title: "\(name) 훅 제거") { [weak self] in self?.host?.uninstallHooksFromMenu(for: agent) })
+            }
         }
     }
 

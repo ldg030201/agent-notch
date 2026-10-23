@@ -1,16 +1,17 @@
 import AppKit
 import SwiftUI
 import NotchCore
+import NotchShared
 
 /// 설정 화면이 App 에서 가져오는 정보와 동작 (훅 설치, 로그인 시 실행 등).
 /// NotchUI 가 NotchServices 에 직접 의존하지 않도록 App 이 구현해 주입한다.
 @MainActor
 public protocol SettingsProvider: AnyObject {
     var appVersion: String { get }
-    /// 훅 설치 상태 문구와 설치 여부 (settings.json 을 한 번만 읽어 둘 다 만든다)
-    var hookState: (text: String, installed: Bool) { get }
-    func installHooks() throws
-    func uninstallHooks() throws
+    /// 에이전트의 훅 설치 상태 문구와 설치 여부 (설정 파일을 한 번만 읽어 둘 다 만든다)
+    func hookState(for agent: AgentKind) -> (text: String, installed: Bool)
+    func installHooks(for agent: AgentKind) throws
+    func uninstallHooks(for agent: AgentKind) throws
     var launchAtLoginEnabled: Bool { get }
     var launchAtLoginManagedByHomebrew: Bool { get }
     func setLaunchAtLogin(_ enabled: Bool) throws

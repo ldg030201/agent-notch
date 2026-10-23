@@ -399,10 +399,10 @@ struct IslandLayoutEngine {
 
     // MARK: 한 줄 내용 요소 (알약 · 노치 아래 띠가 같은 규칙)
 
-    /// 한 줄 내용(상태 + 프로젝트명 · 툴 이름 + `+N −M` + 백그라운드 배지 + 요약)의 틀. 알약과 노치 아래 띠는 틀만 다르고
+    /// 한 줄 내용(상태 + 에이전트 아이콘 + 프로젝트명 · 툴 이름 + `+N −M` + 백그라운드 배지 + 요약)의 틀. 알약과 노치 아래 띠는 틀만 다르고
     /// 요소 후보(`pillVariants`) · 빼는 순서 · 제목 최소 폭(`pillProjectMin` · `pillToolMin`)은 같다
     struct LineChrome: Equatable {
-        /// 좌우 여백 + 상태 아이콘 (+ 배치 오차)
+        /// 좌우 여백 + 상태 아이콘 + 에이전트 아이콘 (+ 배치 오차)
         var base: CGFloat
         /// 상태 아이콘 · 제목 · `+N −M` 사이 간격
         var spacing: CGFloat
@@ -412,10 +412,10 @@ struct IslandLayoutEngine {
         /// 그러면 제목 줄 요소는 배지 · 요약 없이 고른다 (알약이 같은 내용에 배지 없이 고르는 것과 같은 요소)
         var wraps: Bool
 
-        /// 알약: 좌우 여백 12 · 상태 아이콘 · 간격 6. 요약은 `Spacer` 뒤에 붙어 8pt 더
-        static let pill = LineChrome(base: 24 + 12, spacing: 6, summaryExtra: 8, wraps: false)
-        /// 노치 아래 띠: 좌우 여백 10 · 상태 12 · 간격 5 · 배치 오차 4. 배지 · 요약은 둘째 줄로 내릴 수 있다
-        static let strip = LineChrome(base: 20 + 12 + 4, spacing: 5, summaryExtra: 0, wraps: true)
+        /// 알약: 좌우 여백 12 · 상태 아이콘 · 간격 6 · 에이전트 아이콘. 요약은 `Spacer` 뒤에 붙어 8pt 더
+        static let pill = LineChrome(base: 24 + 12 + 6 + M.agentIconWidth, spacing: 6, summaryExtra: 8, wraps: false)
+        /// 노치 아래 띠: 좌우 여백 10 · 상태 12 · 간격 5 · 에이전트 아이콘 · 배치 오차 4. 배지 · 요약은 둘째 줄로 내릴 수 있다
+        static let strip = LineChrome(base: 20 + 12 + 5 + M.agentIconWidth + 4, spacing: 5, summaryExtra: 0, wraps: true)
     }
 
     /// 알약 · 노치 아래 띠에 넣을 요소 후보 (앞에서부터 고른다).

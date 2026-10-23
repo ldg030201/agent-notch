@@ -4,9 +4,9 @@ import NotchShared
 
 /// 약 40초짜리 데모. 가짜 훅 이벤트를 소켓 없이 `SessionStore.ingest` 에 바로 넣는다.
 ///
-/// - api-server: Read → Edit(3줄 diff) → 응답 스트리밍 → Bash `npm test` → 두 번째 Edit → Stop
-/// - web-app: `npm run test -- --watch=false` 권한 요청 → 사용자의 선택에 따라 이어서 진행
-/// - blog: 대기
+/// - api-server (Claude Code): Read → Edit(3줄 diff) → 응답 스트리밍 → Bash `npm test` → 두 번째 Edit → Stop
+/// - web-app (Codex 앱): `npm run test -- --watch=false` 권한 요청 → 사용자의 선택에 따라 이어서 진행 (허용하면 apply_patch 로 고침)
+/// - blog (Claude Code): 대기
 ///
 /// 데모 권한 결정도 `onPermissionResolved` 로 흘러가지만, 소켓 서버는 모르는 ID 라 아무것도 하지 않는다.
 @MainActor
@@ -14,11 +14,12 @@ final class DemoScenario {
     private struct DemoSession {
         let id: String
         let project: String
+        var agent: AgentKind = .claude
         var cwd: String { "/Users/dev/projects/\(project)" }
     }
 
     private static let apiServer = DemoSession(id: "demo-0000-api-server", project: "api-server")
-    private static let webApp = DemoSession(id: "demo-0000-web-app", project: "web-app")
+    private static let webApp = DemoSession(id: "demo-0000-web-app", project: "web-app", agent: .codex)
     private static let blog = DemoSession(id: "demo-0000-blog", project: "blog")
     private static let all = [blog, webApp, apiServer]
 
@@ -85,7 +86,7 @@ final class DemoScenario {
     private func runMain() async throws {
         let api = Self.apiServer
         for session in Self.all {
-            send("SessionStart", session, ["source": "startup", "model": "claude-opus-5"])
+            send("SessionStart", session, ["source": "startup", "model": session.agent == .codex ? "gpt-6" : "claude-opus-5"])
             try await pause(0.4)
         }
         try await pause(1)
@@ -157,18 +158,14 @@ final class DemoScenario {
         send("UserPromptSubmit", web, ["prompt": "테스트 한 번 돌려서 깨진 거 있는지 봐줘"])
         try await pause(2.5)
 
+        // Codex: 권한 요청에 항상 허용 규칙(permission_suggestions)이 없다
         let command: [String: Any] = ["command": "npm run test -- --watch=false", "description": "테스트 실행"]
         let toolID = startTool(web, "Bash", command)
         try await pause(0.8)
         let requestID = send("PermissionRequest", web, [
             "tool_name": "Bash",
             "tool_input": command,
-            "permission_suggestions": [[
-                "type": "addRules",
-                "rules": [["toolName": "Bash", "ruleContent": "npm run test:*"]],
-                "behavior": "allow",
-                "destination": "localSettings",
-            ]],
+            "turn_id": "demo-turn",
         ])
 
         // 사용자가 노치에서 고를 때까지 기다린다 (최대 3분)
@@ -181,26 +178,32 @@ final class DemoScenario {
 
         switch session.phase {
         case .runningTool:
-            // 허용 → 테스트 실행 → 실패 후 사용량 한도로 턴 실패
+            // 허용 → 테스트 실행 → 2개 실패 → apply_patch 로 고치고 끝
             try await pause(2.5)
             finishTool(web, "Bash", toolID, command, [
                 "stdout": "Tests: 2 failed, 41 passed, 43 total\n",
-                "stderr": "",
-                "interrupted": false,
-                "isImage": false,
+                "exit_code": 1,
             ])
-            try await pause(1)
-            stream(web, "테스트 2개가 실패했어요. 원인을 살펴볼게요.\n", message: 0)
+            try await pause(2)
+            let patch: [String: Any] = ["command": """
+                *** Begin Patch
+                *** Update File: src/LoginForm.tsx
+                @@ function LoginForm
+                -  const email = values.email
+                +  const email = values.email.trim()
+                +  if (!email.includes('@')) return setError('이메일 형식이 아니에요')
+                *** End Patch
+                """]
+            let patchID = startTool(web, "apply_patch", patch)
+            try await pause(1.2)
+            finishTool(web, "apply_patch", patchID, patch, ["output": "Success. Updated the following files:\nM src/LoginForm.tsx"])
             try await pause(3)
-            send("StopFailure", web, ["error": "rate_limit", "last_assistant_message": "API Error: rate limit"])
-        case .thinking:
-            // 거부 → Claude 가 다른 방법으로 마무리
-            send("PostToolUseFailure", web, [
-                "tool_name": "Bash",
-                "tool_input": command,
-                "tool_use_id": toolID,
-                "error": "AgentNotch 에서 거부됨",
+            send("Stop", web, [
+                "stop_hook_active": false,
+                "last_assistant_message": "이메일 앞뒤 공백 때문에 실패하던 테스트 2개를 고쳤어요.",
             ])
+        case .thinking:
+            // 거부 → Codex 가 다른 방법으로 마무리 (Codex 는 실패 이벤트 없이 이어서 답한다)
             try await pause(2)
             send("Stop", web, [
                 "stop_hook_active": false,
@@ -238,12 +241,14 @@ final class DemoScenario {
         for (key, value) in fields {
             payload[key] = JSONValue(any: value)
         }
+        // Codex 세션은 Codex 앱에서 돈다고 친다 (버튼이 "Codex로")
         let envelope = HookEnvelope(
             event: event,
             sentAt: Date().timeIntervalSince1970,
-            env: [:],
+            env: session.agent == .codex ? ["CODEX_INTERNAL_ORIGINATOR_OVERRIDE": "Codex"] : [:],
             expectsReply: NotchWire.replyEvents.contains(event),
-            payload: .object(payload)
+            payload: .object(payload),
+            agent: session.agent == .claude ? nil : session.agent.rawValue
         )
         return store.ingest(envelope)
     }
