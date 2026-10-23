@@ -57,6 +57,7 @@ enum EnvelopeBuilder {
         expectsReply: Bool,
         payload: JSONValue,
         sentAt: Double,
+        agent: String? = nil,
         maxBytes: Int = NotchWire.maxEnvelopeBytes
     ) -> (data: Data, shrinkLevel: Int) {
         let encoder = JSONEncoder()
@@ -68,7 +69,8 @@ enum EnvelopeBuilder {
                 sentAt: sentAt,
                 env: env,
                 expectsReply: expectsReply,
-                payload: payload
+                payload: payload,
+                agent: agent
             )
             return try? encoder.encode(envelope)
         }

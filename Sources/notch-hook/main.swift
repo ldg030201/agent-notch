@@ -1,4 +1,4 @@
-// Claude Code 훅 헬퍼 진입점.
+// Claude Code · Codex 훅 헬퍼 진입점 (Codex 훅 명령에는 `--agent codex` 가 붙는다).
 //
 // stdin 의 훅 JSON 을 앱의 Unix 소켓으로 한 줄(HookEnvelope) 보내고,
 // 응답이 필요한 호출(PermissionRequest, 질문 · 계획 승인 툴의 PreToolUse)만 앱의 HookReply 를 기다려 stdout 으로 출력한다.
@@ -77,9 +77,10 @@ let line = EnvelopeBuilder.encodeLine(
     env: EnvelopeBuilder.forwardedEnvironment(environment),
     expectsReply: expectsReply,
     payload: payload,
-    sentAt: Date().timeIntervalSince1970
+    sentAt: Date().timeIntervalSince1970,
+    agent: options.agent
 )
-debug.log("event=\(event) bytes=\(line.data.count) shrink=\(line.shrinkLevel) reply=\(expectsReply)")
+debug.log("agent=\(options.agent ?? "claude") event=\(event) bytes=\(line.data.count) shrink=\(line.shrinkLevel) reply=\(expectsReply)")
 
 guard connection.sendAll(line.data) else {
     debug.log("전송 실패 errno=\(errno)")

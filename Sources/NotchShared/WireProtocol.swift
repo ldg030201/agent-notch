@@ -86,6 +86,8 @@ public enum NotchWire {
         "__CFBundleIdentifier",  // 세션을 띄운 앱의 번들 ID (터미널 포커스용)
         "CLAUDE_CODE_ENTRYPOINT",// cli / desktop 등 실행 경로
         "CLAUDE_CODE_HOST_SESSION_ID", // Claude 데스크톱 앱의 세션 ID (local_…, "Claude로" 가 그 세션을 연다)
+        "CODEX_INTERNAL_ORIGINATOR_OVERRIDE", // Codex 앱이 띄운 세션이면 "Codex" (Codex 앱 세션 알아보기)
+        "CODEX_THREAD_ID",       // Codex 스레드 ID ("Codex로" 가 앱 안의 그 스레드를 연다)
     ]
 
     /// `~/Library/Application Support/AgentNotch`
@@ -122,6 +124,8 @@ public struct HookEnvelope: Codable, Hashable, Sendable {
     public var expectsReply: Bool
     /// 훅이 stdin 으로 받은 원본 JSON
     public var payload: JSONValue
+    /// 훅을 보낸 에이전트 이름 (`AgentKind.rawValue`, 헬퍼의 `--agent`). 없으면 Claude Code (예전 헬퍼 · Claude Code 훅)
+    public var agent: String?
 
     public init(
         v: Int = NotchWire.protocolVersion,
@@ -129,7 +133,8 @@ public struct HookEnvelope: Codable, Hashable, Sendable {
         sentAt: Double,
         env: [String: String],
         expectsReply: Bool,
-        payload: JSONValue
+        payload: JSONValue,
+        agent: String? = nil
     ) {
         self.v = v
         self.event = event
@@ -137,6 +142,12 @@ public struct HookEnvelope: Codable, Hashable, Sendable {
         self.env = env
         self.expectsReply = expectsReply
         self.payload = payload
+        self.agent = agent
+    }
+
+    /// 훅을 보낸 에이전트. 이름이 없거나 모르는 이름이면 Claude Code
+    public var agentKind: AgentKind {
+        AgentKind(name: agent) ?? .claude
     }
 }
 
