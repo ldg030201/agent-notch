@@ -21,6 +21,19 @@ enum Changelog {
 
     /// 최신이 위로 온다
     static let entries: [ChangelogEntry] = [
+        ChangelogEntry(version: "1.1.0", date: nil, groups: [
+            ChangelogGroup(title: "Codex", icon: "terminal.fill", tab: "general", isNew: true, notes: [
+                .new("Codex 세션 표시 (CLI · Codex 앱, 앱을 다시 켜도 이어 보기)"),
+                .new("Codex 권한 요청 허용 · 거부, Codex로 바로 이동"),
+                .new("Codex 훅 설치 · 제거 (설정 · 메뉴바)"),
+            ]),
+            ChangelogGroup(title: "노치 아일랜드", icon: "rectangle.topthird.inset.filled", notes: [
+                .new("세션 앞 Clawd · Codex 아이콘 추가"),
+            ]),
+            ChangelogGroup(title: "표시", icon: "display", tab: "display", notes: [
+                .new("마우스를 올려 두면 잠깐 비켜주기 추가 (뒤의 탭 · 버튼 누르기, 끄기 가능)"),
+            ]),
+        ]),
         ChangelogEntry(version: "1.0.1", date: "2026-10-17", groups: [
             ChangelogGroup(title: "설치", icon: "shippingbox.fill", notes: [
                 .fix("macOS 15 에서 설치(소스 빌드)가 실패하던 문제"),

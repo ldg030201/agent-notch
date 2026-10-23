@@ -1,6 +1,61 @@
 {
   "entries" : [
     {
+      "groups" : [
+        {
+          "icon" : "terminal.fill",
+          "isNew" : true,
+          "notes" : [
+            {
+              "kind" : "new",
+              "text" : "Codex 세션 표시 (CLI · Codex 앱, 앱을 다시 켜도 이어 보기)"
+            },
+            {
+              "kind" : "new",
+              "text" : "Codex 권한 요청 허용 · 거부, Codex로 바로 이동"
+            },
+            {
+              "kind" : "new",
+              "text" : "Codex 훅 설치 · 제거 (설정 · 메뉴바)"
+            }
+          ],
+          "tab" : "general",
+          "title" : "Codex"
+        },
+        {
+          "icon" : "rectangle.topthird.inset.filled",
+          "isNew" : false,
+          "notes" : [
+            {
+              "kind" : "new",
+              "text" : "세션 앞 Clawd · Codex 아이콘 추가"
+            }
+          ],
+          "title" : "노치 아일랜드"
+        },
+        {
+          "icon" : "display",
+          "isNew" : false,
+          "notes" : [
+            {
+              "kind" : "new",
+              "text" : "마우스를 올려 두면 잠깐 비켜주기 추가 (뒤의 탭 · 버튼 누르기, 끄기 가능)"
+            }
+          ],
+          "tab" : "display",
+          "title" : "표시"
+        }
+      ],
+      "notes" : [
+        "[Codex] Codex 세션 표시 (CLI · Codex 앱, 앱을 다시 켜도 이어 보기)",
+        "[Codex] Codex 권한 요청 허용 · 거부, Codex로 바로 이동",
+        "[Codex] Codex 훅 설치 · 제거 (설정 · 메뉴바)",
+        "[노치 아일랜드] 세션 앞 Clawd · Codex 아이콘 추가",
+        "[표시] 마우스를 올려 두면 잠깐 비켜주기 추가 (뒤의 탭 · 버튼 누르기, 끄기 가능)"
+      ],
+      "version" : "1.1.0"
+    },
+    {
       "date" : "2026-10-17",
       "groups" : [
         {
