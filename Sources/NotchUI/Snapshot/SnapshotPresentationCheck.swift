@@ -218,6 +218,50 @@ enum SnapshotDecisionCheck {
     }
 }
 
+// MARK: - 비켜주기
+
+/// 마우스를 올려 두어 비킨 동안(`PresentationController.setDodged`): 접힌 상태는 투명하게 숨고 클릭 영역이 없으며,
+/// 그사이 온 권한 요청 카드는 띄우지 않다가 다시 보일 때 띄운다
+@MainActor
+enum SnapshotDodgeCheck {
+    static func run() -> (cases: Int, problems: [String]) {
+        var problems: [String] = []
+        var cases = 0
+        do {
+            let setup = try SnapshotStage.prepare(.working, style: .notch)
+            let id = setup.screenID
+            let presentation = setup.presentation
+            setup.draw()
+
+            cases += 1
+            presentation.setDodged(id, true)
+            let dodged = presentation.commitScreens()[id]
+            if dodged?.concealed != true || dodged?.mode.isCompact != true {
+                problems.append("비킨 접힌 상태가 숨지 않음 (모드 \(String(describing: dodged?.mode.kind)))")
+            }
+
+            cases += 1
+            var world = setup.world
+            world.webAppAsksPermission()
+            presentation.handleLatestSignal()
+            let waiting = presentation.commitScreens()[id]
+            if waiting?.mode.isCompact != true || waiting?.concealed != true {
+                problems.append("비킨 동안 온 권한 요청 카드가 바로 뜸 (모드 \(String(describing: waiting?.mode.kind)))")
+            }
+
+            cases += 1
+            presentation.setDodged(id, false)
+            let back = presentation.commitScreens()[id]
+            if back?.mode.kind != .permission || back?.concealed != false {
+                problems.append("다시 보일 때 미뤄 둔 권한 요청 카드가 안 뜸 (모드 \(String(describing: back?.mode.kind)))")
+            }
+        } catch {
+            problems.append("장면 준비 실패: \(error.localizedDescription)")
+        }
+        return (cases, problems)
+    }
+}
+
 // MARK: - 배치 이력
 
 /// 숨겼다가 여는 카드 · 화면이 빠졌다 돌아온 뒤의 접힌 상태가 예전 배치 이력(부분 1 · 카드 띠)을 쓰지 않는지.

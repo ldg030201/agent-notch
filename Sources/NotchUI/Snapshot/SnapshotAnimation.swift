@@ -1166,6 +1166,7 @@ enum SnapshotAnimationSheet {
             ("메뉴바 알약 제목", SnapshotPillCheck.run()), ("노치 아래 띠 요소", SnapshotStripCheck.run()),
             ("메뉴바 창 찾기", SnapshotMenuBarScanCheck.run()),
             ("승인 대기", SnapshotDecisionCheck.run()), ("배치 이력", SnapshotLayoutHistoryCheck.run()),
+            ("비켜주기", SnapshotDodgeCheck.run()),
             ("클릭 모양 · 숫자 키 · 키 녹화 · 상태 아이템", SnapshotInputCheck.run()),
         ] {
             if check.problems.isEmpty {

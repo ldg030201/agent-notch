@@ -93,6 +93,7 @@ public final class AppPreferences {
         static let permissionShortcutsEnabled = "permissionShortcutsEnabled"
         static let interactionShortcutsEnabled = "interactionShortcutsEnabled"
         static let collapseShortcutEnabled = "collapseShortcutEnabled"
+        static let dodgesOnHover = "dodgesOnHover"
 
         /// 설정 초기화가 지우는 키 (설정을 더하면 여기와 `resetToDefaults` 에도 넣는다)
         static let all = [
@@ -100,6 +101,7 @@ public final class AppPreferences {
             permissionTimeout, staleSessionTimeout, passthroughWhenTerminalFrontmost, claudeAppRequestsInNotch, externalDisplayStyle,
             checksForUpdates, restoresRecentSessions, rotatesSessions, sessionRotationInterval,
             globalShortcutEnabled, globalShortcut, permissionShortcutsEnabled, interactionShortcutsEnabled, collapseShortcutEnabled,
+            dodgesOnHover,
         ]
         /// 없앤 설정 (노치 화면 표시 방식 · 노치 아래 표시 모양). 노치 화면은 늘 노치 아래 띠라 저장된 값을 지운다
         static let removed = ["notchStyle", "compactOverlapStyle"]
@@ -133,6 +135,12 @@ public final class AppPreferences {
     /// 여러 세션이 활동 중이면 접힌 아일랜드가 보여주는 세션을 주기적으로 넘길지 (고정한 세션이 있으면 넘기지 않는다)
     public var rotatesSessions: Bool {
         didSet { defaults.set(rotatesSessions, forKey: Key.rotatesSessions) }
+    }
+
+    /// 접힌 아일랜드(노치 아래 띠 · 알약) 위에 마우스를 잠깐 올려 두면(클릭 없이) 비켜서 뒤를 클릭할 수 있게 할지.
+    /// 비킨 자리에서 마우스가 나가면 다시 보인다
+    public var dodgesOnHover: Bool {
+        didSet { defaults.set(dodgesOnHover, forKey: Key.dodgesOnHover) }
     }
 
     /// 세션을 넘기는 간격(초)
@@ -235,6 +243,7 @@ public final class AppPreferences {
         restoresRecentSessions = defaults.object(forKey: Key.restoresRecentSessions) as? Bool ?? true
         rotatesSessions = defaults.object(forKey: Key.rotatesSessions) as? Bool ?? true
         sessionRotationInterval = defaults.object(forKey: Key.sessionRotationInterval) as? Double ?? 5
+        dodgesOnHover = defaults.object(forKey: Key.dodgesOnHover) as? Bool ?? true
         globalShortcutEnabled = defaults.object(forKey: Key.globalShortcutEnabled) as? Bool ?? false
         globalShortcut = defaults.data(forKey: Key.globalShortcut).flatMap { try? JSONDecoder().decode(KeyCombo.self, from: $0) }
             ?? .defaultToggle
@@ -264,6 +273,7 @@ public final class AppPreferences {
         restoresRecentSessions = fresh.restoresRecentSessions
         rotatesSessions = fresh.rotatesSessions
         sessionRotationInterval = fresh.sessionRotationInterval
+        dodgesOnHover = fresh.dodgesOnHover
         globalShortcutEnabled = fresh.globalShortcutEnabled
         globalShortcut = fresh.globalShortcut
         permissionShortcutsEnabled = fresh.permissionShortcutsEnabled

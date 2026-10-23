@@ -43,11 +43,24 @@ final class ScreenManager {
     /// 모드 관찰을 걸 때마다 올리는 번호. 마지막으로 건 관찰만 다시 걸어서
     /// stop/start · 화면 변경으로 새로 걸어도 관찰 루프가 겹치지 않는다
     private var modeObservationSeq = 0
+    /// 비켜주기: 마우스가 접힌 아일랜드 위에 머무는 화면의 시계 (`dodgeDelay` 가 지나면 비킨다)
+    private var dodgeTimers: [ScreenID: Task<Void, Never>] = [:]
+    /// 비킨 화면 → 비킨 자리 (Cocoa 전역, 여유 포함). 마우스가 이 밖으로 나가면 다시 보인다
+    private var dodgeAreas: [ScreenID: CGRect] = [:]
+    /// 비킨 자리에서 마우스가 나간 화면의 시계 (`dodgeReturnDelay` 가 지나면 다시 보인다)
+    private var returnTimers: [ScreenID: Task<Void, Never>] = [:]
 
     private let logger = Logger(subsystem: NotchWire.logSubsystem, category: "Screens")
 
     /// 풀스크린 감지 · 패널 확인 주기(초). 설정이 "전부 표시"면 풀스크린은 감지하지 않는다 (패널 확인은 늘 한다)
     private static let fullscreenPollInterval: Double = 2
+    /// 비켜주기: 접힌 아일랜드 위에 마우스를 이만큼(초) 올려 두면 비킨다 (클릭하면 예전처럼 펼친다)
+    static let dodgeDelay: Double = 2.5
+    /// 비킨 자리에서 마우스가 나간 뒤 다시 보이기까지(초). 경계를 스치거나 뒤를 클릭하고 살짝 움직여도 바로 돌아오지 않게
+    static let dodgeReturnDelay: Double = 0.5
+    /// 비킨 자리 둘레 여유 (pt)
+    static let dodgeMargin: CGFloat = 6
+
     /// 패널이 이 횟수만큼 연속으로 화면에 없으면 다시 만든다 (Space 전환 중 잠깐 빠지는 것과 헷갈리지 않게).
     /// 다시 만든 패널도 아직 못 봤으면 훨씬 오래 기다린다 (약 30초)
     private static let missingChecksBeforeRevive = 2
@@ -125,6 +138,8 @@ final class ScreenManager {
 
     /// 패널을 내리고 화면 상태를 지운다
     private func removeScreen(_ id: ScreenID) {
+        dodgeTimers.removeValue(forKey: id)?.cancel()
+        endDodge(id)
         guard let panel = screens.removeValue(forKey: id)?.panel else { return }
         panel.orderOut(nil)
         panel.contentView = nil
@@ -197,6 +212,9 @@ final class ScreenManager {
             screen.lastMode = state.mode
             screens[id] = screen
             guard previous != state.mode else { continue }
+            // 비켜주기 시계는 접힌 상태에 머문 시간만 잰다. 펼치거나 숨으면 비킨 것도 끝낸다
+            dodgeTimers.removeValue(forKey: id)?.cancel()
+            if !state.mode.isCompact { endDodge(id) }
             if !(previous?.isCompact ?? false), state.mode.isCompact { becameCompact = true }
             // 접히면 키 윈도우를 반납해 원래 앱으로 키보드 포커스를 돌려준다.
             // 다른 권한 요청이 새로 보이게 돼도 반납한다 (보지 못한 요청을 단축키로 결정하지 않게, 다시 클릭해야 함)
@@ -286,6 +304,64 @@ final class ScreenManager {
             }
         }
         presentation.setHoveredScreen(hovered)
+        updateDodge(hovered: hovered, location: location)
+    }
+
+    // MARK: - 마우스를 올려 두면 비켜주기
+
+    /// 접힌 아일랜드가 뒤의 탭 · 버튼을 가릴 때: 마우스를 `dodgeDelay` 동안 올려 두면(클릭 없이) 투명하게 비켜 클릭을 뒤로 통과시키고,
+    /// 마우스가 비킨 자리(`dodgeMargin` 여유)를 떠나면 `dodgeReturnDelay` 뒤 다시 보인다. 비킨 동안 온 알림은 다시 보일 때 띄운다
+    /// (`PresentationController.dodgedScreenIDs`). 펼친 카드 · 알림 카드는 비키지 않는다 (버튼을 눌러야 한다)
+    private func updateDodge(hovered: ScreenID?, location: CGPoint) {
+        guard presentation.dodgesOnHover else {
+            for id in Array(dodgeTimers.keys) { dodgeTimers.removeValue(forKey: id)?.cancel() }
+            for id in Array(dodgeAreas.keys) { endDodge(id) }
+            return
+        }
+        // 비킨 화면: 비킨 자리 안에 있으면 그대로, 나가면 잠시 뒤 다시 보인다 (돌아오면 취소)
+        for (id, area) in dodgeAreas {
+            if Self.containsInclusive(area, location) {
+                returnTimers.removeValue(forKey: id)?.cancel()
+            } else if returnTimers[id] == nil {
+                returnTimers[id] = Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(Self.dodgeReturnDelay))
+                    guard !Task.isCancelled else { return }
+                    self?.endDodge(id)
+                }
+            }
+        }
+        // 마우스가 떠난 화면의 시계는 멈춘다 (계속 올려 둔 시간만 잰다)
+        for id in Array(dodgeTimers.keys) where id != hovered {
+            dodgeTimers.removeValue(forKey: id)?.cancel()
+        }
+        guard let id = hovered, dodgeTimers[id] == nil, dodgeAreas[id] == nil,
+              screens[id]?.lastMode?.isCompact == true else { return }
+        dodgeTimers[id] = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(Self.dodgeDelay))
+            guard !Task.isCancelled else { return }
+            self?.dodge(id)
+        }
+    }
+
+    /// 지금 접힌 아일랜드 자리를 기억하고 비킨다 (마우스가 아직 그 위에 있고 접힌 상태일 때만)
+    private func dodge(_ id: ScreenID) {
+        dodgeTimers[id] = nil
+        guard running, let screen = screens[id], presentation.hoveredScreenID == id,
+              screen.lastMode?.isCompact == true, let first = screen.hitRects.first else { return }
+        let area = screen.hitRects.dropFirst().reduce(first) { $0.union($1) }
+            .insetBy(dx: -Self.dodgeMargin, dy: -Self.dodgeMargin)
+        dodgeAreas[id] = area
+        logger.debug("마우스를 올려 둬서 비킴: 화면 \(id, privacy: .public)")
+        // 관찰 패스가 투명 숨김을 적용하고 클릭 영역을 비운다 (그 뒤 클릭은 뒤의 앱으로 간다)
+        presentation.setDodged(id, true)
+    }
+
+    /// 비킨 것을 끝내고 다시 보인다
+    private func endDodge(_ id: ScreenID) {
+        returnTimers.removeValue(forKey: id)?.cancel()
+        guard dodgeAreas.removeValue(forKey: id) != nil else { return }
+        logger.debug("비킨 자리를 떠나 다시 보임: 화면 \(id, privacy: .public)")
+        presentation.setDodged(id, false)
     }
 
     /// 아일랜드가 클릭을 받는 자리인지

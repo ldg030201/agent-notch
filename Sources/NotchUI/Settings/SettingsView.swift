@@ -387,6 +387,12 @@ struct SettingsView: View {
                 secondsSlider("완료 표시 시간", value: $preferences.completionDisplayDuration, range: 2...15, step: 1)
                 SettingsDivider()
                 switchRow("응답 스트리밍 표시", isOn: $preferences.showStreamingText)
+                SettingsDivider()
+                switchRow(
+                    "마우스를 올려 두면 잠깐 비켜주기",
+                    note: "접힌 아일랜드에 마우스를 2.5초 올려 두면 사라져서 뒤의 탭 · 버튼을 누를 수 있어요. 마우스가 그 자리를 떠나면 다시 보여요",
+                    isOn: $preferences.dodgesOnHover
+                )
             }
 
             SettingsGroup(title: "여러 세션") {

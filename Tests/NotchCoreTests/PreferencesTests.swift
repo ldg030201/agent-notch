@@ -36,6 +36,7 @@ import Testing
             preferences.permissionShortcutsEnabled = true
             preferences.interactionShortcutsEnabled = true
             preferences.collapseShortcutEnabled = true
+            preferences.dodgesOnHover = false
 
             preferences.resetToDefaults()
 
@@ -61,6 +62,9 @@ import Testing
                 #expect(preferences.permissionShortcutsEnabled == fresh.permissionShortcutsEnabled)
                 #expect(preferences.interactionShortcutsEnabled == fresh.interactionShortcutsEnabled)
                 #expect(preferences.collapseShortcutEnabled == fresh.collapseShortcutEnabled)
+                #expect(preferences.dodgesOnHover == fresh.dodgesOnHover)
+                // 마우스를 올려 두면 비켜주기는 처음엔 켜져 있다
+                #expect(fresh.dodgesOnHover)
             }
             // 저장된 값은 남기지 않는다 (나중 버전의 처음 값을 따르게)
             #expect((defaults.persistentDomain(forName: suite) ?? [:]).isEmpty)

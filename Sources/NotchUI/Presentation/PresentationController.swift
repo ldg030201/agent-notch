@@ -51,6 +51,9 @@ final class PresentationController {
     private(set) var occludedScreenIDs: Set<ScreenID> = []
     /// 그중 메뉴가 접힌 아일랜드에 닿아 접힌 상태를 투명하게 숨긴 화면
     private(set) var concealedScreenIDs: Set<ScreenID> = []
+    /// 접힌 아일랜드 위에 마우스를 올려 두어 비킨 화면 (`ScreenManager` 의 비켜주기). 접힌 상태를 투명하게 숨겨 뒤를 클릭하게 하고,
+    /// 알림 · 일시 펼침은 마우스가 비킨 자리를 떠나 다시 보일 때까지 미룬다 (클릭하려는 자리를 카드가 덮지 않게)
+    private(set) var dodgedScreenIDs: Set<ScreenID> = []
     /// 업데이트 상태 (없으면 배지 · 버전 탭 숨김)
     var updateProvider: UpdateProvider?
 
@@ -224,6 +227,8 @@ final class PresentationController {
         if let expanded = expandedScreenID, map[expanded] == nil { expandedScreenID = nil }
         if let active = activeScreenID, map[active] == nil { activeScreenID = nil }
         if let hovered = hoveredScreenID, map[hovered] == nil { hoveredScreenID = nil }
+        let validDodged = dodgedScreenIDs.filter { map[$0] != nil }
+        if validDodged != dodgedScreenIDs { dodgedScreenIDs = validDodged }
         let validFullscreen = fullscreenScreenIDs.filter { map[$0] != nil }
         if validFullscreen != fullscreenScreenIDs { fullscreenScreenIDs = validFullscreen }
     }
@@ -238,6 +243,18 @@ final class PresentationController {
 
     func setFullscreenScreens(_ ids: Set<ScreenID>) {
         if fullscreenScreenIDs != ids { fullscreenScreenIDs = ids }
+    }
+
+    /// 마우스를 올려 두면 비켜주기를 쓰는지 (설정 "마우스를 올려 두면 잠깐 비켜주기")
+    var dodgesOnHover: Bool { preferences.dodgesOnHover }
+
+    /// 그 화면의 접힌 아일랜드를 비키게 하거나 다시 보이게 한다 (`ScreenManager` 가 마우스 위치로 정한다)
+    func setDodged(_ id: ScreenID, _ dodged: Bool) {
+        if dodged, !dodgedScreenIDs.contains(id) {
+            dodgedScreenIDs.insert(id)
+        } else if !dodged, dodgedScreenIDs.contains(id) {
+            dodgedScreenIDs.remove(id)
+        }
     }
 
     func setReduceMotion(_ value: Bool) {
@@ -299,8 +316,9 @@ final class PresentationController {
         let isTarget = id == transientTargetScreenID
         let fullscreen = fullscreenScreenIDs.contains(id)
         let behavior = preferences.fullscreenBehavior
-        // 열린 메뉴와 겹치면 알림 펼침은 메뉴가 닫힐 때까지 미루고(접힌 상태 + 주황 점), 일시 펼침은 보이지 않는다
-        let occluded = occludedScreenIDs.contains(id)
+        // 열린 메뉴와 겹치면 알림 펼침은 메뉴가 닫힐 때까지 미루고(접힌 상태 + 주황 점), 일시 펼침은 보이지 않는다.
+        // 마우스를 올려 두어 비킨 동안도 같다 (그때 접힌 상태는 투명하게 숨긴다)
+        let occluded = occludedScreenIDs.contains(id) || dodgedScreenIDs.contains(id)
 
         if isTarget, !(fullscreen && behavior == .hide), let alert = alertMode() {
             return occluded ? compactMode(for: id) : alert
@@ -312,13 +330,16 @@ final class PresentationController {
         return compactMode(for: id)
     }
 
-    /// 열린 메뉴가 접힌 아일랜드에 닿아 투명하게 숨기는 중인지 (알림이 대기 중이면 숨기지 않음)
+    /// 접힌 상태를 투명하게 숨기는 중인지: 마우스를 올려 두어 비킴, 또는 열린 메뉴가 접힌 아일랜드에 닿음 (알림이 대기 중이면 숨기지 않음).
+    /// 비킨 동안은 알림이 대기 중이어도 숨긴다 (마우스가 비킨 자리를 떠나면 바로 보인다)
     func isConcealed(_ id: ScreenID) -> Bool {
         isConcealed(id, mode: mode(for: id))
     }
 
     private func isConcealed(_ id: ScreenID, mode: IslandMode) -> Bool {
-        guard concealedScreenIDs.contains(id), mode.isCompact else { return false }
+        guard mode.isCompact else { return false }
+        if dodgedScreenIDs.contains(id) { return true }
+        guard concealedScreenIDs.contains(id) else { return false }
         return !(id == transientTargetScreenID && alertMode() != nil)
     }
 
