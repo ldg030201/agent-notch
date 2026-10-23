@@ -52,7 +52,7 @@ import NotchCore
         try Self.write([Self.line("sub", prompt, at: recent), Self.line("sub", tool, at: recent)],
                        to: project.appendingPathComponent("running/subagents"), name: "agent-x.jsonl", modified: now)
 
-        let restorer = SessionRestorer(projectsDirectory: temp.url)
+        let restorer = SessionRestorer(projectsDirectory: temp.url, codexSessionsDirectory: nil)
         let restored = restorer.scan(now: now)
         #expect(Set(restored.map(\.id)) == ["running", "finished"])
         #expect(restored.first { $0.id == "running" }?.state == .runningTool(
@@ -71,7 +71,7 @@ import NotchCore
                      Self.line("s", #""type":"system","subtype":"stop_hook_summary""#, at: at)]
         let url = try Self.write(lines, to: temp.url.appendingPathComponent("p"), name: "s.jsonl", modified: now)
 
-        var restorer = SessionRestorer(projectsDirectory: temp.url)
+        var restorer = SessionRestorer(projectsDirectory: temp.url, codexSessionsDirectory: nil)
         restorer.tailBytes = 600
         let tail = try #require(TranscriptTail.readTail(atPath: url.path, maxBytes: restorer.tailBytes))
         #expect(tail.count == 2)
@@ -101,7 +101,7 @@ import NotchCore
         try Self.write([prompt, tool].map { Self.line("running", $0, at: at) },
                        to: project, name: "running.jsonl", modified: now)
 
-        let restored = SessionRestorer(projectsDirectory: temp.url).scan(now: now)
+        let restored = SessionRestorer(projectsDirectory: temp.url, codexSessionsDirectory: nil).scan(now: now)
         #expect(restored.map(\.id) == ["running"])
     }
 
@@ -112,6 +112,73 @@ import NotchCore
         let project = temp.url.appendingPathComponent("p")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
         #expect(mkfifo(project.appendingPathComponent("s.jsonl").path, 0o600) == 0)
-        #expect(SessionRestorer(projectsDirectory: temp.url).scan().isEmpty)
+        #expect(SessionRestorer(projectsDirectory: temp.url, codexSessionsDirectory: nil).scan().isEmpty)
+    }
+
+    // MARK: - Codex
+
+    static func codexMeta(_ thread: String, session: String? = nil, subagent: Bool = false, originator: String = "Codex Desktop") -> String {
+        let source = subagent ? #"{"subagent":{"parent":"x"}}"# : #""vscode""#
+        return #"{"timestamp":"2026-10-22T03:13:54.486Z","type":"session_meta","payload":{"session_id":"\#(session ?? thread)","id":"\#(thread)","cwd":"/Users/dev/projects/web-app","originator":"\#(originator)","source":\#(source),"thread_source":"\#(subagent ? "subagent" : "user")","base_instructions":"\#(String(repeating: "규칙 ", count: 20_000))","git":{"branch":"main"}}}"#
+    }
+
+    static func codexLine(_ type: String, _ payload: String, at time: String) -> String {
+        #"{"timestamp":"\#(time)","type":"\#(type)","payload":\#(payload)}"#
+    }
+
+    @Test func restoresCodexRollouts() throws {
+        let temp = try TempDirectory()
+        defer { temp.remove() }
+        let now = Date()
+        let at = Self.iso(now.addingTimeInterval(-60))
+        let day = temp.url.appendingPathComponent("codex/2026/10/22")
+        let started = Self.codexLine("event_msg", #"{"type":"task_started","turn_id":"t1"}"#, at: at)
+        let call = Self.codexLine("response_item", #"{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"swift test\"}","call_id":"call_1"}"#, at: at)
+        let output = Self.codexLine("response_item", #"{"type":"function_call_output","call_id":"call_1","output":"ok"}"#, at: at)
+        let patch = Self.codexLine("response_item", #"{"type":"custom_tool_call","name":"apply_patch","input":"*** Begin Patch\n*** Add File: a.md\n+x\n*** End Patch","call_id":"call_2"}"#, at: at)
+        let complete = Self.codexLine("event_msg", #"{"type":"task_complete","turn_id":"t1","last_agent_message":"끝"}"#, at: at)
+        let aborted = Self.codexLine("event_msg", #"{"type":"turn_aborted","turn_id":"t1"}"#, at: at)
+        let thread = "01a16199-d734-7d03-a3e3-b0d129131dcf"
+
+        try Self.write([Self.codexMeta(thread), started, call], to: day, name: "rollout-a-\(thread).jsonl", modified: now)
+        try Self.write([Self.codexMeta("thinking-1"), started, call, output], to: day, name: "rollout-b.jsonl", modified: now)
+        try Self.write([Self.codexMeta("patching-1", originator: "codex_cli_rs"), started, patch], to: day, name: "rollout-c.jsonl", modified: now)
+        try Self.write([Self.codexMeta("done-1"), started, complete], to: day, name: "rollout-d.jsonl", modified: now)
+        try Self.write([Self.codexMeta("stopped-1"), started, call, aborted], to: day, name: "rollout-e.jsonl", modified: now)
+        // 서브에이전트 스레드는 부모 세션의 훅으로 보이므로 되살리지 않는다
+        try Self.write([Self.codexMeta("sub-1", session: thread, subagent: true), started, call], to: day, name: "rollout-f.jsonl", modified: now)
+        // 오래전에 바뀐 기록
+        try Self.write([Self.codexMeta("stale-1"), started, call], to: day, name: "rollout-g.jsonl", modified: now.addingTimeInterval(-2 * 60 * 60))
+
+        let restorer = SessionRestorer(
+            projectsDirectory: temp.url.appendingPathComponent("none"),
+            codexSessionsDirectory: temp.url.appendingPathComponent("codex")
+        )
+        let restored = Dictionary(uniqueKeysWithValues: restorer.scan(now: now).map { ($0.id, $0) })
+        #expect(Set(restored.keys) == [thread, "thinking-1", "patching-1", "done-1", "stopped-1"])
+
+        let running = try #require(restored[thread])
+        #expect(running.agent == .codex)
+        #expect(running.cwd == "/Users/dev/projects/web-app")
+        #expect(running.gitBranch == "main")
+        #expect(running.state == .runningTool(name: "Bash", input: .object(["command": .string("swift test")]), toolUseID: "call_1"))
+        // Codex 앱 기록이면 "Codex로" 가 그 스레드를 연다
+        #expect(running.terminal.codexDesktopThreadURL?.absoluteString == "codex://threads/\(thread)")
+
+        #expect(restored["thinking-1"]?.state == .thinking)
+        #expect(restored["patching-1"]?.state == .runningTool(
+            name: "apply_patch", input: .object(["command": .string("*** Begin Patch\n*** Add File: a.md\n+x\n*** End Patch")]), toolUseID: "call_2"
+        ))
+        #expect(restored["patching-1"]?.terminal.isCodexDesktopApp == false)
+        #expect(restored["done-1"]?.state == .finished)
+        #expect(restored["stopped-1"]?.state == .finished)
+    }
+
+    @Test func codexMetaNeedsSessionMetaLine() {
+        #expect(CodexRolloutTail.meta(fromFirstLine: #"{"type":"event_msg","payload":{}}"#) == nil)
+        let meta = CodexRolloutTail.meta(fromFirstLine: Self.codexMeta("t", session: "parent"))
+        #expect(meta?.isSubagent == true)
+        #expect(meta?.sessionID == "parent")
     }
 }
+

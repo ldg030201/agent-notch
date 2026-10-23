@@ -6,6 +6,7 @@ import os
 ///
 /// - iTerm2: `ITERM_SESSION_ID` 의 UUID 로 해당 탭·세션까지 선택 (AppleScript, 자동화 권한 필요)
 /// - Claude 데스크톱 앱: 앱 안의 그 세션을 링크로 연다 (`TerminalContext.claudeDesktopSessionURL`, 못 열면 앱만)
+/// - Codex 데스크톱 앱: 앱 안의 그 스레드를 링크로 연다 (`TerminalContext.codexDesktopThreadURL`, 못 열면 앱만)
 /// - 그 외: 번들 ID 로 앱만 활성화
 ///
 /// iTerm2 AppleScript 는 메인 스레드 밖 전용 큐에서 돌린다. 멈춘 iTerm2 나 처음 뜨는 자동화 권한 창이
@@ -71,8 +72,11 @@ public final class TerminalJumper {
             return true
         }
 
-        // Claude 데스크톱 앱 세션이면 앱 안의 그 세션까지 연다 (링크를 열지 못하면 앱만 앞으로)
+        // Claude · Codex 데스크톱 앱 세션이면 앱 안의 그 세션까지 연다 (링크를 열지 못하면 앱만 앞으로)
         if let url = context.claudeDesktopSessionURL, openURL(url, TerminalContext.claudeDesktopBundleID) {
+            return true
+        }
+        if let url = context.codexDesktopThreadURL, openURL(url, TerminalContext.codexDesktopBundleID) {
             return true
         }
 
@@ -172,7 +176,7 @@ public final class TerminalJumper {
         configuration.activates = true
         NSWorkspace.shared.open([url], withApplicationAt: appURL, configuration: configuration) { _, error in
             guard error != nil else { return }
-            log.error("Claude 앱 세션 링크 열기 실패 (앱만 앞으로)")
+            log.error("앱 세션 링크 열기 실패 (앱만 앞으로)")
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { _ = activate(bundleID: bundleID) }
             }

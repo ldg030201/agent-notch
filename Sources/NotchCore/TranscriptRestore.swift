@@ -15,21 +15,45 @@ public struct RestoredSession: Equatable, Sendable {
     }
 
     public var id: String
+    /// 기록을 쓴 에이전트 (Claude Code `TranscriptTail` · Codex `CodexRolloutTail`)
+    public var agent: AgentKind
     public var cwd: String
     public var gitBranch: String?
     /// 기록의 `entrypoint` (예: "cli", "claude-desktop")
     public var entrypoint: String?
+    /// Codex 기록의 `originator` (예: "Codex Desktop", "codex_cli_rs")
+    public var originator: String?
     public var state: State
     /// 기록의 마지막 시각
     public var lastEventAt: Date
 
-    public init(id: String, cwd: String, gitBranch: String? = nil, entrypoint: String? = nil, state: State, lastEventAt: Date) {
+    public init(
+        id: String,
+        agent: AgentKind = .claude,
+        cwd: String,
+        gitBranch: String? = nil,
+        entrypoint: String? = nil,
+        originator: String? = nil,
+        state: State,
+        lastEventAt: Date
+    ) {
         self.id = id
+        self.agent = agent
         self.cwd = cwd
         self.gitBranch = gitBranch
         self.entrypoint = entrypoint
+        self.originator = originator
         self.state = state
         self.lastEventAt = lastEventAt
+    }
+
+    /// 되살린 세션의 세션 앱 정보 (훅 환경변수 대신 기록에 적힌 진입점 · 앱 이름).
+    /// Codex 는 세션 ID 가 스레드 ID 라 "Codex로" 가 그 스레드를 연다
+    public var terminal: TerminalContext {
+        switch agent {
+        case .claude: return TerminalContext(entrypoint: entrypoint)
+        case .codex: return TerminalContext(hostSessionID: id, originator: originator)
+        }
     }
 }
 

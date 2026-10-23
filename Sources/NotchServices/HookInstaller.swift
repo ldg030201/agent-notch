@@ -3,7 +3,7 @@ import Foundation
 import NotchShared
 import os
 
-/// `~/.claude/settings.json` 에 AgentNotch 훅이 설치된 상태
+/// 훅 설정 파일(Claude Code `~/.claude/settings.json` · Codex `~/.codex/hooks.json`)에 AgentNotch 훅이 설치된 상태
 public enum HookInstallStatus: Equatable, Sendable, CustomStringConvertible {
     case notInstalled
     case installed
@@ -32,14 +32,18 @@ public enum HookInstallerError: Error, Equatable, LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .invalidSettings(let reason): return "settings.json 형식 오류 (\(reason)). 파일은 그대로 둠"
+        case .invalidSettings(let reason): return "훅 설정 파일 형식 오류 (\(reason)). 파일은 그대로 둠"
         case .helperSourceMissing: return "notch-hook 헬퍼를 찾을 수 없음"
         case .writeFailed(_, let code): return "파일 저장 실패 (\(String(cString: strerror(code))))"
         }
     }
 }
 
-/// Claude Code 훅 설정(`~/.claude/settings.json`)에 AgentNotch 항목을 추가/제거한다.
+/// 에이전트의 훅 설정에 AgentNotch 항목을 추가/제거한다.
+/// - Claude Code: `~/.claude/settings.json` 의 `hooks`
+/// - Codex: `~/.codex/hooks.json` 의 `hooks` (같은 모양: 이벤트 → matcher 그룹 → 훅 항목). 명령에 `--agent codex` 를 붙인다.
+///   Codex 는 새 훅(사용자 훅 포함)을 사용자가 검토해 믿을 때까지 실행하지 않는다 (Codex 앱 · CLI `/hooks`).
+///   믿음은 항목 내용에 묶이므로 이미 있는 항목은 내용이 바뀔 때만 고친다
 ///
 /// - 다른 키와 다른 훅(예: iTerm2 `cc-status`)은 건드리지 않는다.
 /// - 기존 파일을 바꾸기 전에 타임스탬프 백업(0600)을 남긴다.
@@ -48,7 +52,7 @@ public final class HookInstaller {
     /// 우리 훅 명령을 알아보는 표식
     public static let marker = "AgentNotch/bin/notch-hook"
 
-    /// 관리하는 이벤트 (MessageDisplay 는 설정에 따라 선택)
+    /// Claude Code 에서 관리하는 이벤트 (MessageDisplay 는 설정에 따라 선택)
     public static let managedEvents: [String] = [
         "SessionStart",
         "SessionEnd",
@@ -67,6 +71,23 @@ public final class HookInstaller {
         "PostCompact",
     ]
 
+    /// Codex 에서 관리하는 이벤트 (Codex 훅이 보내는 이벤트 전부. Notification · MessageDisplay · StopFailure ·
+    /// PostToolUseFailure 는 Codex 에 없고, 사용자 중단은 Interrupt 로 온다)
+    public static let codexManagedEvents: [String] = [
+        "SessionStart",
+        "SessionEnd",
+        "UserPromptSubmit",
+        "PreToolUse",
+        "PostToolUse",
+        "PermissionRequest",
+        "Stop",
+        "SubagentStart",
+        "SubagentStop",
+        "PreCompact",
+        "PostCompact",
+        "Interrupt",
+    ]
+
     /// 설치 여부를 사용자가 고를 수 있는 이벤트 (status 계산에서 필수로 보지 않음)
     public static let optionalEvents: Set<String> = ["MessageDisplay"]
 
@@ -74,11 +95,33 @@ public final class HookInstaller {
     static let toolEvents: Set<String> = ["PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest"]
 
     /// 헬퍼가 앱 응답을 기다리는 이벤트: 권한 요청, 질문 · 계획 승인 툴의 PreToolUse
-    /// (PreToolUse 는 그 두 툴일 때만 기다리고 다른 툴은 바로 끝난다 — `NotchWire.expectsReply`)
-    static let replyEvents: Set<String> = ["PermissionRequest", "PreToolUse"]
+    /// (PreToolUse 는 그 두 툴일 때만 기다리고 다른 툴은 바로 끝난다 — `NotchWire.expectsReply`).
+    /// Codex 는 권한 요청만 (Codex 질문은 훅으로 답할 수 없다)
+    static func replyEvents(for agent: AgentKind) -> Set<String> {
+        switch agent {
+        case .claude: return ["PermissionRequest", "PreToolUse"]
+        case .codex: return ["PermissionRequest"]
+        }
+    }
+
+    /// Codex 가 권한 요청 훅을 기다리는 동안 Codex 화면에 보여 줄 문구 (`statusMessage`)
+    static let codexPermissionStatusMessage = "AgentNotch: 노치에서 승인 기다리는 중"
 
     public static var defaultSettingsURL: URL {
         NotchServices.claudeDirectory.appendingPathComponent("settings.json")
+    }
+
+    /// Codex 사용자 훅 파일 (`~/.codex/hooks.json`)
+    public static var defaultCodexHooksURL: URL {
+        NotchServices.codexDirectory.appendingPathComponent("hooks.json")
+    }
+
+    /// 에이전트별 기본 훅 설정 파일
+    public static func defaultSettingsURL(for agent: AgentKind) -> URL {
+        switch agent {
+        case .claude: return defaultSettingsURL
+        case .codex: return defaultCodexHooksURL
+        }
     }
 
     public static var defaultHelperInstallURL: URL {
@@ -87,29 +130,42 @@ public final class HookInstaller {
             .appendingPathComponent("notch-hook")
     }
 
+    /// 이 설치기가 다루는 에이전트
+    public let agent: AgentKind
     public let settingsURL: URL
     public let helperInstallURL: URL
     private let fileManager: FileManager
     private let now: () -> Date
     private let log = NotchServices.logger("hooks")
 
+    /// - settingsURL: 없으면 에이전트의 기본 파일 (`defaultSettingsURL(for:)`)
     public init(
-        settingsURL: URL = HookInstaller.defaultSettingsURL,
+        agent: AgentKind = .claude,
+        settingsURL: URL? = nil,
         helperInstallURL: URL = HookInstaller.defaultHelperInstallURL,
         fileManager: FileManager = .default,
         now: @escaping () -> Date = Date.init
     ) {
-        self.settingsURL = settingsURL
+        self.agent = agent
+        self.settingsURL = settingsURL ?? Self.defaultSettingsURL(for: agent)
         self.helperInstallURL = helperInstallURL
         self.fileManager = fileManager
         self.now = now
+    }
+
+    /// 이 에이전트에서 관리하는 이벤트
+    public var managedEvents: [String] {
+        switch agent {
+        case .claude: return Self.managedEvents
+        case .codex: return Self.codexManagedEvents
+        }
     }
 
     // MARK: - 상태
 
     public func status() -> HookInstallStatus {
         let installed = installedEvents()
-        let required = Self.managedEvents.filter { !Self.optionalEvents.contains($0) }
+        let required = managedEvents.filter { !Self.optionalEvents.contains($0) }
         let missing = required.filter { !installed.contains($0) }
 
         if missing.count == required.count { return .notInstalled }
@@ -139,7 +195,7 @@ public final class HookInstaller {
 
         try installHelper(from: helperSource)
 
-        for event in Self.managedEvents {
+        for event in managedEvents {
             if event == "MessageDisplay" && !includeMessageDisplay {
                 hooks = removingManagedHooks(from: hooks, events: [event])
                 continue
@@ -187,7 +243,7 @@ public final class HookInstaller {
     /// (예: 질문 · 계획 승인 응답 대기 전에 설치한 PreToolUse — timeout 10, `--reply-timeout` 없음)
     public func hasOutdatedHooks() -> Bool {
         guard let root = try? readSettings()?.value, let hooks = root["hooks"]?.objectValue else { return false }
-        for event in Self.managedEvents {
+        for event in managedEvents {
             guard let groups = hooks[event]?.arrayValue else { continue }
             let desired = hookEntry(for: event)
             for group in groups {
@@ -208,7 +264,7 @@ public final class HookInstaller {
         guard hasOutdatedHooks(), let existing = try readSettings() else { return nil }
         var root = try Self.rootObject(existing.value)
         var hooks = try Self.hooksObject(in: root)
-        for event in Self.managedEvents {
+        for event in managedEvents {
             guard let value = hooks[event], containsManagedHook(value) else { continue }
             let groups = try Self.groups(for: event, in: hooks)
             hooks[event] = .array(upserting(event: event, into: groups))
@@ -229,30 +285,40 @@ public final class HookInstaller {
     // MARK: - 훅 항목 만들기
 
     /// 셸 형식 명령. 경로에 공백이 있어 작은따옴표로 감싼다.
-    /// 응답을 기다리는 이벤트는 `--reply-timeout` 을 붙인다 (헬퍼는 이 옵션이 있을 때만 PreToolUse 에서 기다린다)
+    /// 응답을 기다리는 이벤트는 `--reply-timeout` 을 붙인다 (헬퍼는 이 옵션이 있을 때만 PreToolUse 에서 기다린다).
+    /// Codex 는 이벤트 이름 앞에 `--agent codex` (Claude Code 명령은 예전 모양 그대로)
     public func command(for event: String) -> String {
-        var command = "\(Upgrader.shellQuoted(helperInstallURL.path)) \(event)"
-        if Self.replyEvents.contains(event) {
+        var command = Upgrader.shellQuoted(helperInstallURL.path)
+        if agent != .claude {
+            command += " \(AgentKind.commandLineFlag) \(agent.rawValue)"
+        }
+        command += " \(event)"
+        if Self.replyEvents(for: agent).contains(event) {
             command += " \(NotchWire.replyTimeoutFlag) \(NotchWire.helperReplyTimeout)"
         }
         return command
     }
 
-    static func timeout(for event: String) -> Int {
+    func timeout(for event: String) -> Int {
+        if Self.replyEvents(for: agent).contains(event) { return NotchWire.hookTimeout }
         switch event {
-        case "PermissionRequest", "PreToolUse": return NotchWire.hookTimeout
         case "MessageDisplay": return 5
-        case "SessionEnd": return 2
+        // Codex 의 SessionEnd · Interrupt 는 최대 3초
+        case "SessionEnd", "Interrupt": return 2
         default: return 10
         }
     }
 
     private func hookEntry(for event: String) -> JSONValue {
-        .object([
+        var entry: [String: JSONValue] = [
             "type": .string("command"),
             "command": .string(command(for: event)),
-            "timeout": .number(Double(Self.timeout(for: event))),
-        ])
+            "timeout": .number(Double(timeout(for: event))),
+        ]
+        if agent == .codex, event == "PermissionRequest" {
+            entry["statusMessage"] = .string(Self.codexPermissionStatusMessage)
+        }
+        return .object(entry)
     }
 
     private func matcherGroup(for event: String) -> JSONValue {

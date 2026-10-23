@@ -120,6 +120,38 @@ struct TerminalJumperTests {
         #expect(opened.isEmpty)
         #expect(activated == [TerminalContext.claudeDesktopBundleID])
     }
+
+    /// Codex 데스크톱 앱 세션: 앱 안의 그 스레드를 링크로 열고, 링크를 못 열면 앱만 앞으로. 터미널 Codex 는 터미널로
+    @MainActor
+    @Test func codexDesktopJumpOpensThread() {
+        var activated: [String] = []
+        var opened: [(URL, String)] = []
+        var opens = true
+        let jumper = TerminalJumper(
+            selectITermSession: { _ in false },
+            isRunning: { _ in true },
+            activate: { activated.append($0); return true },
+            openURL: { opened.append(($0, $1)); return opens }
+        )
+        let thread = "01a16199-d734-7d03-a3e3-b0d129131dcf"
+        let context = TerminalContext(hostSessionID: thread, originator: "Codex")
+
+        #expect(jumper.jump(to: context))
+        #expect(opened.map(\.0.absoluteString) == ["codex://threads/\(thread)"])
+        #expect(opened.map(\.1) == [TerminalContext.codexDesktopBundleID])
+        #expect(activated.isEmpty)
+
+        opens = false
+        #expect(jumper.jump(to: context))
+        #expect(activated == [TerminalContext.codexDesktopBundleID])
+
+        // 터미널에서 돈 Codex 는 링크를 쓰지 않는다
+        opened = []
+        activated = []
+        #expect(jumper.jump(to: TerminalContext(termProgram: "ghostty", hostSessionID: thread)))
+        #expect(opened.isEmpty)
+        #expect(activated == ["com.mitchellh.ghostty"])
+    }
 }
 
 /// 여러 스레드에서 쓰는 값 (테스트 기록용)

@@ -29,6 +29,18 @@ private struct InstallerFixture {
         return HookInstaller(settingsURL: settingsURL, helperInstallURL: helperInstallURL, now: { date })
     }
 
+    /// 같은 가짜 홈의 Codex 훅 파일 (`home/.codex/hooks.json`) 설치기. 헬퍼는 Claude Code 와 같은 것을 쓴다
+    var codexHooksURL: URL { temp.url.appendingPathComponent("home/.codex/hooks.json") }
+
+    func makeCodexInstaller() -> HookInstaller {
+        let date = date
+        return HookInstaller(agent: .codex, settingsURL: codexHooksURL, helperInstallURL: helperInstallURL, now: { date })
+    }
+
+    func codexHooks() throws -> JSONValue {
+        try JSONValue.parse(Data(contentsOf: codexHooksURL))
+    }
+
     func writeSettings(_ text: String, permissions: Int = 0o644) throws {
         try FileManager.default.createDirectory(at: settingsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data(text.utf8).write(to: settingsURL)
@@ -126,7 +138,7 @@ struct HookInstallerTests {
             #expect(entry["type"] == .string("command"))
             #expect(entry["async"] == nil)
             #expect(entry["command"]?.stringValue == installer.command(for: event))
-            #expect(entry["timeout"]?.intValue == HookInstaller.timeout(for: event))
+            #expect(entry["timeout"]?.intValue == installer.timeout(for: event))
         }
 
         let permission = try #require(managedEntries(in: settings, event: "PermissionRequest").first)
@@ -619,6 +631,91 @@ struct HookInstallerTests {
             try installer.install(helperSource: fixture.temp.url.appendingPathComponent("nope"), includeMessageDisplay: false)
         }
         #expect(!FileManager.default.fileExists(atPath: fixture.settingsURL.path))
+    }
+}
+
+@Suite("HookInstaller · Codex")
+struct CodexHookInstallerTests {
+    @Test func installsCodexHooksWithAgentFlag() throws {
+        let fixture = try InstallerFixture()
+        defer { fixture.temp.remove() }
+        let installer = fixture.makeCodexInstaller()
+        #expect(installer.status() == .notInstalled)
+
+        try installer.install(helperSource: fixture.helperSource, includeMessageDisplay: true)
+        #expect(installer.status() == .installed)
+        #expect(posixPermissions(fixture.codexHooksURL.path) == 0o600)
+
+        let hooks = try #require(fixture.codexHooks()["hooks"]?.objectValue)
+        // Codex 이벤트만 (MessageDisplay 를 켜도 Codex 에는 없다)
+        #expect(Set(hooks.keys) == Set(HookInstaller.codexManagedEvents))
+        for event in HookInstaller.codexManagedEvents {
+            let group = try #require(hooks[event]?[0])
+            #expect(group["matcher"] == (["PreToolUse", "PostToolUse", "PermissionRequest"].contains(event) ? .string("*") : nil))
+            let entry = try #require(group["hooks"]?[0])
+            #expect(entry["command"]?.stringValue == installer.command(for: event))
+            #expect(entry["command"]?.stringValue?.contains("' --agent codex \(event)") == true)
+        }
+
+        // 권한 요청만 응답을 기다린다 (Codex 질문은 훅으로 답할 수 없다)
+        let permission = try #require(managedEntries(in: fixture.codexHooks(), event: "PermissionRequest").first)
+        #expect(permission["timeout"] == .number(600))
+        #expect(permission["command"]?.stringValue?.hasSuffix("' --agent codex PermissionRequest --reply-timeout 590") == true)
+        #expect(permission["statusMessage"]?.stringValue == HookInstaller.codexPermissionStatusMessage)
+        let preToolUse = try #require(managedEntries(in: fixture.codexHooks(), event: "PreToolUse").first)
+        #expect(preToolUse["timeout"] == .number(10))
+        #expect(preToolUse["command"]?.stringValue?.contains("--reply-timeout") == false)
+        #expect(preToolUse["statusMessage"] == nil)
+        // Codex 는 SessionEnd · Interrupt 를 3초까지만 기다린다
+        #expect(try managedEntries(in: fixture.codexHooks(), event: "Interrupt").first?["timeout"] == .number(2))
+        #expect(try managedEntries(in: fixture.codexHooks(), event: "SessionEnd").first?["timeout"] == .number(2))
+
+        // 실제 셸로 돌리면 헬퍼가 `--agent codex` 를 받는다
+        let command = try #require(permission["command"]?.stringValue)
+        #expect(try runShell(command) == ["--agent", "codex", "PermissionRequest", "--reply-timeout", "590"])
+    }
+
+    @Test func claudeAndCodexDoNotTouchEachOther() throws {
+        let fixture = try InstallerFixture()
+        defer { fixture.temp.remove() }
+        let claude = fixture.makeInstaller()
+        let codex = fixture.makeCodexInstaller()
+        try claude.install(helperSource: fixture.helperSource, includeMessageDisplay: false)
+        #expect(codex.status() == .notInstalled)
+        #expect(!FileManager.default.fileExists(atPath: fixture.codexHooksURL.path))
+
+        try codex.install(helperSource: fixture.helperSource, includeMessageDisplay: false)
+        try codex.uninstall()
+        #expect(codex.status() == .notInstalled)
+        #expect(claude.status() == .installed)
+        // Claude Code 명령은 예전 모양 그대로 (`--agent` 없음)
+        #expect(!claude.command(for: "Stop").contains("--agent"))
+    }
+
+    @Test func keepsOtherCodexHooksAndIsStable() throws {
+        let fixture = try InstallerFixture()
+        defer { fixture.temp.remove() }
+        try FileManager.default.createDirectory(at: fixture.codexHooksURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let other = #"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/usr/bin/python3 policy.py","statusMessage":"Checking Bash command"}]}]}}"#
+        try Data(other.utf8).write(to: fixture.codexHooksURL)
+        let installer = fixture.makeCodexInstaller()
+
+        let backup = try installer.install(helperSource: fixture.helperSource, includeMessageDisplay: false)
+        #expect(backup != nil)
+        let groups = try #require(fixture.codexHooks()["hooks"]?["PreToolUse"]?.arrayValue)
+        #expect(groups.count == 2)
+        #expect(groups[0]["hooks"]?[0]?["command"] == .string("/usr/bin/python3 policy.py"))
+
+        // 이미 지금 모양이면 파일을 다시 쓰지 않는다 (Codex 는 바뀐 항목을 다시 검토하게 한다)
+        let before = try Data(contentsOf: fixture.codexHooksURL)
+        #expect(!installer.hasOutdatedHooks())
+        #expect(try installer.updateInstalledHooks() == nil)
+        #expect(try installer.install(helperSource: fixture.helperSource, includeMessageDisplay: false) == nil)
+        #expect(try Data(contentsOf: fixture.codexHooksURL) == before)
+
+        try installer.uninstall()
+        let remaining = try #require(fixture.codexHooks()["hooks"]?.objectValue)
+        #expect(Array(remaining.keys) == ["PreToolUse"])
     }
 }
 

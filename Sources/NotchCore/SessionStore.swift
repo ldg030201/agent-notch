@@ -250,6 +250,7 @@ public final class SessionStore {
         for item in restored where sessions[item.id] == nil {
             var session = AgentSession(
                 id: item.id,
+                agent: item.agent,
                 cwd: item.cwd,
                 projectName: TextUtils.projectName(forCwd: item.cwd),
                 // 브랜치는 대화 기록에 적힌 것만 쓴다 (앱은 프로젝트 폴더를 읽지 않는다)
@@ -257,7 +258,7 @@ public final class SessionStore {
                 startedAt: item.lastEventAt,
                 lastEventAt: item.lastEventAt
             )
-            session.terminal = TerminalContext(entrypoint: item.entrypoint)
+            session.terminal = item.terminal
             switch item.state {
             case let .runningTool(name, input, toolUseID):
                 let activity = Self.toolActivity(

@@ -15,4 +15,9 @@ public enum NotchServices {
     static var claudeDirectory: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude", isDirectory: true)
     }
+
+    /// Codex 설정 폴더 (`~/.codex`). Codex 는 `CODEX_HOME` 으로 바꿀 수 있지만 앱은 사용자 셸 환경을 모르므로 기본 위치만 본다
+    static var codexDirectory: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex", isDirectory: true)
+    }
 }
