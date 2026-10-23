@@ -78,6 +78,8 @@ public struct AppConsentHeuristic: Hashable, Sendable {
 
 extension TerminalContext {
     public static let claudeDesktopBundleID = "com.anthropic.claudefordesktop"
+    /// Codex 데스크톱 앱 (설치 이름은 ChatGPT.app 일 수 있다)
+    public static let codexDesktopBundleID = "com.openai.codex"
 
     /// 알려진 `TERM_PROGRAM` → 번들 ID (소문자 키)
     public static let termProgramBundleIDs: [String: String] = [
@@ -90,11 +92,15 @@ extension TerminalContext {
         "zed": "dev.zed.Zed",
     ]
 
-    /// 세션을 띄운 앱의 번들 ID (터미널 점프 · 앞에 있는 앱 감지 · 카드의 "터미널로/Claude로" 가 함께 쓴다).
-    /// 번들 ID(`__CFBundleIdentifier`) → 알려진 터미널 프로그램(`TERM_PROGRAM`) → 진입점(`CLAUDE_CODE_ENTRYPOINT` 에 "desktop") 순서로 본다
+    /// 세션을 띄운 앱의 번들 ID (터미널 점프 · 앞에 있는 앱 감지 · 카드의 "터미널로/Claude로/Codex로" 가 함께 쓴다).
+    /// 번들 ID(`__CFBundleIdentifier`) → Codex 앱이 띄운 세션(`originator`) → 알려진 터미널 프로그램(`TERM_PROGRAM`) →
+    /// 진입점(`CLAUDE_CODE_ENTRYPOINT` 에 "desktop") 순서로 본다
     public var hostBundleIdentifier: String? {
         if let bundleID = bundleIdentifier?.trimmingCharacters(in: .whitespaces), !bundleID.isEmpty {
             return bundleID
+        }
+        if Self.isCodexDesktopOriginator(originator) {
+            return Self.codexDesktopBundleID
         }
         if let program = termProgram?.lowercased(), let bundleID = Self.termProgramBundleIDs[program] {
             return bundleID
@@ -108,6 +114,43 @@ extension TerminalContext {
     /// Claude 데스크톱 앱 안에서 실행된 세션인지 (`hostBundleIdentifier` 와 같은 규칙)
     public var isClaudeDesktopApp: Bool {
         hostBundleIdentifier == Self.claudeDesktopBundleID
+    }
+
+    /// Codex 데스크톱 앱 안에서 실행된 세션인지 (`hostBundleIdentifier` 와 같은 규칙)
+    public var isCodexDesktopApp: Bool {
+        hostBundleIdentifier == Self.codexDesktopBundleID
+    }
+
+    /// Codex 앱이 앱 서버에 넣는 이름(`CODEX_INTERNAL_ORIGINATOR_OVERRIDE`)인지: "Codex" 또는 "… Desktop".
+    /// VS Code 확장 같은 다른 앱의 이름은 아니다 (그런 세션은 번들 ID · 터미널로 알아본다)
+    static func isCodexDesktopOriginator(_ originator: String?) -> Bool {
+        guard let name = originator?.trimmingCharacters(in: .whitespaces).lowercased(), !name.isEmpty else { return false }
+        return name == "codex" || (name.contains("codex") && name.contains("desktop"))
+    }
+
+    /// Codex 앱 안의 이 스레드를 여는 링크 (`codex://threads/<스레드 ID>`, 앱이 받는 링크).
+    /// 공개 문서에 없는 앱 내부 링크라 바뀔 수 있어서 여는 쪽(`TerminalJumper`)은 열지 못하면 앱만 앞으로 가져온다.
+    /// Codex 앱 세션이 아니거나 스레드 ID 가 UUID 모양이 아니면 nil
+    public var codexDesktopThreadURL: URL? {
+        guard isCodexDesktopApp, let id = hostSessionID, Self.isUUID(id) else { return nil }
+        return URL(string: "codex://threads/\(id.lowercased())")
+    }
+
+    /// 8-4-4-4-12 16진수 UUID 인지 (링크에 넣기 전 검증)
+    static func isUUID(_ text: String) -> Bool {
+        let bytes = Array(text.utf8)
+        guard bytes.count == 36 else { return false }
+        for (index, byte) in bytes.enumerated() {
+            if [8, 13, 18, 23].contains(index) {
+                guard byte == UInt8(ascii: "-") else { return false }
+            } else {
+                let isHex = (UInt8(ascii: "0")...UInt8(ascii: "9")).contains(byte)
+                    || (UInt8(ascii: "a")...UInt8(ascii: "f")).contains(byte)
+                    || (UInt8(ascii: "A")...UInt8(ascii: "F")).contains(byte)
+                guard isHex else { return false }
+            }
+        }
+        return true
     }
 
     /// Claude 데스크톱 앱 안의 이 세션을 여는 링크 (`claude://code/continue?session=local_…`).

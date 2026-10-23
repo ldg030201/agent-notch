@@ -60,36 +60,54 @@ public struct TerminalContext: Hashable, Sendable, Codable {
     public var itermSessionID: String?
     public var bundleIdentifier: String?
     public var entrypoint: String?
-    /// Claude 데스크톱 앱이 세션마다 붙이는 ID (`CLAUDE_CODE_HOST_SESSION_ID`, `local_…`). 앱 안의 그 세션을 열 때 쓴다
+    /// 세션 앱이 붙이는 세션 ID. Claude 데스크톱 앱은 `CLAUDE_CODE_HOST_SESSION_ID`(`local_…`), Codex 는 스레드 ID.
+    /// 앱 안의 그 세션을 열 때 쓴다 (`claudeDesktopSessionURL` · `codexDesktopThreadURL`)
     public var hostSessionID: String?
+    /// Codex 를 띄운 앱 이름 (`CODEX_INTERNAL_ORIGINATOR_OVERRIDE`, Codex 앱이면 "Codex")
+    public var originator: String?
 
     public init(
         termProgram: String? = nil,
         itermSessionID: String? = nil,
         bundleIdentifier: String? = nil,
         entrypoint: String? = nil,
-        hostSessionID: String? = nil
+        hostSessionID: String? = nil,
+        originator: String? = nil
     ) {
         self.termProgram = termProgram
         self.itermSessionID = itermSessionID
         self.bundleIdentifier = bundleIdentifier
         self.entrypoint = entrypoint
         self.hostSessionID = hostSessionID
+        self.originator = originator
     }
 
-    /// `HookEnvelope.env` (화이트리스트 환경변수)로부터 생성
-    public init(environment: [String: String]) {
+    /// `HookEnvelope.env` (화이트리스트 환경변수)로부터 생성.
+    /// 다른 에이전트의 키는 읽지 않는다: Codex 앱 터미널에서 띄운 Claude Code 에는 Codex 키가, Claude 앱 안에서 띄운 Codex 에는
+    /// Claude 키가 물려 있을 수 있어서 그 앱의 세션으로 잘못 알아보지 않게 한다
+    public init(environment: [String: String], agent: AgentKind = .claude) {
         func value(_ key: String) -> String? {
             guard let raw = environment[key], !raw.isEmpty else { return nil }
             return raw
         }
-        self.init(
-            termProgram: value("TERM_PROGRAM"),
-            itermSessionID: value("ITERM_SESSION_ID"),
-            bundleIdentifier: value("__CFBundleIdentifier"),
-            entrypoint: value("CLAUDE_CODE_ENTRYPOINT"),
-            hostSessionID: value("CLAUDE_CODE_HOST_SESSION_ID")
-        )
+        switch agent {
+        case .claude:
+            self.init(
+                termProgram: value("TERM_PROGRAM"),
+                itermSessionID: value("ITERM_SESSION_ID"),
+                bundleIdentifier: value("__CFBundleIdentifier"),
+                entrypoint: value("CLAUDE_CODE_ENTRYPOINT"),
+                hostSessionID: value("CLAUDE_CODE_HOST_SESSION_ID")
+            )
+        case .codex:
+            self.init(
+                termProgram: value("TERM_PROGRAM"),
+                itermSessionID: value("ITERM_SESSION_ID"),
+                bundleIdentifier: value("__CFBundleIdentifier"),
+                hostSessionID: value("CODEX_THREAD_ID"),
+                originator: value("CODEX_INTERNAL_ORIGINATOR_OVERRIDE")
+            )
+        }
     }
 }
 
@@ -306,8 +324,10 @@ public struct AgentSession: Identifiable, Hashable, Sendable {
     public static let maxActivities = 40
     public static let maxStreamingCharacters = 2_000
 
-    /// Claude Code `session_id`
+    /// 훅의 `session_id` (Claude Code 세션 · Codex 스레드)
     public var id: String
+    /// 세션을 돌리는 에이전트 (Claude Code · Codex)
+    public var agent: AgentKind
     public var cwd: String
     /// cwd 의 마지막 경로 요소 (예: "api-server")
     public var projectName: String
@@ -352,6 +372,7 @@ public struct AgentSession: Identifiable, Hashable, Sendable {
 
     public init(
         id: String,
+        agent: AgentKind = .claude,
         cwd: String,
         projectName: String,
         gitBranch: String? = nil,
@@ -376,6 +397,7 @@ public struct AgentSession: Identifiable, Hashable, Sendable {
         terminal: TerminalContext = TerminalContext()
     ) {
         self.id = id
+        self.agent = agent
         self.cwd = cwd
         self.projectName = projectName
         self.gitBranch = gitBranch

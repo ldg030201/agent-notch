@@ -25,6 +25,7 @@ public struct DiffOutcome: Hashable, Sendable {
 /// - `tool_response.structuredPatch` (hunk 배열)가 있으면 우선 사용
 /// - 없으면 Edit/MultiEdit 는 old/new 문자열, Write 는 originalFile 과 content 로 직접 계산
 /// - Bash 는 `bashEditDiff` (베타) 를 방어적으로 파싱
+/// - Codex `apply_patch` 는 입력의 패치 글을 직접 센다 (`ApplyPatch`, 상대 경로는 작업 폴더 기준)
 public enum DiffEngine {
     /// 이보다 큰 텍스트는 줄 수만 센다 (미리보기 없음)
     static let maxTextBytes = 2 * 1024 * 1024
@@ -34,11 +35,21 @@ public enum DiffEngine {
     /// 최악(모든 줄이 다름)이 약 36 MB · 수십 ms 안에 끝나도록 묶는다
     static let maxDiffedLines = 3_000
 
-    public static func outcome(toolName: String, toolInput: JSONValue?, toolResponse: JSONValue?) -> DiffOutcome? {
+    /// - cwd: 세션 작업 폴더 (Codex `apply_patch` 의 상대 경로를 절대 경로로 바꿀 때만 쓴다)
+    public static func outcome(
+        toolName: String,
+        toolInput: JSONValue?,
+        toolResponse: JSONValue?,
+        cwd: String? = nil
+    ) -> DiffOutcome? {
         let input = HookPayload(toolInput ?? .null)
         let response = HookPayload(toolResponse ?? .null)
 
         switch toolName {
+        case ApplyPatch.toolName:
+            guard let patch = ApplyPatch.parse(toolInput: toolInput) else { return nil }
+            return applyPatch(patch, cwd: cwd)
+
         case "Edit":
             let path = filePath(input, response)
             if let hunks = nonEmptyHunks(response["structuredPatch"]) {
@@ -189,6 +200,55 @@ public enum DiffEngine {
         let preview = snippet ?? fallback
         guard preview != nil || !changedFiles.isEmpty || added + removed > 0 else { return nil }
         return DiffOutcome(snippet: preview, changedFiles: changedFiles, added: added, removed: removed)
+    }
+
+    // MARK: - Codex apply_patch
+
+    /// 파일마다 줄 수를 세고, 실제 변경 줄이 있는 첫 파일을 미리보기로 (없으면 새로 만든 첫 파일).
+    /// 지운 파일은 줄 수를 알 수 없어(패치에 내용이 없다) 바뀐 파일로만 센다. 패치에는 줄 번호가 없어 첫 변경 줄 번호는 모른다
+    /// (새 파일만 1)
+    private static func applyPatch(_ patch: ApplyPatch, cwd: String?) -> DiffOutcome? {
+        var changedFiles: [String] = []
+        var added = 0
+        var removed = 0
+        var snippet: DiffSnippet?
+        var fallback: DiffSnippet?
+        for file in patch.files {
+            let path = ApplyPatch.absolutePath(file.resultPath, cwd: cwd)
+            if !changedFiles.contains(path) { changedFiles.append(path) }
+            guard file.operation != .delete else { continue }
+            var parsed = ParsedDiff()
+            for line in file.lines {
+                switch line.first {
+                case "+":
+                    parsed.added += 1
+                    parsed.appendPreview(.added, line.dropFirst())
+                case "-" where file.operation == .update:
+                    parsed.removed += 1
+                    parsed.appendPreview(.removed, line.dropFirst())
+                default:
+                    continue
+                }
+            }
+            if file.operation == .add, parsed.added > 0 { parsed.startLine = 1 }
+            added += parsed.added
+            removed += parsed.removed
+            let fileSnippet = DiffSnippet(
+                filePath: path,
+                added: parsed.added,
+                removed: parsed.removed,
+                startLine: parsed.startLine,
+                lines: parsed.preview,
+                isNewFile: file.operation == .add
+            )
+            if snippet == nil, parsed.added + parsed.removed > 0 {
+                snippet = fileSnippet
+            } else if fallback == nil, fileSnippet.isNewFile {
+                fallback = fileSnippet
+            }
+        }
+        guard !changedFiles.isEmpty else { return nil }
+        return DiffOutcome(snippet: snippet ?? fallback, changedFiles: changedFiles, added: added, removed: removed)
     }
 
     // MARK: - hunk 파싱

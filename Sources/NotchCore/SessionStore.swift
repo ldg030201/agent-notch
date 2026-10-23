@@ -111,7 +111,7 @@ public final class SessionStore {
 
         let isNew = sessions[sessionID] == nil
         var session = sessions[sessionID] ?? makeSession(id: sessionID, payload: payload, now: now)
-        applyCommonFields(&session, payload: payload, environment: envelope.env, now: now)
+        applyCommonFields(&session, payload: payload, environment: envelope.env, agent: envelope.agentKind, now: now)
         // 시작을 못 본 서브에이전트(앱을 새로 띄움 등)도 이벤트가 오면 도는 중으로 센다.
         // SubagentStop 은 빼고: Claude 앱이 턴 끝마다 시작 없이 보내는 종료는 무시해야 한다
         if let agentID, event != "SubagentStart", event != "SubagentStop" {
@@ -174,6 +174,9 @@ public final class SessionStore {
             handlePreCompact(&session, now: now)
         case "PostCompact":
             handlePostCompact(&session, payload: payload, now: now)
+        case "Interrupt":
+            // Codex: 사용자가 턴을 멈춤 (Claude Code 는 PostToolUseFailure 의 is_interrupt 로 온다)
+            handleInterrupt(&session)
         default:
             // 알 수 없는 이벤트: 공통 필드(lastEventAt 등)만 갱신
             break
@@ -604,8 +607,12 @@ public final class SessionStore {
     }
 
     /// 사용자가 직접 답하는 툴 (질문 · 계획 승인). 권한 카드의 허용만으로는 답할 수 없어서
-    /// PreToolUse 에서 노치가 답을 받거나(`queueInteraction`), Claude Code 다이얼로그로 넘긴다
-    static let userInteractionTools: Set<String> = NotchWire.interactiveTools
+    /// PreToolUse 에서 노치가 답을 받거나(`queueInteraction`), Claude Code 다이얼로그로 넘긴다.
+    /// Codex 질문(`request_user_input`)은 훅으로 답할 수 없어 늘 세션 앱(Codex 앱 · 터미널)에서 답한다 (입력 대기 카드)
+    static let userInteractionTools: Set<String> = NotchWire.interactiveTools.union(codexInputTools)
+
+    /// Codex 가 답을 기다리며 멈추는 질문 툴 (`request_user_input_async` 는 기다리지 않아 뺀다)
+    static let codexInputTools: Set<String> = ["request_user_input"]
 
     /// 질문 · 계획 승인 툴의 PreToolUse (헬퍼가 답을 기다림): 노치에서 답할 수 있으면 대기열에 넣는다.
     /// 헬퍼가 payload 를 줄였거나(원래 입력을 그대로 돌려줄 수 없음) 노치에서 답할 수 없는 입력이면 nil →
@@ -672,7 +679,8 @@ public final class SessionStore {
         var outcome = DiffEngine.outcome(
             toolName: toolName,
             toolInput: payload["tool_input"],
-            toolResponse: payload["tool_response"]
+            toolResponse: payload["tool_response"],
+            cwd: session.cwd
         )
         // 헬퍼가 payload 를 줄였는데 hunk(structuredPatch · bashEditDiff)가 없으면 입력이 64KB 로 잘렸거나 원본(originalFile)이 빠져
         // 직접 센 줄 수를 믿을 수 없다 (예: 큰 파일 덮어쓰기가 "+50000 −50000" 대신 "+1307 −0"). 바뀐 파일만 센다
@@ -711,14 +719,20 @@ public final class SessionStore {
         session.activities[index].status = .failed
 
         if payload.bool("is_interrupt") == true {
-            // 사용자 인터럽트: 에러가 아니라 턴 중단 (Stop 이벤트가 오지 않음). 예전처럼 실행 중인 활동을 모두 닫는다
-            closeRunningActivities(&session, status: .failed, keepingRunningSubagents: false)
-            session.currentActivity = nil
-            session.mainPhase = .idle
-            session.mainTurnEnded = true
+            handleInterrupt(&session)
         } else {
             settleAfterTool(&session)
         }
+    }
+
+    /// 사용자 인터럽트: 에러가 아니라 턴 중단 (Stop 이벤트가 오지 않음). 예전처럼 실행 중인 활동을 모두 닫는다.
+    /// Claude Code 는 PostToolUseFailure 의 `is_interrupt`, Codex 는 Interrupt 이벤트로 알린다
+    private func handleInterrupt(_ session: inout AgentSession) {
+        closeRunningActivities(&session, status: .failed, keepingRunningSubagents: false)
+        session.currentActivity = nil
+        session.mainPhase = .idle
+        session.mainTurnEnded = true
+        phaseBeforeCompact[session.id] = nil
     }
 
     private func handlePermissionRequest(
@@ -1054,8 +1068,10 @@ public final class SessionStore {
         _ session: inout AgentSession,
         payload: HookPayload,
         environment: [String: String],
+        agent: AgentKind,
         now: Date
     ) {
+        session.agent = agent
         session.lastEventAt = now
         if let path = payload.string("transcript_path") { session.transcriptPath = path }
         if let cwd = payload.string("cwd"), cwd != session.cwd {
@@ -1067,7 +1083,9 @@ public final class SessionStore {
                 refreshBranch(&session, payload: payload)
             }
         }
-        let terminal = TerminalContext(environment: environment)
+        var terminal = TerminalContext(environment: environment, agent: agent)
+        // Codex 의 session_id 는 스레드 ID 다 (서브에이전트도 부모의 ID). "Codex로" 가 앱 안의 그 스레드를 연다
+        if agent == .codex, terminal.hostSessionID == nil { terminal.hostSessionID = session.id }
         if terminal != TerminalContext() { session.terminal = terminal }
     }
 
@@ -1369,14 +1387,14 @@ public final class SessionStore {
     /// 이 이벤트로 그 대기가 끝났는지. 다른 에이전트(병렬로 도는 서브에이전트 · 메인)의 이벤트로는 끝나지 않는다.
     ///
     /// 훅 대기 요청 (훅이 아직 노치의 결정을 기다린다 = 다른 곳(터미널 · Claude 앱)에서 이미 답했을 때만 끝난다):
-    /// - 새 프롬프트 · Stop · StopFailure: 메인 에이전트의 요청만 (서브에이전트(백그라운드 에이전트)는 메인 턴이 끝나도 계속 돌며 답을 기다린다.
+    /// - 새 프롬프트 · Stop · StopFailure · 인터럽트(Codex `Interrupt`): 메인 에이전트의 요청만 (서브에이전트(백그라운드 에이전트)는 메인 턴이 끝나도 계속 돌며 답을 기다린다.
     ///   그 요청은 그 서브에이전트의 SubagentStop · 훅 연결 끊김 · 시간 초과로 정리)
     /// - PostToolUse(Failure): 같은 호출이 승인돼 실행(또는 실패)된 경우. PermissionRequest 에는 tool_use_id 가 없어
     ///   같은 에이전트 · 툴 이름 · 입력으로 본다. PreToolUse 는 신호로 쓰지 않는다: 병렬로 도는 형제 호출(Read · Grep · WebFetch 등)일 수 있다
     /// - SubagentStop: 그 서브에이전트의 요청
     ///
     /// 세션 앱 다이얼로그 대기 (끝났다는 이벤트가 따로 오지 않는다):
-    /// - 새 프롬프트 · 새 대화(SessionStart) · 인터럽트 · idle_prompt: 열린 다이얼로그가 없다 → 모두
+    /// - 새 프롬프트 · 새 대화(SessionStart) · 인터럽트(Claude Code `is_interrupt` · Codex `Interrupt`) · idle_prompt: 열린 다이얼로그가 없다 → 모두
     /// - Stop · StopFailure: 메인 에이전트의 대기만 (백그라운드 서브에이전트는 메인 턴이 끝나도 계속 돌며 기다린다)
     /// - 기다리던 에이전트의 다음 툴 호출, 기다리던 호출의 결과 (호출을 모르면 그 에이전트의 툴 결과), 그 서브에이전트의 종료
     /// - MCP 입력 요청이 끝남: 그 에이전트의 입력 대기
@@ -1387,7 +1405,7 @@ public final class SessionStore {
         case .hook:
             guard let request else { return true }
             switch event {
-            case "UserPromptSubmit", "Stop", "StopFailure":
+            case "UserPromptSubmit", "Stop", "StopFailure", "Interrupt":
                 return wait.agentID == nil
             case "PostToolUse", "PostToolUseFailure":
                 // 헬퍼가 큰 payload 를 줄였으면 입력이 잘렸을 수 있어 비교하지 않는다
@@ -1401,7 +1419,7 @@ public final class SessionStore {
             }
         case .sessionApp:
             switch event {
-            case "UserPromptSubmit":
+            case "UserPromptSubmit", "Interrupt":
                 return true
             case "SessionStart":
                 return payload.string("source") != "compact"

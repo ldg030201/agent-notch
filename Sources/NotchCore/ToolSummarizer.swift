@@ -70,7 +70,7 @@ public enum ToolSummarizer {
         case "NotebookEdit":
             return ToolSummary(title: titled("Edit", file("notebook_path")), detail: path("notebook_path"), symbolName: "book", label: "Edit")
         case "Bash":
-            let command = input.string("command")
+            let command = shellCommand(toolInput)
             let detail = input.string("description") ?? command
             return ToolSummary(
                 title: titled("Bash", command),
@@ -116,6 +116,45 @@ public enum ToolSummarizer {
                 symbolName: "list.bullet.clipboard",
                 label: "Plan"
             )
+        // Codex 툴 (셸은 "Bash", MCP 는 mcp__<서버>__<툴> 로 와서 위와 같다)
+        case ApplyPatch.toolName:
+            let files = ApplyPatch.parse(toolInput: toolInput)?.files ?? []
+            let title: String
+            if files.count == 1 {
+                title = titled(files[0].operation == .add ? "Write" : "Edit", TextUtils.fileName(files[0].resultPath))
+            } else {
+                title = files.isEmpty ? "Edit" : "Edit \(files.count)개 파일"
+            }
+            let paths = files.map { TextUtils.displayPath(ApplyPatch.absolutePath($0.resultPath, cwd: cwd), cwd: cwd) }
+            return ToolSummary(
+                title: title,
+                detail: TextUtils.nonEmpty(paths.joined(separator: ", ")).map { TextUtils.truncate($0, max: maxDetail) },
+                symbolName: files.count == 1 && files[0].operation == .add ? "doc.badge.plus" : "pencil",
+                label: "Edit"
+            )
+        case "update_plan":
+            let count = input["plan"]?.arrayValue?.count
+            return ToolSummary(title: "Todo", detail: count.map { "\($0)개 항목" }, symbolName: "checklist", label: "Todo")
+        case "spawn_agent":
+            let name = input.string("task_name") ?? input.string("agent_type") ?? input.string("name")
+            return ToolSummary(
+                title: titled("Agent", name),
+                detail: input.string("message").map { TextUtils.truncate(TextUtils.firstLine($0), max: maxDetail) },
+                symbolName: "person.2",
+                label: "Agent"
+            )
+        case "request_user_input", "request_user_input_async":
+            return ToolSummary(
+                title: "질문",
+                detail: firstQuestion(in: toolInput).map { TextUtils.truncate($0, max: maxDetail) },
+                symbolName: "questionmark.bubble",
+                label: "질문"
+            )
+        case "view_image":
+            return ToolSummary(title: titled("Read", file("path")), detail: path("path"), symbolName: "photo", label: "Read")
+        case "exec", "js":
+            // 코드 모드: 모델이 쓴 JS 안에서 다른 툴을 부른다 (안쪽 툴은 각자 따로 훅이 온다)
+            return ToolSummary(title: titled("Code", input.string("title")), detail: nil, symbolName: "curlybraces", label: "Code")
         default:
             if let mcp = mcpParts(toolName) {
                 // 접힌 상태엔 서버 이름만 (툴 이름은 펼친 타임라인에)
@@ -141,7 +180,7 @@ public enum ToolSummarizer {
         switch toolName {
         case "Bash":
             // 앞뒤 공백 · 줄바꿈만 정리 (실행 내용과 무관). 안쪽 공백 · 줄바꿈은 그대로 드러낸다
-            let command = (input.string("command") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let command = (shellCommand(toolInput) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             let detail = shown(command, max: maxPermissionCommand, keepLineBreaks: true)
             // 승인하면 명령만이 아니라 실행 방식도 같이 허락한다: 샌드박스 해제는 제목과 첫 줄에, 백그라운드는 제목에 드러낸다.
             // 값이 true 가 아니어도 비어 있지 않으면 켠 것으로 본다 (안 보이는 쪽보다 더 보이는 쪽이 안전)
@@ -159,6 +198,24 @@ public enum ToolSummarizer {
         case "WebFetch":
             let detail = shown(input.string("url") ?? "", max: maxDetail)
             return PermissionSummary(title: "웹 요청", detail: detail.text, isTruncated: detail.truncated)
+        case ApplyPatch.toolName:
+            // Codex 파일 수정: 파일마다 "추가 · 수정 · 삭제 · 이동" 한 줄. 패치를 읽지 못하면 입력 그대로 (다 안 보이면 허용을 막는다)
+            guard let patch = ApplyPatch.parse(toolInput: toolInput) else {
+                let raw = shown(ApplyPatch.text(in: toolInput) ?? TextUtils.compactJSON(toolInput), max: maxPermissionCommand, keepLineBreaks: true)
+                return PermissionSummary(title: "파일 수정 요청", detail: raw.text, isTruncated: raw.truncated)
+            }
+            let lines = patch.files.map { file -> String in
+                let path = TextUtils.displayPath(ApplyPatch.absolutePath(file.path, cwd: cwd), cwd: cwd)
+                switch file.operation {
+                case .add: return "추가 \(path)"
+                case .delete: return "삭제 \(path)"
+                case .update:
+                    guard let moved = file.movedTo else { return "수정 \(path)" }
+                    return "이동 \(path) → \(TextUtils.displayPath(ApplyPatch.absolutePath(moved, cwd: cwd), cwd: cwd))"
+                }
+            }
+            let detail = shown(lines.joined(separator: "\n"), max: maxPermissionCommand, keepLineBreaks: true)
+            return PermissionSummary(title: "파일 수정 요청", detail: detail.text, isTruncated: detail.truncated)
         default:
             if let mcp = mcpParts(toolName) {
                 // 서버 · 툴 이름 다음 줄에 인자 JSON (인자가 없으면 이름만)
@@ -178,6 +235,15 @@ public enum ToolSummarizer {
     static let sandboxWarning = "⚠ 샌드박스 밖에서 실행"
 
     // MARK: - 헬퍼
+
+    /// 셸 명령: `command` 문자열, 배열(`["bash", "-lc", "…"]`)이면 공백으로 이은 것
+    static func shellCommand(_ toolInput: JSONValue?) -> String? {
+        if let command = toolInput?["command"]?.stringValue { return command }
+        if let parts = toolInput?["command"]?.arrayValue?.compactMap(\.stringValue), !parts.isEmpty {
+            return parts.joined(separator: " ")
+        }
+        return toolInput?["cmd"]?.stringValue
+    }
 
     /// 실행 옵션이 켜졌는지 (JS 처럼 false · 0 · 빈 문자열 · null 만 꺼짐)
     static func isSet(_ value: JSONValue?) -> Bool {
