@@ -675,6 +675,41 @@ struct CodexHookInstallerTests {
         #expect(try runShell(command) == ["--agent", "codex", "PermissionRequest", "--reply-timeout", "590"])
     }
 
+    /// 설치된 우리 훅 내용의 지문: 설치 전 nil, 같은 내용이면 같고, 우리 항목 내용이 바뀌면 바뀐다 (다른 훅은 상관없음)
+    @Test func fingerprintFollowsOurEntriesOnly() throws {
+        let fixture = try InstallerFixture()
+        defer { fixture.temp.remove() }
+        let installer = fixture.makeCodexInstaller()
+        #expect(installer.managedFingerprint() == nil)
+
+        try installer.install(helperSource: fixture.helperSource, includeMessageDisplay: false)
+        let first = try #require(installer.managedFingerprint())
+        #expect(installer.managedFingerprint() == first)
+        #expect(installer.settingsModifiedAt() != nil)
+
+        // 다른 훅을 더해도 그대로
+        var root = try #require(fixture.codexHooks().objectValue)
+        var hooks = try #require(root["hooks"]?.objectValue)
+        let other = try JSONValue.parse(Data(#"{"hooks":[{"type":"command","command":"/usr/bin/true"}]}"#.utf8))
+        hooks["Stop"] = .array((hooks["Stop"]?.arrayValue ?? []) + [other])
+        root["hooks"] = .object(hooks)
+        try JSONValue.object(root).serialized().write(to: fixture.codexHooksURL)
+        #expect(installer.managedFingerprint() == first)
+
+        // 우리 항목 내용이 바뀌면 (예: 예전 timeout) 바뀐다
+        var group = try #require(hooks["PermissionRequest"]?[0]?.objectValue)
+        var entry = try #require(group["hooks"]?[0]?.objectValue)
+        entry["timeout"] = .number(300)
+        group["hooks"] = .array([.object(entry)])
+        hooks["PermissionRequest"] = .array([.object(group)])
+        root["hooks"] = .object(hooks)
+        try JSONValue.object(root).serialized().write(to: fixture.codexHooksURL)
+        #expect(installer.managedFingerprint() != first)
+
+        try installer.uninstall()
+        #expect(installer.managedFingerprint() == nil)
+    }
+
     @Test func claudeAndCodexDoNotTouchEachOther() throws {
         let fixture = try InstallerFixture()
         defer { fixture.temp.remove() }

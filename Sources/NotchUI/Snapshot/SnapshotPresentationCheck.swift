@@ -262,6 +262,49 @@ enum SnapshotDodgeCheck {
     }
 }
 
+// MARK: - 앱 안내 카드
+
+/// 앱 안내(`IslandNotice`): 입력 필요 카드 자리에 뜨고, 권한 요청이 먼저이며, 접으면(⎋) 내리고 App 에 알린다
+@MainActor
+enum SnapshotNoticeCheck {
+    static func run() -> (cases: Int, problems: [String]) {
+        var problems: [String] = []
+        var cases = 0
+        do {
+            let setup = try SnapshotStage.prepare(.working, style: .notch)
+            let id = setup.screenID
+            let presentation = setup.presentation
+            var responses: [IslandNotice.Response] = []
+            presentation.onNoticeResponse = { responses.append($0) }
+            let notice = IslandNotice.codexHooksAwaitingTrust(canOpenApp: true)
+            presentation.setNotice(notice)
+
+            cases += 1
+            if case let .needsInput(sessionID, _, _) = setup.mode, sessionID == notice.id {} else {
+                problems.append("안내 카드가 안 뜸 (모드 \(setup.mode.kind))")
+            }
+
+            cases += 1
+            var world = setup.world
+            world.webAppAsksPermission()
+            presentation.handleLatestSignal()
+            if setup.mode.kind != .permission { problems.append("권한 요청보다 안내가 먼저 뜸 (모드 \(setup.mode.kind))") }
+            if let request = world.store.pendingPermissions.first {
+                world.store.resolvePermission(id: request.id, decision: .deny(message: nil))
+            }
+
+            cases += 1
+            presentation.collapse(on: id)
+            if presentation.notice != nil || responses != [.dismissed(id: notice.id)] {
+                problems.append("접어도 안내가 남거나 App 에 안 알림 (\(responses))")
+            }
+        } catch {
+            problems.append("장면 준비 실패: \(error.localizedDescription)")
+        }
+        return (cases, problems)
+    }
+}
+
 // MARK: - 배치 이력
 
 /// 숨겼다가 여는 카드 · 화면이 빠졌다 돌아온 뒤의 접힌 상태가 예전 배치 이력(부분 1 · 카드 띠)을 쓰지 않는지.

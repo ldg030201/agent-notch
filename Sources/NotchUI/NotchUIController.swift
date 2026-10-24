@@ -92,6 +92,17 @@ public final class NotchUIController {
         return controller
     }
 
+    /// 세션과 상관없는 앱 안내 카드를 띄우거나(nil 이면) 내린다 (예: Codex 훅 허용 필요)
+    public func setNotice(_ notice: IslandNotice?) {
+        presentation.setNotice(notice)
+    }
+
+    /// 안내 카드에서 버튼 · 접기를 눌렀을 때
+    public var onNoticeResponse: ((IslandNotice.Response) -> Void)? {
+        get { presentation.onNoticeResponse }
+        set { presentation.onNoticeResponse = newValue }
+    }
+
     /// 마우스가 있는 화면에서 펼침/접기
     public func toggleExpanded() {
         guard started else { return }

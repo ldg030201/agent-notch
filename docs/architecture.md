@@ -145,6 +145,13 @@ Codex 훅은 Claude Code 훅과 이벤트 이름 · payload 모양이 거의 같
   - **Codex 는 새 · 바뀐 사용자 훅을 사용자가 검토해 믿을 때까지 실행하지 않는다** (Codex 앱 훅 검토, CLI `/hooks`, 믿음은 항목 내용의 해시에 묶임).
     그래서 이미 지금 모양인 항목은 다시 쓰지 않고, 바꿀 때만 고친다 (바꾸면 다시 검토해야 한다). 앱이 믿음을 대신 적지 않는다.
   - 헬퍼는 두 에이전트가 같이 쓴다. 제거는 둘 다 지워졌을 때만 헬퍼를 지운다.
+  - **허용 확인** (`CodexHookMonitor` · `AppSettingsProvider.confirmCodexHooks`): Codex 의 믿음 기록(`config.toml` 의 `hooks.state`,
+    문서에 없는 해시 형식)은 읽지 않고, Codex 훅 이벤트가 실제로 오면 그때 설치된 우리 훅 내용의 지문(`HookInstaller.managedFingerprint`,
+    우리 항목만의 SHA-256)을 UserDefaults 에 기억한다. 지금 지문과 다르면 "설치됨 · Codex 에서 허용 필요" (설정 · 메뉴바).
+    허용을 기다리는 동안 10초마다 `~/.codex/sessions` 를 보고(메인 밖), 훅 설치 뒤에 바뀐 기록이 있는데 10초 넘게 훅 이벤트가 없으면
+    노치에 앱 안내 카드(`IslandNotice`)를 띄운다. 같은 지문으로는 한 번만, 이벤트가 오면 카드를 내린다. 데모에서는 살피지 않는다.
+  - **앱 안내 카드** (`IslandNotice`, `NotchUIController.setNotice`): 세션과 상관없는 안내를 입력 필요 카드와 같은 자리 · 높이로
+    (`IslandMode.needsInput` 의 세션 ID 자리에 `notice:` ID). 권한 요청 · 세션 입력 대기가 먼저, 접기 · ⎋ · 버튼은 카드를 내리고 App 에 알린다.
 - **세션 앱**: Codex 앱은 앱 서버에 `CODEX_INTERNAL_ORIGINATOR_OVERRIDE="Codex"` 를 넣는다 (실행 중인 앱 서버 프로세스로 확인).
   번들 ID → 이 값("Codex" · "… Desktop") → `TERM_PROGRAM` 순서로 세션 앱을 정한다 (`TerminalContext.hostBundleIdentifier`,
   Codex 앱 번들 ID `com.openai.codex`, 설치 이름은 ChatGPT.app 일 수 있음). 환경변수는 에이전트마다 자기 키만 읽는다

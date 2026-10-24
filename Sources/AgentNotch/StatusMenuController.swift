@@ -140,7 +140,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         for agent in AgentKind.allCases {
             let status = settings.hookStatus(for: agent)
             let name = agent.displayName
-            menu.addItem(Self.disabledItem("\(name) 훅: \(AppSettingsProvider.hookStatusText(for: status))"))
+            menu.addItem(Self.disabledItem("\(name) 훅: \(settings.hookState(for: agent).text)"))
             if status != .installed {
                 let title = status == .notInstalled ? "\(name) 훅 설치" : "\(name) 훅 다시 설치"
                 menu.addItem(ClosureMenuItem(title: title) { [weak self] in self?.host?.installHooksFromMenu(for: agent) })

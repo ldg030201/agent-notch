@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
     private let uiController: NotchUIController
     private let updates: AppUpdateProvider
     private let demo: DemoScenario
+    private let codexHooks: CodexHookMonitor
 
     private var statusMenu: StatusMenuController?
     private var globalShortcut: GlobalShortcutController?
@@ -47,7 +48,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
         uiController = NotchUIController(store: store, preferences: preferences, actions: actions, settings: settings)
         updates = AppUpdateProvider(preferences: preferences)
         demo = DemoScenario(store: store)
+        codexHooks = CodexHookMonitor(settings: settings, ui: uiController)
         super.init()
+        settings.onHooksChanged = { [weak codexHooks] in codexHooks?.hooksChanged() }
+        uiController.onNoticeResponse = { [weak codexHooks] response in codexHooks?.handle(response) }
         // 버전 탭 · 아일랜드 헤더가 처음 그려질 때부터 업데이트 상태가 있어야 한다
         uiController.updateProvider = updates
     }
@@ -76,6 +80,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
         }
         startStallTimer()
         settings.refreshHelperIfNeeded()
+        // Codex 훅을 Codex 가 아직 실행하지 않는 것 같으면 안내 (데모에서는 안 함)
+        if !options.demo { codexHooks.start() }
 
         if options.demo {
             demo.start()
@@ -88,6 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
     func applicationWillTerminate(_ notification: Notification) {
         updates.stop()
         demo.stop()
+        codexHooks.stop()
         pruneTimer?.invalidate()
         stallTimer?.invalidate()
         globalShortcut?.stop()
@@ -141,6 +148,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
     /// 바로 그 앱의 프롬프트로 넘긴다. Claude 앱 세션은 (설정이 켜져 있으면) 넘기지 않고 노치에서 받는다
     /// (`AppPreferences.passesThroughToFrontmostHost`). Codex 앱은 훅이 끝나야 자기 승인 창을 띄우므로 터미널처럼 넘긴다
     private func receive(_ envelope: HookEnvelope) -> UUID? {
+        // 실제 Codex 훅 이벤트 = Codex 가 우리 훅을 믿고 돌린다 (허용 안내를 내린다)
+        if envelope.agentKind == .codex { codexHooks.noteCodexEvent() }
         guard let requestID = store.ingest(envelope) else { return nil }
         let host = TerminalContext(environment: envelope.env, agent: envelope.agentKind)
         if frontmost.isFrontmost(host), preferences.passesThroughToFrontmostHost(isClaudeApp: host.isClaudeDesktopApp) {

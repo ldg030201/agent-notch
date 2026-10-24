@@ -101,6 +101,8 @@ enum SnapshotScenario: String, CaseIterable {
     case permissionCodex = "permission-codex"
     /// Codex 앱 세션이 작업 중 (접힌 띠에 Codex 아이콘)
     case workingCodex = "working-codex"
+    /// 앱 안내 카드: Codex 훅을 설치했는데 Codex 가 아직 실행하지 않는 것 같음 (허용 필요)
+    case noticeCodexHooks = "notice-codex-hooks"
     /// 노치에서 답하는 질문: 한 개 고르기 (선택지 설명 있음)
     case question
     /// `question` 인데 질문한 세션이 Claude 데스크톱 앱에서 돌아감: 앱을 보고 있어도 노치에서 고름 (버튼이 "Claude로")
@@ -549,6 +551,11 @@ enum SnapshotStage {
         case .workingCodex:
             world.useCodexApp(SnapshotWorld.webApp)
             world.codexWebAppEdits()
+        case .noticeCodexHooks:
+            world.apiServerEdits()
+            world.apiServerRunsTests()
+            showCompact()
+            presentation.setNotice(.codexHooksAwaitingTrust(canOpenApp: true))
         case .permissionHandoffDesktop:
             world.hostEnvironment[SnapshotWorld.webApp.id] = SnapshotWorld.desktopEnvironment
             world.apiServerEdits()

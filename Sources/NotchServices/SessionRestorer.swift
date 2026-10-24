@@ -94,6 +94,11 @@ public struct SessionRestorer: Sendable {
         return Array(found.sorted { $0.modified > $1.modified }.prefix(maxFiles))
     }
 
+    /// 가장 최근에 바뀐 Codex 기록의 수정 시각 (`activeWindow` 안, 서브에이전트 기록 포함). Codex 가 지금 일하는지 가늠한다
+    public func latestCodexActivity(now: Date = Date()) -> Date? {
+        recentCodexRollouts(now: now).first?.modified
+    }
+
     /// `activeWindow` 안에 바뀐 Codex 기록 (`<연>/<월>/<일>/*.jsonl`, 최근 것부터 `maxFiles` 개).
     /// 기록은 시작한 날의 폴더에 남아 계속 쓰이므로 날짜 폴더를 모두 보고 수정 시각으로 고른다. 심볼릭 링크는 따라가지 않는다
     func recentCodexRollouts(now: Date) -> [(url: URL, modified: Date)] {

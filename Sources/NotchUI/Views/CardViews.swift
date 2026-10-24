@@ -298,6 +298,78 @@ struct NeedsInputView: View {
     }
 }
 
+// MARK: - 앱 안내 (세션과 상관없음)
+
+/// 앱 안내 카드 (`IslandNotice`). 입력 필요 카드와 같은 틀 · 높이: 머리(아이콘 · 제목 · 주황 글자) + 본문 두 줄까지 + [접기] [버튼]
+struct NoticeView: View {
+    let notice: IslandNotice
+    let layout: IslandLayout
+    let presentation: PresentationController
+    let reduceMotion: Bool
+
+    var body: some View {
+        CardScaffold(layout: layout) {
+            HStack(spacing: 6) {
+                PulsingDot(animated: !reduceMotion).frame(width: 8, height: 8)
+                if let agent = notice.agent {
+                    AgentIcon(agent: agent)
+                }
+                Text(notice.title)
+                    .truncationMode(.tail)
+            }
+        } trailing: {
+            Text(notice.badge)
+                .foregroundStyle(Palette.amber)
+        } content: {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(notice.message)
+                    .foregroundStyle(Palette.text)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, minHeight: CGFloat(messageLines) * IslandMetrics.lineHeight, alignment: .topLeading)
+
+                HStack(spacing: 6) {
+                    Spacer(minLength: 0)
+                    Button {
+                        presentation.respondToNotice(.dismissed(id: notice.id))
+                    } label: {
+                        Text("접기")
+                    }
+                    .buttonStyle(IslandButtonStyle())
+                    .accessibilityLabel("접기")
+                    .help("다시 띄우지 않기" + presentation.keyNote("⎋", .collapse))
+
+                    if let action = notice.actionTitle {
+                        Button {
+                            presentation.respondToNotice(.action(id: notice.id))
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "macwindow")
+                                Text(action)
+                            }
+                        }
+                        .buttonStyle(IslandButtonStyle(prominent: true))
+                        .accessibilityLabel(action)
+                    }
+                }
+                .padding(.top, 10)
+            }
+            .font(IslandFont.body)
+            .padding(.horizontal, IslandMetrics.bodyPadding)
+            .padding(.top, IslandMetrics.bodyTop)
+            .padding(.bottom, 14)
+        }
+    }
+
+    private var messageLines: Int {
+        TextMeasure.lineCount(
+            notice.message, font: IslandFont.bodyNS, lineHeight: IslandMetrics.bodyLineHeight,
+            width: layout.cardWidth - IslandMetrics.bodyPadding * 2, maxLines: 2
+        )
+    }
+}
+
 // MARK: - done / failed (턴 완료 요약)
 
 struct CompletionView: View {

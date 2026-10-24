@@ -452,15 +452,19 @@ struct IslandContentView: View {
                 )
             }
         case let .needsInput(sessionID, message, isPermissionPrompt):
-            NeedsInputView(
-                session: presentation.store.sessions[sessionID],
-                sessionID: sessionID,
-                message: message,
-                isPermissionPrompt: isPermissionPrompt,
-                layout: layout,
-                presentation: presentation,
-                reduceMotion: reduceMotion
-            )
+            if let notice = presentation.notice, notice.id == sessionID {
+                NoticeView(notice: notice, layout: layout, presentation: presentation, reduceMotion: reduceMotion)
+            } else {
+                NeedsInputView(
+                    session: presentation.store.sessions[sessionID],
+                    sessionID: sessionID,
+                    message: message,
+                    isPermissionPrompt: isPermissionPrompt,
+                    layout: layout,
+                    presentation: presentation,
+                    reduceMotion: reduceMotion
+                )
+            }
         case let .done(sessionID):
             CompletionView(
                 session: presentation.store.sessions[sessionID],

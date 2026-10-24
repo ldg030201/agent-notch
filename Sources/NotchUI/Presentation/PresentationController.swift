@@ -56,6 +56,10 @@ final class PresentationController {
     private(set) var dodgedScreenIDs: Set<ScreenID> = []
     /// 업데이트 상태 (없으면 배지 · 버전 탭 숨김)
     var updateProvider: UpdateProvider?
+    /// 세션과 상관없는 앱 안내 카드 (`IslandNotice`, App 이 넣고 뺀다)
+    private(set) var notice: IslandNotice?
+    /// 안내 카드에서 버튼 · 접기를 눌렀을 때 (App 이 기억하고 다시 띄우지 않는다)
+    @ObservationIgnored var onNoticeResponse: ((IslandNotice.Response) -> Void)?
 
     private var transient: Transient?
     /// ⎋ 로 접어 둔 권한 요청 (요청은 계속 대기)
@@ -390,7 +394,22 @@ final class PresentationController {
         if let input = pendingInput(), suppressedInputKey != Self.inputKey(input.sessionID, input.message) {
             return .needsInput(sessionID: input.sessionID, message: input.message, isPermissionPrompt: input.isPermissionPrompt)
         }
+        // 앱 안내는 세션의 알림이 없을 때 (입력 필요 카드와 같은 자리)
+        if let notice {
+            return .needsInput(sessionID: notice.id, message: notice.message, isPermissionPrompt: false)
+        }
         return nil
+    }
+
+    /// 앱 안내 카드를 넣거나(같은 ID 면 내용만 바꿈) 뺀다
+    func setNotice(_ value: IslandNotice?) {
+        if notice != value { notice = value }
+    }
+
+    /// 안내 카드의 버튼 · 접기: 카드를 내리고 App 에 알린다
+    func respondToNotice(_ response: IslandNotice.Response) {
+        notice = nil
+        onNoticeResponse?(response)
     }
 
     /// 입력 대기 중이거나, 훅 대기 없이 터미널(또는 Claude 앱)에서 승인을 기다리는 세션
@@ -870,7 +889,11 @@ final class PresentationController {
         case let .permission(request, _):
             suppressedPermissionIDs.insert(request.id)
         case let .needsInput(sessionID, message, _):
-            suppressedInputKey = Self.inputKey(sessionID, message)
+            if let notice, notice.id == sessionID {
+                respondToNotice(.dismissed(id: notice.id))
+            } else {
+                suppressedInputKey = Self.inputKey(sessionID, message)
+            }
         case .expanded:
             expandedScreenID = nil
         case .peek, .done, .failed:

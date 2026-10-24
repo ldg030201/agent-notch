@@ -16,10 +16,14 @@ final class AppSettingsProvider: SettingsProvider {
     /// 전역 단축키 등록 상태 (AppDelegate 가 켤 때 넣는다)
     var globalShortcut: GlobalShortcutState?
 
+    /// 훅을 설치 · 제거 · 고쳤을 때 (Codex 훅 허용 확인을 다시 본다)
+    var onHooksChanged: (() -> Void)?
+
     init(installers: [AgentKind: HookInstaller], loginItem: MainAppLoginItem, preferences: AppPreferences) {
         self.installers = installers
         self.loginItem = loginItem
         self.preferences = preferences
+        reloadCodexFingerprint()
     }
 
     var appVersion: String { AppInfo.displayVersion }
@@ -52,17 +56,58 @@ final class AppSettingsProvider: SettingsProvider {
     /// 설정 화면용: 설정 파일을 한 번 읽어 문구와 설치 여부(우리 훅 항목이 하나라도 있으면 true, 제거 버튼 활성화 기준)를 함께 만든다
     func hookState(for agent: AgentKind) -> (text: String, installed: Bool) {
         let status = hookStatus(for: agent)
-        return (Self.hookStatusText(for: status), status != .notInstalled)
+        var text = Self.hookStatusText(for: status)
+        if agent == .codex, status != .notInstalled, codexHooksAwaitingTrust {
+            text += " · Codex 에서 허용 필요"
+        }
+        return (text, status != .notInstalled)
+    }
+
+    // MARK: - Codex 훅 허용 확인
+
+    /// Codex 는 사용자가 검토해 믿은 훅만 돌린다. 그 믿음을 직접 읽지 않고(문서에 없는 내부 형식), Codex 훅 이벤트가 실제로 왔을 때의
+    /// 우리 훅 지문(`HookInstaller.managedFingerprint`)을 기억한다. 지금 설치된 지문과 같으면 이 훅 내용으로 돌고 있는 것이다
+    static let codexConfirmedKey = "codexHooksConfirmedFingerprint"
+
+    /// 지금 설치된 Codex 훅 지문 (설치 안 됐으면 nil). 설치 · 제거 · 고치기 뒤와 허용을 기다리는 동안 다시 읽는다
+    private(set) var codexFingerprint: String?
+
+    func reloadCodexFingerprint() {
+        codexFingerprint = installer(.codex).managedFingerprint()
+    }
+
+    /// Codex 훅 설정 파일을 마지막으로 바꾼 시각 (설치 · 고친 때)
+    var codexHooksModifiedAt: Date? { installer(.codex).settingsModifiedAt() }
+
+    /// Codex 훅이 설치돼 있는데 그 내용으로 Codex 이벤트를 아직 받아 보지 못함 (Codex 에서 허용이 필요할 수 있다)
+    var codexHooksAwaitingTrust: Bool {
+        guard let fingerprint = codexFingerprint else { return false }
+        return UserDefaults.standard.string(forKey: Self.codexConfirmedKey) != fingerprint
+    }
+
+    /// Codex 훅 이벤트가 왔다: 지금 훅 내용을 Codex 가 믿고 돌리는 중이라고 기억한다. 새로 기억했으면 true
+    @discardableResult
+    func confirmCodexHooks() -> Bool {
+        guard codexHooksAwaitingTrust, let fingerprint = codexFingerprint else { return false }
+        UserDefaults.standard.set(fingerprint, forKey: Self.codexConfirmedKey)
+        return true
     }
 
     /// 헬퍼를 복사하고 그 에이전트의 훅 설정에 AgentNotch 항목을 등록한다 (기존 파일은 백업)
     func installHooks(for agent: AgentKind) throws {
         guard let helper = AppInfo.helperURL() else { throw HookInstallerError.helperSourceMissing }
+        defer { hooksChanged() }
         try installer(agent).install(helperSource: helper, includeMessageDisplay: preferences.showStreamingText)
+    }
+
+    private func hooksChanged() {
+        reloadCodexFingerprint()
+        onHooksChanged?()
     }
 
     /// 그 에이전트의 AgentNotch 훅만 제거하고, 어느 에이전트에도 남은 항목이 없으면 복사해 둔 헬퍼도 지운다
     func uninstallHooks(for agent: AgentKind) throws {
+        defer { hooksChanged() }
         try installer(agent).uninstall()
         if AgentKind.allCases.allSatisfy({ installer($0).status() == .notInstalled }) {
             try? installer(agent).removeHelper()
@@ -74,6 +119,7 @@ final class AppSettingsProvider: SettingsProvider {
     /// 설치한 적 없으면 아무것도 안 한다. 설정은 우리 항목만 고치고 바꾸기 전에 백업을 남긴다
     func refreshHelperIfNeeded() {
         guard let helper = AppInfo.helperURL() else { return }
+        defer { hooksChanged() }
         for agent in AgentKind.allCases {
             let installer = installer(agent)
             _ = try? installer.refreshHelperIfInstalled(helperSource: helper)

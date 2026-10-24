@@ -25,7 +25,7 @@ enum Changelog {
             ChangelogGroup(title: "Codex", icon: "terminal.fill", tab: "general", isNew: true, notes: [
                 .new("Codex 세션 표시 (CLI · Codex 앱, 앱을 다시 켜도 이어 보기)"),
                 .new("Codex 권한 요청 허용 · 거부, Codex로 바로 이동"),
-                .new("Codex 훅 설치 · 제거 (설정 · 메뉴바)"),
+                .new("Codex 훅 설치 · 제거, 허용이 필요하면 노치에서 안내"),
             ]),
             ChangelogGroup(title: "노치 아일랜드", icon: "rectangle.topthird.inset.filled", notes: [
                 .new("세션 앞 Clawd · Codex 아이콘 추가"),

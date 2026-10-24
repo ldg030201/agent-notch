@@ -1,3 +1,4 @@
+import CryptoKit
 import Darwin
 import Foundation
 import NotchShared
@@ -181,6 +182,31 @@ public final class HookInstaller {
             events.insert(event)
         }
         return events
+    }
+
+    /// 설치된 AgentNotch 훅 항목의 지문 (이벤트 · 항목 내용의 SHA-256). 설치돼 있지 않으면 nil.
+    /// Codex 는 훅 항목 내용에 믿음을 묶으므로, 지문이 바뀌면(설치 · 고치기) 사용자가 다시 허용해야 할 수 있다.
+    /// 앱은 이 지문으로 "이 훅 내용으로 이벤트를 받아 봤다" 를 기억한다
+    public func managedFingerprint() -> String? {
+        guard let root = try? readSettings()?.value, let hooks = root["hooks"]?.objectValue else { return nil }
+        var parts: [JSONValue] = []
+        for event in hooks.keys.sorted() {
+            for group in hooks[event]?.arrayValue ?? [] {
+                for entry in group["hooks"]?.arrayValue ?? [] where isManaged(entry) {
+                    parts.append(.object(["event": .string(event), "matcher": group["matcher"] ?? .null, "entry": entry]))
+                }
+            }
+        }
+        guard !parts.isEmpty else { return nil }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(JSONValue.array(parts)) else { return nil }
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// 훅 설정 파일을 마지막으로 바꾼 시각 (없으면 nil)
+    public func settingsModifiedAt() -> Date? {
+        (try? fileManager.attributesOfItem(atPath: settingsURL.path)[.modificationDate]) as? Date
     }
 
     // MARK: - 설치 / 제거
