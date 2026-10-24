@@ -29,6 +29,11 @@ enum Changelog {
             ]),
             ChangelogGroup(title: "노치 아일랜드", icon: "rectangle.topthird.inset.filled", notes: [
                 .new("세션 앞 Clawd · Codex 아이콘 추가"),
+                .fix("이미 넘어간 툴에 'Claude 앱에서 확인 필요' 카드가 남던 문제 수정"),
+            ]),
+            ChangelogGroup(title: "권한 · 질문", icon: "hand.raised.fill", tab: "general", notes: [
+                .change("질문 · 계획 승인 대기 시간을 약 10분으로 변경"),
+                .improve("대기 시간이 지나 앱으로 넘긴 질문 안내 개선"),
             ]),
             ChangelogGroup(title: "표시", icon: "display", tab: "display", notes: [
                 .new("마우스를 올려 두면 잠깐 비켜주기 추가 (뒤의 탭 · 버튼 누르기, 끄기 가능)"),

@@ -41,7 +41,9 @@ Codex (CLI · Codex 앱)           ~/.codex/hooks.json  (명령에 --agent codex
 
 - 줄바꿈으로 끝나는 JSON 한 줄. 헬퍼 → 앱: `HookEnvelope`, 앱 → 헬퍼: `HookReply` (응답이 필요한 이벤트만).
 - `HookReply.output` 이 있으면 헬퍼는 그 JSON 을 stdout 에 그대로 출력하고 exit 0. 없으면 아무것도 출력하지 않는다.
-- 헬퍼의 응답 대기 시간은 훅 `timeout` 보다 짧아야 한다. 앱이 `AppPreferences.permissionTimeout` 이 지나면 `output: null` 로 응답한다.
+- 헬퍼의 응답 대기 시간은 훅 `timeout` 보다 짧아야 한다. 앱은 요청마다 정한 시간(`AppPreferences.replyTimeout(isInteraction:)`:
+  권한 요청은 `permissionTimeout`, 질문 · 계획 승인은 `interactionTimeout` = 585초)이 지나면 `output: null` 로 응답한다
+  (`SocketServer.replyTimeout` 이 요청 ID 를 받는다).
 - 소켓 경로는 `AGENT_NOTCH_SOCKET` 환경변수로 덮어쓸 수 있다 (테스트용). `sun_path` 길이 제한(104바이트)에 주의.
 - 응답 없이 끝난 대기는 이유와 함께 알린다 (`SocketServer.PendingEnd`): 연결 끊김 → `SessionStore.cancelPermission`,
   앱의 대기 시간 초과(`output: null` 로 응답함) → `expirePermission`, 서버 정지 → `cancelPermission`.
@@ -346,7 +348,11 @@ Claude 의 객관식 질문과 계획 승인을 다이얼로그 대신 노치에
   - "기타" 입력란은 아일랜드 안의 유일한 AppKit 컨트롤(TextField)이다. 스냅숏에서는 같은 자리의 글자 그림으로 대신한다.
 - 계획 카드: 상단 행 "승인 필요", "계획" 칩 + 제목(첫 줄), 다음 5줄 미리보기, 계획 파일 이름 · 줄 수 · [파일 열기], [접기] [터미널로] [승인 ⌘↩].
   계획은 카드에 다 들어가지 않으므로 파일 열기로 전체를 본다 (권한 카드처럼 승인을 막지는 않는다: 승인해도 이후 툴 호출은 권한 규칙을 따른다).
-- 권한 요청과 같은 정책: 대기 시간 `permissionTimeout`(기본 120초)이 지나면 결정 없이 넘겨 다이얼로그가 뜬다(입력 대기 카드로 안내),
+- 대기 시간은 권한 요청보다 길다: `AppPreferences.interactionTimeout`(앱이 기다릴 수 있는 최대 585초, 약 10분). 노치가 들고 있는 동안은
+  세션 앱에 질문이 뜨지 않고 질문은 읽는 데만 1~2분 걸리기도 해서, 예전처럼 권한 요청 대기 시간(기본 120초)을 쓰면 앱이 2분 멈춘 듯 보이다가
+  노치 카드가 입력 대기로 바뀌었다. 지나면 결정 없이 넘겨 다이얼로그가 뜨고, 입력 대기 카드 본문에 넘긴 이유를 쓴다
+  (`SessionStore.expiredInteractionMessage`: "노치에서 기다리는 시간이 지나 Claude 앱으로 넘겼어요. 앱에서 답해 주세요").
+- 그 밖은 권한 요청과 같은 정책: 시간이 지나면 다이얼로그(입력 대기 카드로 안내),
   세션의 터미널 · 앱이 이미 앞에 있으면(`passthroughWhenTerminalFrontmost`) 바로 넘긴다(입력 대기 카드), 대기열 · 포커스 우선순위도 같다.
   Claude 앱 세션의 질문 · 계획 승인은 Claude 앱이 앞에 있어도 노치에서 받는다(아래 "Claude 앱 세션은 노치에서 받는다").
   노치가 `PreToolUse` 를 들고 있는 동안은 툴이 아직 실행 전이라 Claude 앱에는 질문이 뜨지 않으므로, 앱에서 답하려면 [Claude로] 로 넘긴다.
@@ -391,6 +397,11 @@ Claude 의 객관식 질문과 계획 승인을 다이얼로그 대신 노치에
   `request_teach_access`, 디렉터리 `request_directory` · `change_directory`, 브라우저 `navigate` · 브라우저 선택은 2.5초,
   첫 방문 사이트 승인을 띄울 수 있는 브라우저 페이지 툴(computer · find · form_input · get_page_text · javascript_tool · read_page)은 8초,
   나머지(앱 실행 · 스크린샷 · 일괄 실행 등)는 보지 않는다. 예전엔 접두사 아래 모든 툴을 보고 느린 호출이 가짜 카드로 포커스를 가져갔다.
+- 다른 훅(예: Claude 앱 자체 훅)에 막힌 툴("PreToolUse hook error")은 PostToolUse · PostToolUseFailure 가 오지 않는다. 그래서 같은 에이전트가
+  다음 툴을 시작하면(`PreToolUse`), 그보다 `supersededToolAge`(2초) 넘게 먼저 시작해 아직 실행 중인 그 에이전트의 툴은 끝난 것(실패)으로 본다
+  (`closeSupersededTools`). 모델은 앞 툴들의 결과를 다 받은 뒤에 다음 툴을 부르기 때문이다. 병렬로 함께 부른 툴(2초 안) · 서브에이전트를 띄운 툴
+  (Agent · Task) · 다른 에이전트의 툴은 남기고, 늦게 결과가 오면 그 상태로 바로잡는다. 예전엔 막힌 `change_directory` 의 앱 확인 추정 카드가
+  턴이 끝날 때까지 남았다.
 
 ### 색상 (아일랜드는 항상 검정 배경 — 라이트/다크 공통)
 

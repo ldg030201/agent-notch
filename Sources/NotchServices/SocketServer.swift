@@ -65,7 +65,7 @@ public final class SocketServer: @unchecked Sendable {
     private let callbackLock = NSLock()
     private var storedOnEnvelope: (@MainActor (HookEnvelope) -> UUID?)?
     private var storedOnPendingCancelled: (@MainActor (UUID, PendingEnd) -> Void)?
-    private var storedReplyTimeout: @MainActor () -> TimeInterval = { 120 }
+    private var storedReplyTimeout: @MainActor (UUID?) -> TimeInterval = { _ in 120 }
 
     /// envelope 수신. 응답이 필요한 이벤트면 대기시킬 요청 ID 를 돌려준다 (nil 이면 즉시 `output: null` 응답).
     public var onEnvelope: (@MainActor (HookEnvelope) -> UUID?)? {
@@ -79,8 +79,8 @@ public final class SocketServer: @unchecked Sendable {
         set { withCallbackLock { storedOnPendingCancelled = newValue } }
     }
 
-    /// 응답을 기다리는 최대 시간(초). 요청마다 메인 액터에서 읽는다.
-    public var replyTimeout: @MainActor () -> TimeInterval {
+    /// 응답을 기다리는 최대 시간(초). 요청마다 메인 액터에서 그 요청 ID 로 읽는다 (권한 요청 · 질문마다 다를 수 있다)
+    public var replyTimeout: @MainActor (UUID?) -> TimeInterval {
         get { withCallbackLock { storedReplyTimeout } }
         set { withCallbackLock { storedReplyTimeout = newValue } }
     }
@@ -437,7 +437,7 @@ public final class SocketServer: @unchecked Sendable {
                 guard let self else { return }
                 let id = self.onEnvelope?(envelope)
                 guard waitsForReply else { return }
-                let timeout = Self.clampedReplyTimeout(self.replyTimeout())
+                let timeout = Self.clampedReplyTimeout(self.replyTimeout(id))
                 self.queue.async {
                     self.attach(connection, id: id, timeout: timeout)
                 }

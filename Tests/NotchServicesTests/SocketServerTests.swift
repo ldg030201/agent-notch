@@ -187,7 +187,7 @@ struct SocketServerTests {
         let recorder = SocketRecorder()
         let id = UUID()
         let server = makeServer(path: path, recorder: recorder, replyID: id)
-        server.replyTimeout = { 0.3 }
+        server.replyTimeout = { _ in 0.3 }
         try server.start()
         defer { server.stop() }
 

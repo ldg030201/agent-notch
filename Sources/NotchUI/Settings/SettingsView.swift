@@ -287,7 +287,7 @@ struct SettingsView: View {
                 )
                 .disabled(!preferences.passthroughWhenTerminalFrontmost)
                 SettingsDivider()
-                SettingsRow(title: "권한 대기 시간", note: "지나면 Claude Code · Codex 기본 승인 창으로 넘겨요") {
+                SettingsRow(title: "권한 대기 시간", note: "지나면 Claude Code · Codex 기본 승인 창으로 넘겨요. 질문 · 계획 승인은 약 10분까지 기다려요") {
                     SettingsStepper(value: $preferences.permissionTimeout, range: 15...540, step: 15) { "\(Int($0))초" }
                 }
             }

@@ -407,6 +407,7 @@ public final class SessionStore {
     public func expirePermission(id: UUID) {
         guard let taken = takePending(id) else { return }
         let (info, agentID) = taken
+        var signal: IslandSignal?
         if var session = sessions[info.sessionID] {
             let toolUseID = info.toolUseID
                 ?? Self.waitingToolUseID(in: session, agentID: agentID, toolName: info.toolName)
@@ -415,8 +416,26 @@ public final class SessionStore {
             )
             finalize(&session, now: clock())
             if session != sessions[info.sessionID] { sessions[info.sessionID] = session }
+            // 질문 · 계획 승인: 입력 대기 카드에 노치에서 더 고를 수 없는 이유를 쓴다 (선택지 카드가 왜 사라졌는지)
+            if info.isInteraction {
+                signal = .needsInput(sessionID: info.sessionID, message: Self.expiredInteractionMessage(session.terminal))
+            }
         }
+        if let signal { emit(signal) }
         recomputeFocus()
+    }
+
+    /// 노치에서 기다리는 시간이 지나 세션 앱으로 넘긴 질문 · 계획 승인 안내 (입력 대기 카드 본문)
+    static func expiredInteractionMessage(_ terminal: TerminalContext) -> String {
+        let place: (to: String, at: String)
+        if terminal.isClaudeDesktopApp {
+            place = ("Claude 앱으로", "앱에서")
+        } else if terminal.isCodexDesktopApp {
+            place = ("Codex 앱으로", "앱에서")
+        } else {
+            place = ("터미널로", "터미널에서")
+        }
+        return "노치에서 기다리는 시간이 지나 \(place.to) 넘겼어요. \(place.at) 답해 주세요"
     }
 
     /// 대기열에서 하나를 꺼낸다 (결정 없이 끝난 요청: 허용됐는지 모르므로 그 호출은 앱 확인 카드 추정에서 뺀다)
@@ -586,6 +605,7 @@ public final class SessionStore {
         let item = Self.toolActivity(
             id: payload.string("tool_use_id"), toolName: toolName, toolInput: toolInput, cwd: session.cwd, agentID: agentID, at: now
         )
+        closeSupersededTools(&session, agentID: agentID, newToolID: item.id, now: now)
         appendActivity(&session, item)
         if session.terminal.isClaudeDesktopApp,
            let delay = appConsent.delay(toolName: toolName, toolInput: toolInput),
@@ -606,6 +626,25 @@ public final class SessionStore {
         resumeTurn(&session, phase: .runningTool, activity: item)
         return nil
     }
+
+    /// 같은 에이전트가 새 툴을 시작했는데 그보다 `supersededToolAge` 넘게 먼저 시작한 툴이 아직 실행 중이면 끝난 것(실패)으로 본다.
+    /// 다른 훅(예: Claude 앱 자체 훅)에 막혀 실행되지 않은 툴은 PostToolUse · PostToolUseFailure 가 오지 않아 턴이 끝날 때까지
+    /// 실행 중으로 남고, 앱 확인 추정 카드("Claude 앱에서 확인이 필요할 수 있어요")도 그동안 붙잡혀 있었다 (지켜보기는 finalize 가 뺀다).
+    /// 모델은 앞 툴들의 결과를 다 받은 뒤에 다음 툴을 부르므로 그 에이전트의 앞 툴은 끝났다. 병렬로 함께 부른 툴(거의 같은 때 시작)은 남기고,
+    /// 서브에이전트를 띄운 툴(Agent · Task)은 서브에이전트가 도는 동안 계속 돌 수 있어 남긴다. 나중에 그 툴의 결과가 오면 그때 바로잡는다
+    private func closeSupersededTools(_ session: inout AgentSession, agentID: String?, newToolID: String, now: Date) {
+        for index in session.activities.indices {
+            let item = session.activities[index]
+            guard item.kind == .tool, item.status == .running, item.agentID == agentID, item.id != newToolID,
+                  !Self.subagentLauncherTools.contains(item.toolName ?? ""),
+                  now.timeIntervalSince(item.startedAt) >= Self.supersededToolAge
+            else { continue }
+            session.activities[index].status = .failed
+        }
+    }
+
+    /// 새 툴보다 이만큼(초) 먼저 시작한 같은 에이전트의 툴은 병렬 호출이 아니라 앞 차례의 툴로 본다
+    static let supersededToolAge: TimeInterval = 2
 
     /// 사용자가 직접 답하는 툴 (질문 · 계획 승인). 권한 카드의 허용만으로는 답할 수 없어서
     /// PreToolUse 에서 노치가 답을 받거나(`queueInteraction`), Claude Code 다이얼로그로 넘긴다.

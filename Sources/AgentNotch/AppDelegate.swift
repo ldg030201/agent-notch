@@ -136,8 +136,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
                 self?.store.cancelPermission(id: id)
             }
         }
-        socketServer.replyTimeout = { [weak self] in
-            self?.preferences.permissionTimeout ?? 120
+        // 질문 · 계획 승인은 권한 요청보다 오래 기다린다 (`AppPreferences.replyTimeout`)
+        socketServer.replyTimeout = { [weak self] id in
+            guard let self else { return 120 }
+            let isInteraction = id.flatMap { id in self.store.pendingPermissions.first { $0.id == id } }?.isInteraction ?? false
+            return self.preferences.replyTimeout(isInteraction: isInteraction)
         }
         store.onPermissionResolved = { [weak self] info, decision in
             self?.socketServer.reply(to: info.id, output: PermissionReplyBuilder.output(for: info, decision: decision))

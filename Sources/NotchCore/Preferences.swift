@@ -1,4 +1,5 @@
 import Foundation
+import NotchShared
 import Observation
 
 /// 노치를 어느 화면에 띄울지
@@ -183,6 +184,16 @@ public final class AppPreferences {
     /// 권한 요청을 노치에서 기다리는 최대 시간(초). 지나면 결정을 Claude Code 기본 프롬프트로 넘긴다.
     public var permissionTimeout: Double {
         didSet { defaults.set(permissionTimeout, forKey: Key.permissionTimeout) }
+    }
+
+    /// 질문 · 계획 승인을 노치에서 기다리는 시간(초): 앱이 기다릴 수 있는 최대 (`NotchWire.maxAppReplyTimeout`, 약 10분).
+    /// 노치가 들고 있는 동안은 세션 앱(Claude 앱 · 터미널)에 질문이 뜨지 않고, 질문은 읽는 데만 1~2분 걸리기도 해서
+    /// 권한 요청 대기 시간(`permissionTimeout`)보다 길게 둔다. 앱에서 답하려면 노치의 "Claude로" · "터미널로"
+    public static let interactionTimeout = Double(NotchWire.maxAppReplyTimeout)
+
+    /// 노치가 그 요청에 답하기를 기다리는 시간(초): 질문 · 계획 승인은 `interactionTimeout`, 권한 요청은 `permissionTimeout`
+    public func replyTimeout(isInteraction: Bool) -> Double {
+        isInteraction ? Self.interactionTimeout : permissionTimeout
     }
 
     /// 이 시간(초) 동안 이벤트가 없는 세션은 목록에서 정리

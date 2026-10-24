@@ -230,8 +230,8 @@ import NotchShared
         #expect(store.sessions["s1"]?.phase == .thinking)
         #expect(store.latestSignal?.seq == seq)
 
-        // 다시 툴 실행 중이 되면 아직 지켜보는 n2 만 알린다
-        store.ingest(hook("PreToolUse", #"{"tool_name":"Read","tool_use_id":"r1","tool_input":{"file_path":"/Users/dev/projects/api-server/a.ts"}}"#, env: desktopEnv))
+        // 다시 툴 실행 중이 되면 아직 지켜보는 n2 만 알린다 (서브에이전트의 툴: 메인 에이전트의 새 툴이면 앞 차례 n2 는 끝난 것으로 본다)
+        store.ingest(hook("PreToolUse", #"{"tool_name":"Read","tool_use_id":"r1","agent_id":"sub1","tool_input":{"file_path":"/Users/dev/projects/api-server/a.ts"}}"#, env: desktopEnv))
         store.checkStalledTools()
         let s = try #require(store.sessions["s1"])
         #expect(s.phase == .waitingInput)
