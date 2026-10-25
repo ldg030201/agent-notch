@@ -41,6 +41,8 @@ final class SettingsModel {
     @ObservationIgnored let now: () -> Date
 
     private(set) var appVersion = ""
+    /// 훅을 설치 · 제거할 수 있는지 (테스트판은 false)
+    private(set) var canChangeHooks = true
     /// 에이전트별 훅 상태 문구 · 설치 여부
     private(set) var hookStates: [AgentKind: (text: String, installed: Bool)] = [:]
     private(set) var launchAtLoginEnabled = false
@@ -72,6 +74,7 @@ final class SettingsModel {
 
     func refresh() {
         appVersion = provider.appVersion
+        canChangeHooks = provider.canChangeHooks
         hookStates = Dictionary(uniqueKeysWithValues: AgentKind.allCases.map { ($0, provider.hookState(for: $0)) })
         launchAtLoginEnabled = provider.launchAtLoginEnabled
         launchAtLoginManagedByHomebrew = provider.launchAtLoginManagedByHomebrew
@@ -301,6 +304,10 @@ struct SettingsView: View {
             }
 
             SettingsGroup(title: "훅") {
+                if !model.canChangeHooks {
+                    SettingsNote(text: "테스트판은 훅을 바꾸지 않아요. 정식판(AgentNotch)에서 설치 · 제거해 주세요", systemImage: "info.circle")
+                    SettingsDivider()
+                }
                 hookRow(.claude, note: "~/.claude/settings.json")
                 SettingsDivider()
                 hookRow(.codex, note: "~/.codex/hooks.json · 설치 뒤 Codex 의 훅 검토에서 한 번 허용 (CLI 는 /hooks)")
@@ -502,11 +509,12 @@ struct SettingsView: View {
                 Button(installed ? "다시 설치" : "설치") {
                     model.installHooks(for: agent)
                 }
+                .disabled(!model.canChangeHooks)
                 .accessibilityLabel("\(agent.displayName) 훅 \(installed ? "다시 설치" : "설치")")
                 Button("제거") {
                     model.uninstallHooks(for: agent)
                 }
-                .disabled(!installed)
+                .disabled(!installed || !model.canChangeHooks)
                 .accessibilityLabel("\(agent.displayName) 훅 제거")
             }
             .buttonStyle(SettingsButtonStyle())

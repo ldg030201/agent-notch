@@ -18,6 +18,8 @@ enum Palette {
     static let allowText = Color(hex: 0x173404)
     static let addBackground = Color(.sRGB, red: 99 / 255, green: 153 / 255, blue: 34 / 255, opacity: 0.2)
     static let removeBackground = Color(.sRGB, red: 226 / 255, green: 75 / 255, blue: 74 / 255, opacity: 0.2)
+    /// 테스트판 아일랜드 테두리
+    static let testBorder = Color(hex: 0xFF3B30)
     /// 새 버전 배지 (파랑)
     static let badgeBackground = Color(hex: 0x0C447C)
     static let badgeText = Color(hex: 0xB5D4F4)

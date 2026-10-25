@@ -93,8 +93,17 @@ final class AppSettingsProvider: SettingsProvider {
         return true
     }
 
+    /// 테스트판은 훅 · 헬퍼를 바꾸지 않는다 (정식판이 쓰는 것을 덮어쓰지 않게). 상태는 읽기만 한다
+    var canChangeHooks: Bool { !AppInfo.isTestBuild }
+
+    /// 테스트판에서 훅을 바꾸려 할 때
+    struct TestBuildHookError: LocalizedError {
+        var errorDescription: String? { "테스트판은 훅을 바꾸지 않아요. 정식판(AgentNotch)에서 설치 · 제거해 주세요" }
+    }
+
     /// 헬퍼를 복사하고 그 에이전트의 훅 설정에 AgentNotch 항목을 등록한다 (기존 파일은 백업)
     func installHooks(for agent: AgentKind) throws {
+        guard canChangeHooks else { throw TestBuildHookError() }
         guard let helper = AppInfo.helperURL() else { throw HookInstallerError.helperSourceMissing }
         defer { hooksChanged() }
         try installer(agent).install(helperSource: helper, includeMessageDisplay: preferences.showStreamingText)
@@ -107,6 +116,7 @@ final class AppSettingsProvider: SettingsProvider {
 
     /// 그 에이전트의 AgentNotch 훅만 제거하고, 어느 에이전트에도 남은 항목이 없으면 복사해 둔 헬퍼도 지운다
     func uninstallHooks(for agent: AgentKind) throws {
+        guard canChangeHooks else { throw TestBuildHookError() }
         defer { hooksChanged() }
         try installer(agent).uninstall()
         if AgentKind.allCases.allSatisfy({ installer($0).status() == .notInstalled }) {
@@ -118,7 +128,7 @@ final class AppSettingsProvider: SettingsProvider {
     /// (예: 질문 · 계획 승인을 노치에서 답하도록 PreToolUse 에 응답 대기 시간 · timeout 600).
     /// 설치한 적 없으면 아무것도 안 한다. 설정은 우리 항목만 고치고 바꾸기 전에 백업을 남긴다
     func refreshHelperIfNeeded() {
-        guard let helper = AppInfo.helperURL() else { return }
+        guard canChangeHooks, let helper = AppInfo.helperURL() else { return }
         defer { hooksChanged() }
         for agent in AgentKind.allCases {
             let installer = installer(agent)

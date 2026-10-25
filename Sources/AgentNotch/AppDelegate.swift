@@ -37,7 +37,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
         self.options = options
         preferences = AppPreferences()
         store = SessionStore()
-        socketServer = SocketServer()
+        // 테스트판은 자기 소켓을 쓴다 (정식판과 함께 떠도 서로 막지 않게)
+        socketServer = SocketServer(socketPath: NotchWire.socketPath(testBuild: AppInfo.isTestBuild))
         frontmost = FrontmostAppMonitor()
         settings = AppSettingsProvider(
             installers: Dictionary(uniqueKeysWithValues: AgentKind.allCases.map { ($0, HookInstaller(agent: $0)) }),
@@ -46,6 +47,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
         )
         actions = AppActions(store: store, terminalJumper: TerminalJumper(), fileOpener: FileOpener())
         uiController = NotchUIController(store: store, preferences: preferences, actions: actions, settings: settings)
+        // 테스트판은 아일랜드에 빨간 테두리 (정식판과 한눈에 구분)
+        uiController.marksTestBuild = AppInfo.isTestBuild
         updates = AppUpdateProvider(preferences: preferences)
         demo = DemoScenario(store: store)
         codexHooks = CodexHookMonitor(settings: settings, ui: uiController)
@@ -80,8 +83,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
         }
         startStallTimer()
         settings.refreshHelperIfNeeded()
-        // Codex 훅을 Codex 가 아직 실행하지 않는 것 같으면 안내 (데모에서는 안 함)
-        if !options.demo { codexHooks.start() }
+        // Codex 훅을 Codex 가 아직 실행하지 않는 것 같으면 안내 (데모 · 테스트판에서는 안 함)
+        if !options.demo, !AppInfo.isTestBuild { codexHooks.start() }
 
         if options.demo {
             demo.start()
@@ -216,6 +219,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
     /// 이미 된 것은 빼고, 할 게 없으면 묻지 않는다. Codex 는 Codex 를 쓰는 맥에서만 묻고, 첫 실행 안내를 Codex 지원 전에 본
     /// 사람에게도 한 번 묻는다 (`didOfferCodexHookInstallKey`)
     private func offerFirstLaunchSetupIfNeeded() {
+        // 테스트판은 훅을 바꾸지 않는다 (정식판이 쓰는 훅 · 헬퍼를 건드리지 않게)
+        guard !AppInfo.isTestBuild else { return }
         let defaults = UserDefaults.standard
         let firstLaunch = !defaults.bool(forKey: AppInfo.didOfferHookInstallKey)
         let codexUnasked = !defaults.bool(forKey: AppInfo.didOfferCodexHookInstallKey)

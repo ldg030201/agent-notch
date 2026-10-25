@@ -101,12 +101,25 @@ public enum NotchWire {
         appSupportDirectory.appendingPathComponent(socketFileName).path
     }
 
-    /// 환경변수 오버라이드를 반영한 실제 소켓 경로
-    public static func socketPath(environment: [String: String] = ProcessInfo.processInfo.environment) -> String {
+    /// 테스트판(AgentNotch-Test) 폴더 이름. 테스트판은 이 폴더의 소켓을 써서 정식판과 함께 떠도 서로 막지 않는다
+    /// (설치된 훅은 정식판 소켓으로 보내므로 테스트판은 데모 · `scripts/simulate-events.sh` 이벤트만 받는다)
+    public static let testAppFolderName = "AgentNotch-Test"
+
+    public static var testSocketPath: String {
+        appSupportDirectory.deletingLastPathComponent()
+            .appendingPathComponent(testAppFolderName, isDirectory: true)
+            .appendingPathComponent(socketFileName).path
+    }
+
+    /// 환경변수 오버라이드를 반영한 실제 소켓 경로. 테스트판 앱은 `testBuild` 로 테스트판 소켓을 쓴다 (헬퍼는 늘 정식판 경로)
+    public static func socketPath(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        testBuild: Bool = false
+    ) -> String {
         if let override = environment[socketPathEnvironmentKey], !override.isEmpty {
             return override
         }
-        return defaultSocketPath
+        return testBuild ? testSocketPath : defaultSocketPath
     }
 }
 

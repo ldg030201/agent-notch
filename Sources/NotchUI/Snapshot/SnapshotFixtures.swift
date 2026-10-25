@@ -67,6 +67,7 @@ final class SnapshotActions: IslandActions {
 @MainActor
 final class SnapshotSettingsProvider: SettingsProvider {
     var appVersion: String { "0.1.0" }
+    var canChangeHooks: Bool { true }
     func hookState(for agent: AgentKind) -> (text: String, installed: Bool) {
         agent == .claude ? ("설치됨", true) : ("설치 안 됨", false)
     }

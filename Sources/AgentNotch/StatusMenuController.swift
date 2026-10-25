@@ -40,7 +40,9 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         super.init()
 
         if let button = statusItem.button {
-            let image = NSImage(systemSymbolName: "rectangle.topthird.inset.filled", accessibilityDescription: "AgentNotch")
+            let image = NSImage(systemSymbolName: "rectangle.topthird.inset.filled", accessibilityDescription: AppInfo.isTestBuild ? "AgentNotch-Test" : "AgentNotch")
+            // 테스트판은 메뉴바 아이콘도 빨간색
+            if AppInfo.isTestBuild { button.contentTintColor = .systemRed }
             image?.isTemplate = true
             button.image = image
             button.toolTip = "AgentNotch"
@@ -137,10 +139,14 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     }
 
     private func addHookItems() {
+        if !settings.canChangeHooks {
+            menu.addItem(Self.disabledItem("테스트판: 훅은 정식판에서 설치 · 제거"))
+        }
         for agent in AgentKind.allCases {
             let status = settings.hookStatus(for: agent)
             let name = agent.displayName
             menu.addItem(Self.disabledItem("\(name) 훅: \(settings.hookState(for: agent).text)"))
+            guard settings.canChangeHooks else { continue }
             if status != .installed {
                 let title = status == .notInstalled ? "\(name) 훅 설치" : "\(name) 훅 다시 설치"
                 menu.addItem(ClosureMenuItem(title: title) { [weak self] in self?.host?.installHooksFromMenu(for: agent) })

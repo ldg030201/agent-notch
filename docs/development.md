@@ -48,14 +48,20 @@ VARIANT=test scripts/build.sh     # build/AgentNotch-Test.app 만 만들기
 | 번들 ID | `com.ldg.agent-notch` | `com.ldg.agent-notch-test` |
 | 만드는 법 | `scripts/build.sh` (릴리스 · Homebrew 가 부름) | `VARIANT=test scripts/build.sh`, `scripts/dev.sh` |
 | 새 버전 확인 · 자체 업데이트 | 함 | **하지 않음** (brew 가 설치한 게 아니라 자기를 바꿀 수 없다) |
+| 소켓 | `~/Library/Application Support/AgentNotch/notch.sock` | `~/Library/Application Support/AgentNotch-Test/notch.sock` (`NotchWire.testSocketPath`) |
+| 훅 · 헬퍼 | 설치 · 제거 · 앱을 켤 때 고치기 | **바꾸지 않음** (읽기만, 설정 · 메뉴의 설치 · 제거 잠금, `--install-hooks` 거절) |
+| 표시 | | 아일랜드 빨간 테두리 · 메뉴바 아이콘 빨간색 |
 
 - 번들 ID 가 달라서 설정(UserDefaults)을 나눠 쓴다. 실행 파일 이름은 둘 다 `AgentNotch` 이고 번들 이름만 다르다.
-- **소켓 · 훅 헬퍼 경로는 같이 쓴다** (`~/Library/Application Support/AgentNotch/`). 정식판이 떠 있으면 테스트판은
-  "이미 실행 중" 으로 끝난다. 정식판을 켜 둔 채로 개발하려면 소켓을 나눈다:
+- **평소엔 정식판을 brew 로 설치해 쓰고, 화면 확인은 테스트판으로 한다.** 테스트판은 소켓을 따로 써서 정식판과 함께 떠도
+  서로 막지 않고, 정식판이 쓰는 훅 · 헬퍼(`~/Library/Application Support/AgentNotch/bin/notch-hook`)를 덮어쓰지 않는다.
+  확인이 끝나면 테스트판은 끈다 (`VARIANT=test scripts/stop.sh`).
+- 설치된 훅은 정식판 소켓으로 보내므로 테스트판은 실제 세션 이벤트를 받지 않는다. 데모(`--demo`)나 가짜 이벤트로 본다
+  (`scripts/lib.sh` 가 `VARIANT=test` 일 때 `AGENT_NOTCH_SOCKET` 을 테스트판 소켓으로 정한다):
 
   ```bash
-  AGENT_NOTCH_SOCKET=/tmp/an-dev.sock scripts/dev.sh
-  AGENT_NOTCH_SOCKET=/tmp/an-dev.sock scripts/simulate-events.sh
+  scripts/dev.sh --demo
+  VARIANT=test scripts/simulate-events.sh
   ```
 
 - 개발 중에는 정식 번들을 만들지 않는다. brew 로 설치해 쓰는 배포본과 헷갈린다. 실수로 만들었으면 `build/AgentNotch.app` 을 지운다.

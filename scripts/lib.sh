@@ -23,6 +23,12 @@ else
   BUNDLE_ID="com.ldg.agent-notch"
 fi
 
+# 테스트판은 자기 소켓을 쓴다 (앱의 NotchWire.testSocketPath 와 같은 경로). 정식판과 함께 떠도 서로 막지 않고,
+# 설치된 훅은 정식판으로 가므로 테스트판은 데모 · simulate-events.sh 이벤트만 받는다. 테스트판은 훅 · 헬퍼도 바꾸지 않는다
+if [[ "$VARIANT" == "test" && -z "${AGENT_NOTCH_SOCKET:-}" ]]; then
+  export AGENT_NOTCH_SOCKET="$HOME/Library/Application Support/AgentNotch-Test/notch.sock"
+fi
+
 APP="$ROOT/build/$APP_NAME.app"
 # 실행 파일 이름은 두 변형 모두 AgentNotch (번들 이름만 다르다)
 BIN="$APP/Contents/MacOS/AgentNotch"

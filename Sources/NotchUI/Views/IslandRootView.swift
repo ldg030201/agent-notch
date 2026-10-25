@@ -80,6 +80,13 @@ struct IslandContainer: View {
         }
         // 내용은 그린 모양으로 자른다
         .clipShape(shape)
+        // 테스트판: 빨간 테두리 (모양과 함께 움직이고, 클릭은 받지 않는다)
+        .overlay {
+            if presentation.showsTestBorder {
+                IslandBorderShape(spec: spec).stroke(Palette.testBorder, lineWidth: 2)
+                    .allowsHitTesting(false)
+            }
+        }
         // 클릭 모양: 그린 모양 + 레이아웃 클릭 영역(점 둘레처럼 모양보다 넓힌 자리).
         // 패널은 클릭 영역 안에서 클릭을 받으므로(`ScreenManager`) 여기서도 받아야 삼키지 않는다
         .contentShape(IslandHitShape(layout: layout, shape: shape))

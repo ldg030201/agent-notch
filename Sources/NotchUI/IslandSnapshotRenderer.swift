@@ -101,6 +101,8 @@ enum SnapshotScenario: String, CaseIterable {
     case permissionCodex = "permission-codex"
     /// Codex 앱 세션이 작업 중 (접힌 띠에 Codex 아이콘)
     case workingCodex = "working-codex"
+    /// 테스트판(AgentNotch-Test): `working` 에 빨간 테두리
+    case workingTest = "working-test"
     /// 앱 안내 카드: Codex 훅을 설치했는데 Codex 가 아직 실행하지 않는 것 같음 (허용 필요)
     case noticeCodexHooks = "notice-codex-hooks"
     /// 노치에서 답하는 질문: 한 개 고르기 (선택지 설명 있음)
@@ -491,9 +493,10 @@ enum SnapshotStage {
                 showCompact()
                 presentation.toggleExpanded(on: screenID)
             }
-        case .working, .menubarWorking, .menubarDot, .menubarBelowWorking:
+        case .working, .menubarWorking, .menubarDot, .menubarBelowWorking, .workingTest:
             world.apiServerEdits()
             world.apiServerRunsTests()
+            presentation.showsTestBorder = scene == .workingTest
         case .menubarWorkingLongTool, .menubarWorkingTight:
             world.apiServerUsesBrowser()
         case .workingBackground, .workingBackgroundStrip, .menubarBackground, .expandedBackground:

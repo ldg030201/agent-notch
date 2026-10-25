@@ -14,6 +14,10 @@ enum HookCommand {
     /// 종료 코드를 돌려준다 (0 성공, 1 실패). `agent` 는 설치 · 제거 대상 (상태는 모두 보여준다)
     static func run(_ action: Action, agent: AgentKind = .claude) -> Int32 {
         let installer = HookInstaller(agent: agent)
+        if AppInfo.isTestBuild, action != .status {
+            printToStandardError("테스트판은 훅을 바꾸지 않아요. 정식판 agent-notch 로 실행해 주세요.")
+            return 1
+        }
         let name = agent.displayName
         do {
             switch action {

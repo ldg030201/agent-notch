@@ -165,6 +165,22 @@ struct IslandPanelShape: Shape {
     }
 }
 
+/// 테스트판 테두리용: 아일랜드 모양의 바깥 외곽선만 (`IslandPanelShape` 와 같은 스펙 · 애니메이션).
+/// 칠하는 모양은 주 외곽선과 부분 1 을 겹친 하위 경로로 그려서(불리언 연산 없음) 그대로 선을 그으면 카드 안에 부분 1 윤곽이 보인다.
+/// 테두리는 칠하지 않으니 겹친 곳을 합친 경로(`normalized`)의 선만 긋는다
+struct IslandBorderShape: Shape {
+    var spec: IslandShapeSpec
+
+    var animatableData: IslandShapeSpec {
+        get { spec }
+        set { spec = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        IslandPanelShape(spec: spec).path(in: rect).normalized(eoFill: false)
+    }
+}
+
 /// 실제로 그려지는 외곽선 치수 (반경 · 폭 제한을 적용한 값, 프레임 기준).
 /// 모든 값이 스펙에 대해 연속이라 스펙을 보간하면 모양도 끊김 없이 바뀐다.
 struct IslandOutline: Equatable {

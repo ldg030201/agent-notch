@@ -56,6 +56,8 @@ final class PresentationController {
     private(set) var dodgedScreenIDs: Set<ScreenID> = []
     /// 업데이트 상태 (없으면 배지 · 버전 탭 숨김)
     var updateProvider: UpdateProvider?
+    /// 테스트판(AgentNotch-Test)이면 아일랜드에 빨간 테두리 (정식판과 한눈에 구분)
+    @ObservationIgnored var showsTestBorder = false
     /// 세션과 상관없는 앱 안내 카드 (`IslandNotice`, App 이 넣고 뺀다)
     private(set) var notice: IslandNotice?
     /// 안내 카드에서 버튼 · 접기를 눌렀을 때 (App 이 기억하고 다시 띄우지 않는다)

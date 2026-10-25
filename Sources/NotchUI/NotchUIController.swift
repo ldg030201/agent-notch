@@ -8,6 +8,8 @@ import NotchShared
 @MainActor
 public protocol SettingsProvider: AnyObject {
     var appVersion: String { get }
+    /// 훅을 설치 · 제거할 수 있는지 (테스트판은 정식판 훅 · 헬퍼를 건드리지 않아 false)
+    var canChangeHooks: Bool { get }
     /// 에이전트의 훅 설치 상태 문구와 설치 여부 (설정 파일을 한 번만 읽어 둘 다 만든다)
     func hookState(for agent: AgentKind) -> (text: String, installed: Bool)
     func installHooks(for agent: AgentKind) throws
@@ -90,6 +92,12 @@ public final class NotchUIController {
         let controller = SettingsWindowController(preferences: preferences, provider: settings)
         controller.setUpdateProvider(updateProvider)
         return controller
+    }
+
+    /// 테스트판 표시: 아일랜드에 빨간 테두리 (`start` 전에 정한다)
+    public var marksTestBuild: Bool {
+        get { presentation.showsTestBorder }
+        set { presentation.showsTestBorder = newValue }
     }
 
     /// 세션과 상관없는 앱 안내 카드를 띄우거나(nil 이면) 내린다 (예: Codex 훅 허용 필요)
