@@ -14,6 +14,11 @@ class AgentNotch < Formula
   license "MIT"
   head "https://github.com/ldg030201/agent-notch.git", branch: "main"
 
+  bottle do
+    root_url "https://github.com/ldg030201/agent-notch/releases/download/v1.1.0"
+    sha256 arm64_sequoia: "a2919709bc54533cf77a6c07236b2efade300ddedfa63f49918bc64fdfa98d8d"
+  end
+
 
   # Xcode 는 필요 없다. Command Line Tools 의 Swift 만으로 빌드된다 (depends_on xcode 를 넣지 않는다).
   depends_on arch: :arm64   # Apple Silicon 맥만 (Intel 맥은 지원하지 않는다)
