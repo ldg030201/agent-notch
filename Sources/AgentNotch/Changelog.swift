@@ -21,7 +21,7 @@ enum Changelog {
 
     /// 최신이 위로 온다
     static let entries: [ChangelogEntry] = [
-        ChangelogEntry(version: "1.1.0", date: nil, groups: [
+        ChangelogEntry(version: "1.1.0", date: "2026-10-25", groups: [
             ChangelogGroup(title: "Codex", icon: "terminal.fill", tab: "general", isNew: true, notes: [
                 .new("Codex 세션 표시 (CLI · Codex 앱, 앱을 다시 켜도 이어 보기)"),
                 .new("Codex 권한 요청 허용 · 거부, Codex로 바로 이동"),
