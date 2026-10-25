@@ -82,3 +82,43 @@ struct StaleToolTests {
         #expect(SessionStore.expiredInteractionMessage(TerminalContext(originator: "Codex")).hasPrefix("노치에서 기다리는 시간이 지나 Codex 앱으로"))
     }
 }
+
+/// 자동 모드 거부 (`PermissionDenied`): 실행되지 않아 PostToolUse · PostToolUseFailure 가 오지 않는 호출을 닫는다
+@MainActor
+@Suite("자동 모드 거부")
+struct PermissionDeniedTests {
+    let clock = TestClock()
+    let desktopEnv = ["__CFBundleIdentifier": "com.anthropic.claudefordesktop", "CLAUDE_CODE_ENTRYPOINT": "claude-desktop"]
+
+    @Test func deniedToolClosesAndConsentCardGoes() throws {
+        let store = makeStore(clock)
+        store.ingest(hook("UserPromptSubmit", #"{"prompt":"메인 폴더로"}"#, env: desktopEnv))
+        // 자동 모드: 검사기를 기다리는 동안 10초까지는 앱 확인으로 보지 않는다
+        store.ingest(hook("PreToolUse", #"{"tool_name":"mcp__ccd_directory__change_directory","tool_use_id":"cd1","permission_mode":"auto","tool_input":{"path":"/Users/dev/projects/f1"}}"#, env: desktopEnv))
+        clock.advance(6)
+        store.checkStalledTools()
+        #expect(store.sessions["s1"]?.phase == .runningTool)
+        clock.advance(5)
+        store.checkStalledTools()
+        #expect(store.sessions["s1"]?.phase == .waitingInput)
+
+        store.ingest(hook("PermissionDenied", #"{"tool_name":"mcp__ccd_directory__change_directory","tool_use_id":"cd1","permission_mode":"auto","tool_input":{"path":"/Users/dev/projects/f1"},"reason":"Auto mode could not evaluate this action and is blocking it for safety"}"#, env: desktopEnv))
+        let s = try #require(store.sessions["s1"])
+        #expect(s.phase == .thinking)
+        #expect(s.currentActivity == nil)
+        #expect(s.activities.first { $0.id == "cd1" }?.status == .failed)
+        let seq = store.latestSignal?.seq
+        clock.advance(20)
+        store.checkStalledTools()
+        #expect(store.latestSignal?.seq == seq)
+    }
+
+    @Test func autoModeWaitsLongerOnlyInAutoMode() {
+        let heuristic = AppConsentHeuristic.default
+        let name = "mcp__ccd_directory__change_directory"
+        #expect(heuristic.delay(toolName: name, toolInput: nil) == 2.5)
+        #expect(heuristic.delay(toolName: name, toolInput: nil, permissionMode: "default") == 2.5)
+        #expect(heuristic.delay(toolName: name, toolInput: nil, permissionMode: "auto") == AppConsentHeuristic.autoModeDelay)
+        #expect(heuristic.delay(toolName: "Read", toolInput: nil, permissionMode: "auto") == nil)
+    }
+}

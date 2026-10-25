@@ -57,17 +57,22 @@ public struct AppConsentHeuristic: Hashable, Sendable {
     )
 
     /// 이 툴 호출을 확인 카드 대기로 지켜볼 지연 (지켜보지 않으면 nil)
-    public func delay(toolName: String, toolInput: JSONValue?) -> TimeInterval? {
+    /// - permissionMode: 툴 호출의 권한 모드. 자동 모드(`auto`)에선 서버 검사기 판정을 기다리는 동안에도 툴이 멈춰 있어서
+    ///   (검사기가 늦거나 판정 없이 실패하면 수십 초) 그보다 오래 걸릴 때만 앱 확인으로 본다 (`autoModeDelay`)
+    public func delay(toolName: String, toolInput: JSONValue?, permissionMode: String? = nil) -> TimeInterval? {
         guard let delay = delays[toolName] else { return nil }
         if let action = toolInput?["action"]?.stringValue, longRunningActions.contains(action) {
             return nil
         }
-        return delay
+        return permissionMode == "auto" ? max(delay, Self.autoModeDelay) : delay
     }
+
+    /// 자동 모드에서 앱 확인으로 볼 최소 지연 (초)
+    public static let autoModeDelay: TimeInterval = 10
 
     /// 이 툴 호출이 앱 확인 카드를 띄울 수 있어 지켜볼 대상인지
     public func watches(toolName: String, toolInput: JSONValue?) -> Bool {
-        delay(toolName: toolName, toolInput: toolInput) != nil
+        delay(toolName: toolName, toolInput: toolInput, permissionMode: nil) != nil
     }
 
     /// 확인 대기로 추정될 때 보여줄 문구

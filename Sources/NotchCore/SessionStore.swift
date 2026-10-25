@@ -143,6 +143,8 @@ public final class SessionStore {
             signal = handlePostToolUse(&session, payload: payload, agentID: agentID, now: now)
         case "PostToolUseFailure":
             handlePostToolUseFailure(&session, payload: payload, agentID: agentID, now: now)
+        case "PermissionDenied":
+            handlePermissionDenied(&session, payload: payload, agentID: agentID, now: now)
         case "PermissionRequest":
             if let toolName = payload.string("tool_name"), Self.userInteractionTools.contains(toolName) {
                 // 답 · 계획 승인은 Claude Code 다이얼로그에서만 할 수 있다 (updatedInput 없는 allow 는 무시됨).
@@ -608,7 +610,7 @@ public final class SessionStore {
         closeSupersededTools(&session, agentID: agentID, newToolID: item.id, now: now)
         appendActivity(&session, item)
         if session.terminal.isClaudeDesktopApp,
-           let delay = appConsent.delay(toolName: toolName, toolInput: toolInput),
+           let delay = appConsent.delay(toolName: toolName, toolInput: toolInput, permissionMode: payload.string("permission_mode")),
            consentWatches[session.id]?[item.id] == nil {
             consentWatches[session.id, default: [:]][item.id] = ConsentWatch(
                 since: now, delay: delay, toolName: toolName, toolInput: Self.isShrunk(payload) ? nil : toolInput
@@ -763,6 +765,15 @@ public final class SessionStore {
         } else {
             settleAfterTool(&session)
         }
+    }
+
+    /// 자동 모드가 툴 호출을 거부함 (검사기 판정 · 판정 없음 · 검사기 사용 불가). 툴은 실행되지 않아 PostToolUse · PostToolUseFailure 가
+    /// 오지 않는다 → 그 호출을 실패로 닫는다 (앱 확인 추정 카드도 내려간다). 모델은 거부 결과를 받고 이어서 답한다
+    private func handlePermissionDenied(_ session: inout AgentSession, payload: HookPayload, agentID: String?, now: Date) {
+        let toolName = payload.string("tool_name") ?? "Tool"
+        let index = toolActivityIndex(&session, payload: payload, toolName: toolName, agentID: agentID, now: now)
+        session.activities[index].status = .failed
+        settleAfterTool(&session)
     }
 
     /// 사용자 인터럽트: 에러가 아니라 턴 중단 (Stop 이벤트가 오지 않음). 예전처럼 실행 중인 활동을 모두 닫는다.
@@ -1447,7 +1458,7 @@ public final class SessionStore {
             switch event {
             case "UserPromptSubmit", "Stop", "StopFailure", "Interrupt":
                 return wait.agentID == nil
-            case "PostToolUse", "PostToolUseFailure":
+            case "PostToolUse", "PostToolUseFailure", "PermissionDenied":
                 // 헬퍼가 큰 payload 를 줄였으면 입력이 잘렸을 수 있어 비교하지 않는다
                 let toolInput = isShrunk(payload) ? nil : payload["tool_input"]
                 return wait.agentID == agentID && request.toolName == (payload.string("tool_name") ?? "Tool")
@@ -1467,7 +1478,7 @@ public final class SessionStore {
                 return wait.agentID == nil
             case "PreToolUse":
                 return wait.agentID == agentID
-            case "PostToolUse", "PostToolUseFailure":
+            case "PostToolUse", "PostToolUseFailure", "PermissionDenied":
                 if payload.bool("is_interrupt") == true { return true }
                 guard wait.agentID == agentID else { return false }
                 // 같은 에이전트가 병렬로 부른 다른 호출의 결과는 기다리던 호출과 무관
@@ -1556,7 +1567,7 @@ public final class SessionStore {
     // MARK: - 단계 헬퍼
 
     /// 툴 진행 이벤트
-    private static let toolEvents: Set<String> = ["PreToolUse", "PostToolUse", "PostToolUseFailure"]
+    private static let toolEvents: Set<String> = ["PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionDenied"]
 
     /// 턴이 진행 중인 단계 (생각 중 · 툴 실행)
     private static func isTurnWork(_ phase: SessionPhase) -> Bool {

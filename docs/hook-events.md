@@ -169,6 +169,15 @@ command 훅은 제어 터미널이 없어 `/dev/tty` 를 열 수 없다.
 - stdin: `tool_name`, `tool_input`, `tool_response`, `tool_use_id`, `duration_ms`?
 - 예: `{"hook_event_name":"PostToolUse","tool_name":"Write","tool_input":{"file_path":"/path/to/file.txt","content":"file content"},"tool_response":{"filePath":"/path/to/file.txt","type":"create"},"tool_use_id":"toolu_01ABC123","duration_ms":12}`
 
+### PermissionDenied
+- 자동 모드가 툴 호출을 거부했을 때 (검사기 판정, 판정 없음, 검사기 사용 불가). 툴은 실행되지 않는다 → PostToolUse · PostToolUseFailure 없음
+- stdin: `tool_name`, `tool_input`, `tool_use_id`, `reason`, MCP 툴이면 `mcp_server`
+  - `reason`: 판정이면 보통 `[Data Exfiltration]` 처럼 규칙 이름, 판정 없음이면 `Auto mode could not evaluate this action and is blocking it for safety…`,
+    검사기를 못 쓰면 `Classifier unavailable`
+- stdout: `hookSpecificOutput.retry: true` 면 모델에게 다시 시도해도 된다고 알린다 (판정 없음에는 무시). 거부 자체는 되돌리지 못한다.
+  AgentNotch 는 아무것도 출력하지 않는다
+- 다른 훅(PreToolUse)에 막힌 호출은 이것도 PostToolUseFailure 도 오지 않는다
+
 ### PostToolUseFailure
 - stdin: `tool_name`, `tool_input`, `tool_use_id`, `error` (Bash 는 `Exit code N` 으로 시작), `is_interrupt`?, `duration_ms`?
 

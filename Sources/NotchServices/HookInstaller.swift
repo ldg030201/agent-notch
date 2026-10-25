@@ -62,6 +62,7 @@ public final class HookInstaller {
         "PostToolUse",
         "PostToolUseFailure",
         "PermissionRequest",
+        "PermissionDenied",
         "Notification",
         "MessageDisplay",
         "Stop",
@@ -92,8 +93,13 @@ public final class HookInstaller {
     /// 설치 여부를 사용자가 고를 수 있는 이벤트 (status 계산에서 필수로 보지 않음)
     public static let optionalEvents: Set<String> = ["MessageDisplay"]
 
+    /// 나중 버전에서 더한 이벤트. 이미 설치한 사람에게도 앱을 켤 때(`updateInstalledHooks`) 이 이벤트만 더한다 —
+    /// 예전 항목을 고치는 것과 같은 일이다 (다른 빠진 이벤트는 사용자가 지웠을 수 있어 그대로 둔다)
+    /// - PermissionDenied (1.1.0): 자동 모드가 거부한 툴은 PostToolUse · PostToolUseFailure 가 오지 않아 실행 중으로 남았다
+    static let eventsAddedLater: [AgentKind: [String]] = [.claude: ["PermissionDenied"]]
+
     /// `matcher: "*"` 를 붙이는 툴 이벤트
-    static let toolEvents: Set<String> = ["PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest"]
+    static let toolEvents: Set<String> = ["PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest", "PermissionDenied"]
 
     /// 헬퍼가 앱 응답을 기다리는 이벤트: 권한 요청, 질문 · 계획 승인 툴의 PreToolUse
     /// (PreToolUse 는 그 두 툴일 때만 기다리고 다른 툴은 바로 끝난다 — `NotchWire.expectsReply`).
@@ -269,6 +275,7 @@ public final class HookInstaller {
     /// (예: 질문 · 계획 승인 응답 대기 전에 설치한 PreToolUse — timeout 10, `--reply-timeout` 없음)
     public func hasOutdatedHooks() -> Bool {
         guard let root = try? readSettings()?.value, let hooks = root["hooks"]?.objectValue else { return false }
+        if !missingLaterEvents(in: hooks).isEmpty { return true }
         for event in managedEvents {
             guard let groups = hooks[event]?.arrayValue else { continue }
             let desired = hookEntry(for: event)
@@ -290,8 +297,9 @@ public final class HookInstaller {
         guard hasOutdatedHooks(), let existing = try readSettings() else { return nil }
         var root = try Self.rootObject(existing.value)
         var hooks = try Self.hooksObject(in: root)
+        let added = Set(missingLaterEvents(in: hooks))
         for event in managedEvents {
-            guard let value = hooks[event], containsManagedHook(value) else { continue }
+            guard added.contains(event) || hooks[event].map(containsManagedHook) == true else { continue }
             let groups = try Self.groups(for: event, in: hooks)
             hooks[event] = .array(upserting(event: event, into: groups))
         }
@@ -300,6 +308,12 @@ public final class HookInstaller {
         let backup = try save(.object(root), replacing: existing)
         log.info("예전 훅 항목을 지금 형태로 고침")
         return backup
+    }
+
+    /// 우리 훅이 설치돼 있는데 빠진, 나중 버전에서 더한 이벤트 (`eventsAddedLater`). 설치한 적 없으면 빈 배열
+    private func missingLaterEvents(in hooks: [String: JSONValue]) -> [String] {
+        guard let later = Self.eventsAddedLater[agent], hooks.values.contains(where: containsManagedHook) else { return [] }
+        return later.filter { event in !(hooks[event].map(containsManagedHook) ?? false) }
     }
 
     /// 복사해 둔 헬퍼 실행 파일 삭제

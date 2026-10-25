@@ -307,8 +307,12 @@ struct HookInstallerTests {
         #expect(updated["hooks"]?["PermissionRequest"] == original["hooks"]?["PermissionRequest"])
         #expect(updated["hooks"]?["SessionStart"] == original["hooks"]?["SessionStart"])
         #expect(updated["hooks"]?["Stop"] == original["hooks"]?["Stop"])
-        // 빠진 이벤트를 새로 넣지 않는다 (설치 · 제거는 사용자가 고른다)
-        #expect(Set(try #require(updated["hooks"]?.objectValue).keys) == ["SessionStart", "PreToolUse", "PermissionRequest", "Stop"])
+        // 빠진 이벤트를 새로 넣지 않는다 (설치 · 제거는 사용자가 고른다). 나중 버전에서 더한 이벤트(PermissionDenied)만 더한다
+        #expect(Set(try #require(updated["hooks"]?.objectValue).keys) == ["SessionStart", "PreToolUse", "PermissionRequest", "Stop", "PermissionDenied"])
+        let denied = try #require(updated["hooks"]?["PermissionDenied"]?[0])
+        #expect(denied["matcher"] == .string("*"))
+        #expect(denied["hooks"]?[0]?["command"]?.stringValue == installer.command(for: "PermissionDenied"))
+        #expect(denied["hooks"]?[0]?["timeout"] == .number(10))
 
         // 한 번 고친 뒤엔 바뀌는 게 없다 (백업도 더 안 남김)
         #expect(!installer.hasOutdatedHooks())

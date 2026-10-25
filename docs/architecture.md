@@ -80,6 +80,7 @@ Codex (CLI · Codex 앱)           ~/.codex/hooks.json  (명령에 --agent codex
 | `PreToolUse` | phase `runningTool`, `currentActivity` 생성(툴 요약), 타임라인 추가. `AskUserQuestion` · `ExitPlanMode` 면 `waitingInput` + `needsInput`. 헬퍼가 답을 기다리고(지금 훅 설정) 노치에서 답할 수 있는 입력이면 요청 대기열에 넣고 요청 ID 반환 (질문 · 계획 승인 카드, 아래 "질문 · 계획 승인 카드") |
 | `PostToolUse` | 해당 `tool_use_id` 활동 성공 처리, diff 계산(Edit/MultiEdit/Write/NotebookEdit/Bash `bashEditDiff`) → `lastDiff`, 턴 요약 누적, 신호 `edited` |
 | `PostToolUseFailure` | 활동 실패 처리, phase `thinking` |
+| `PermissionDenied` | 자동 모드가 거부한 호출(검사기 판정 · 판정 없음 · 검사기 사용 불가)을 실패로 닫음. 실행되지 않아 PostToolUse · PostToolUseFailure 가 오지 않는다 (1.1.0 에서 더한 이벤트: 이미 설치한 사람도 앱을 켤 때 `updateInstalledHooks` 가 이 이벤트만 더한다, `eventsAddedLater`) |
 | `PermissionRequest` | `PermissionRequestInfo` 생성 → 대기열, phase `waitingPermission`, 신호 `permissionRequested`, 요청 ID 반환. 단 `AskUserQuestion` / `ExitPlanMode` 는 대기열에 넣지 않고 바로 결정 없음(Claude Code 가 `updatedInput` 없는 allow 를 무시하므로) → 입력 대기 카드 |
 | `Notification` | `lastNotification` 갱신. `elicitation_dialog`/`agent_needs_input` → `waitingInput` + `needsInput`. `permission_prompt` 인데 해당 세션의 훅 대기 요청이 없으면 `waitingPermission` + `needsInput` (단 노치에서 "터미널로" 넘긴 질문 · 계획 승인 다이얼로그면 무시). `idle_prompt` → 작업 중 · 훅 대기 없는 승인 대기 · 입력 대기를 `idle` 로 정리 (터미널에서 거부/Esc 한 경우 약 60초 뒤 복구) |
 | `MessageDisplay` | `delta` 를 세션과 따로 둔 `SessionStore.streamingTexts` 뒤에 붙임(최근 2000자 유지). 세션 · 포커스는 건드리지 않아 delta 마다 모든 화면이 다시 계산되지 않는다 (글을 보여주는 미리보기 · 완료 · 펼친 상세만 갱신) |
@@ -397,6 +398,8 @@ Claude 의 객관식 질문과 계획 승인을 다이얼로그 대신 노치에
   `request_teach_access`, 디렉터리 `request_directory` · `change_directory`, 브라우저 `navigate` · 브라우저 선택은 2.5초,
   첫 방문 사이트 승인을 띄울 수 있는 브라우저 페이지 툴(computer · find · form_input · get_page_text · javascript_tool · read_page)은 8초,
   나머지(앱 실행 · 스크린샷 · 일괄 실행 등)는 보지 않는다. 예전엔 접두사 아래 모든 툴을 보고 느린 호출이 가짜 카드로 포커스를 가져갔다.
+- 자동 모드(`permission_mode: auto`)에선 서버 검사기 판정을 기다리는 동안에도 툴이 멈춰 있어서(검사기가 늦거나 판정 없이 실패하면 수십 초)
+  앱 확인 추정 지연을 10초 이상으로 둔다 (`AppConsentHeuristic.autoModeDelay`). 검사기가 거부하면 `PermissionDenied` 로 그 호출을 닫는다.
 - 다른 훅(예: Claude 앱 자체 훅)에 막힌 툴("PreToolUse hook error")은 PostToolUse · PostToolUseFailure 가 오지 않는다. 그래서 같은 에이전트가
   다음 툴을 시작하면(`PreToolUse`), 그보다 `supersededToolAge`(2초) 넘게 먼저 시작해 아직 실행 중인 그 에이전트의 툴은 끝난 것(실패)으로 본다
   (`closeSupersededTools`). 모델은 앞 툴들의 결과를 다 받은 뒤에 다음 툴을 부르기 때문이다. 병렬로 함께 부른 툴(2초 안) · 서브에이전트를 띄운 툴
