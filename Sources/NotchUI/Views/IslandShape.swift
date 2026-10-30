@@ -116,36 +116,78 @@ struct IslandPart1Spec: Equatable {
 }
 
 extension IslandShapeSpec: VectorArithmetic {
-    private static let fields: [WritableKeyPath<IslandShapeSpec, CGFloat>] = [
-        \.neckLeft, \.neckRight, \.neckHeight, \.bodyLeft, \.bodyRight,
-        \.topRadius, \.bodyTopRadius, \.shoulderRadius, \.bottomRadius,
-        \.originX, \.originY, \.notchMinX, \.notchWidth, \.notchHeight, \.menuBarBottom, \.capRadius,
-        \.part1.minX, \.part1.minY, \.part1.width, \.part1.height, \.part1.neckLeft, \.part1.neckRight, \.part1.neckHeight,
-        \.part1.bodyLeft, \.part1.bodyRight, \.part1.topRadius,
-        \.part1.bodyTopRadius, \.part1.shoulderRadius, \.part1.bottomRadius,
-        \.frameWidth, \.frameHeight,
-    ]
-
     static var zero: IslandShapeSpec { IslandShapeSpec() }
 
+    /// 모든 치수(31개)에 같은 연산을 한다. 스프링은 매 프레임 · 화면마다 덧셈 · 뺄셈 · 크기를 여러 번 부르므로
+    /// 키 경로 배열로 돌지 않고(런타임 키 경로 접근이 애니메이션 중 메인 스레드 시간의 대부분이었다) 필드를 직접 나열한다.
+    /// 치수를 더하면 여기(와 `IslandPart1Spec.combined`)에도 넣는다 — 빠지면 그 치수만 보간되지 않아 전환 시트가 불연속으로 잡는다
+    private static func combined(
+        _ a: IslandShapeSpec, _ b: IslandShapeSpec, _ op: (CGFloat, CGFloat) -> CGFloat
+    ) -> IslandShapeSpec {
+        var r = a
+        r.neckLeft = op(a.neckLeft, b.neckLeft)
+        r.neckRight = op(a.neckRight, b.neckRight)
+        r.neckHeight = op(a.neckHeight, b.neckHeight)
+        r.bodyLeft = op(a.bodyLeft, b.bodyLeft)
+        r.bodyRight = op(a.bodyRight, b.bodyRight)
+        r.topRadius = op(a.topRadius, b.topRadius)
+        r.bodyTopRadius = op(a.bodyTopRadius, b.bodyTopRadius)
+        r.shoulderRadius = op(a.shoulderRadius, b.shoulderRadius)
+        r.bottomRadius = op(a.bottomRadius, b.bottomRadius)
+        r.originX = op(a.originX, b.originX)
+        r.originY = op(a.originY, b.originY)
+        r.notchMinX = op(a.notchMinX, b.notchMinX)
+        r.notchWidth = op(a.notchWidth, b.notchWidth)
+        r.notchHeight = op(a.notchHeight, b.notchHeight)
+        r.menuBarBottom = op(a.menuBarBottom, b.menuBarBottom)
+        r.capRadius = op(a.capRadius, b.capRadius)
+        r.part1 = IslandPart1Spec.combined(a.part1, b.part1, op)
+        r.frameWidth = op(a.frameWidth, b.frameWidth)
+        r.frameHeight = op(a.frameHeight, b.frameHeight)
+        return r
+    }
+
     static func + (lhs: IslandShapeSpec, rhs: IslandShapeSpec) -> IslandShapeSpec {
-        var result = lhs
-        for field in fields { result[keyPath: field] += rhs[keyPath: field] }
-        return result
+        combined(lhs, rhs, +)
     }
 
     static func - (lhs: IslandShapeSpec, rhs: IslandShapeSpec) -> IslandShapeSpec {
-        var result = lhs
-        for field in fields { result[keyPath: field] -= rhs[keyPath: field] }
-        return result
+        combined(lhs, rhs, -)
     }
 
     mutating func scale(by rhs: Double) {
-        for field in Self.fields { self[keyPath: field] *= CGFloat(rhs) }
+        let factor = CGFloat(rhs)
+        self = Self.combined(self, self) { value, _ in value * factor }
     }
 
     var magnitudeSquared: Double {
-        Self.fields.reduce(0) { $0 + Double(self[keyPath: $1] * self[keyPath: $1]) }
+        var sum: CGFloat = 0
+        _ = Self.combined(self, self) { value, _ in
+            sum += value * value
+            return value
+        }
+        return Double(sum)
+    }
+}
+
+extension IslandPart1Spec {
+    /// 부분 1 치수(13개)에 같은 연산 (`IslandShapeSpec.combined`)
+    static func combined(_ a: IslandPart1Spec, _ b: IslandPart1Spec, _ op: (CGFloat, CGFloat) -> CGFloat) -> IslandPart1Spec {
+        var r = a
+        r.minX = op(a.minX, b.minX)
+        r.minY = op(a.minY, b.minY)
+        r.width = op(a.width, b.width)
+        r.height = op(a.height, b.height)
+        r.neckLeft = op(a.neckLeft, b.neckLeft)
+        r.neckRight = op(a.neckRight, b.neckRight)
+        r.neckHeight = op(a.neckHeight, b.neckHeight)
+        r.bodyLeft = op(a.bodyLeft, b.bodyLeft)
+        r.bodyRight = op(a.bodyRight, b.bodyRight)
+        r.topRadius = op(a.topRadius, b.topRadius)
+        r.bodyTopRadius = op(a.bodyTopRadius, b.bodyTopRadius)
+        r.shoulderRadius = op(a.shoulderRadius, b.shoulderRadius)
+        r.bottomRadius = op(a.bottomRadius, b.bottomRadius)
+        return r
     }
 }
 
