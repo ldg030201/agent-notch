@@ -567,6 +567,8 @@ final class SettingsWindowController {
     private let preferences: AppPreferences
     private let model: SettingsModel
     private var window: NSWindow?
+    /// 창 닫힘 알림 (창을 놓을 때 지운다)
+    private var closeObserver: NSObjectProtocol?
 
     init(preferences: AppPreferences, provider: SettingsProvider) {
         self.preferences = preferences
@@ -605,11 +607,28 @@ final class SettingsWindowController {
         window.isReleasedWhenClosed = false
         window.setContentSize(SettingsView.windowSize)
         window.center()
-        // 녹화하던 중 창을 닫으면 녹화를 끝낸다 (전역 단축키를 다시 등록)
+        // 녹화하던 중 창을 닫으면 녹화를 끝낸다 (전역 단축키를 다시 등록).
+        // 닫은 창은 놓아준다: 창 · SwiftUI 그래프(변경 내역 전체) · 그리기 버퍼가 앱이 끝날 때까지 남지 않게.
+        // 고른 탭 · 업데이트 상태는 `model` 에 있어서 다시 열면 그대로다
         let model = model
-        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
-            MainActor.assumeIsolated { model.stopRecordingShortcut() }
+        closeObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification, object: window, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                model.stopRecordingShortcut()
+                // 닫히는 도중에 풀지 않고 다음 차례에 놓는다
+                Task { @MainActor [weak self] in self?.releaseClosedWindow() }
+            }
         }
         return window
+    }
+
+    /// 닫힌 창을 놓는다 (그 사이 다시 열었으면 그대로 둔다)
+    private func releaseClosedWindow() {
+        guard let window, !window.isVisible else { return }
+        if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
+        closeObserver = nil
+        window.contentViewController = nil
+        self.window = nil
     }
 }

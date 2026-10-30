@@ -63,9 +63,11 @@ guard let connection = HookSocket.connect(path: socketPath, sendTimeout: HookHel
 
 let parsed = EnvelopeBuilder.reduceTaskLists(EnvelopeBuilder.parsePayload(input.data))
 let event = EnvelopeBuilder.eventName(payload: parsed, argument: options.eventName)
+// PostToolUse 의 툴 응답은 앱이 diff 를 셀 때 쓰는 키만 보낸다 (파일 내용 · 이미지 · 명령 출력은 앱이 읽지 않는다)
+let trimmed = PayloadShrinker.trimmingToolResponse(parsed, event: event)
 // SessionStart · UserPromptSubmit 만: 작업 폴더의 git 브랜치를 읽어 붙인다.
 // 헬퍼는 Claude Code 프로세스 안에서 돌아 프로젝트 폴더를 이미 볼 수 있다 (앱은 프로젝트 폴더를 읽지 않는다)
-let payload = NotchWire.attachingGitBranch(to: parsed, event: event)
+let payload = NotchWire.attachingGitBranch(to: trimmed, event: event)
 // 질문 · 계획 승인 툴의 PreToolUse 는 훅 명령에 --reply-timeout 이 있을 때만 기다린다 (예전 설정의 10초 timeout 보호)
 let expectsReply = NotchWire.expectsReply(
     event: event,

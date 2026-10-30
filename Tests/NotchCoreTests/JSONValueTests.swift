@@ -40,6 +40,16 @@ import Testing
         #expect(throws: (any Error).self) { try JSONValue.parse(Data(#"{"a":"\ud83d"#.utf8)) }
     }
 
+    /// 시도 순서(문자열 → 객체 → 배열 → 숫자 → Bool)와 상관없이 타입이 섞이지 않는다
+    @Test func decodesEachTypeAsItself() throws {
+        let text = #"{"t":true,"f":false,"one":1,"zero":0,"pi":3.5,"s":"1","sb":"true","n":null,"a":[1,true,"x",{"k":[]}],"o":{}}"#
+        #expect(try JSONValue.parse(Data(text.utf8)) == .object([
+            "t": .bool(true), "f": .bool(false), "one": .number(1), "zero": .number(0), "pi": .number(3.5),
+            "s": .string("1"), "sb": .string("true"), "n": .null,
+            "a": .array([.number(1), .bool(true), .string("x"), .object(["k": .array([])])]), "o": .object([:]),
+        ]))
+    }
+
     /// 사전 리터럴(데모 · 스냅숏 payload) → JSON 값
     @Test func initFromAnyLiteral() {
         let fields: [String: Any] = [

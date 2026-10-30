@@ -90,6 +90,37 @@ public enum PayloadShrinker {
         return .object(reduced)
     }
 
+    // MARK: - 앱이 읽지 않는 툴 응답 덜어내기 (크기와 상관없이 늘)
+
+    /// 앱이 diff 를 셀 때(`DiffEngine`) 읽는 `tool_response` 구조 · 스칼라 키
+    static let diffResponseStructures = ["structuredPatch", "bashEditDiff"]
+    static let diffResponseScalars = ["filePath", "file_path", "notebook_path", "type", "replaceAll"]
+
+    /// PostToolUse · PostToolUseFailure 의 `tool_response` 에서 앱이 diff 를 셀 때 쓰는 키만 남긴다 (헬퍼가 보내기 전에, 크기와 상관없이).
+    /// Read 파일 내용 · 이미지 · MCP 결과 · 명령 출력처럼 앱이 읽지 않는 큰 응답을 툴마다 보내면, 앱은 그걸 버퍼에 쌓고 해석했다가
+    /// 그대로 버린다 (응답의 몇 배 메모리를 잠깐 잡고, 그동안 같은 순간 온 권한 요청도 기다린다).
+    /// - `originalFile` 은 hunk(`structuredPatch`)가 없을 때만 남긴다 (내용이 같은 Write 덮어쓰기 · replace_all 줄 수를 직접 셀 때 쓴다)
+    /// - 줄였다는 표시는 붙이지 않는다: 앱이 쓰는 값은 그대로라, 표시가 붙으면 앱이 diff 줄 수 · 권한 요청 입력 비교를 꺼 버린다
+    /// - `tool_input` 은 건드리지 않는다 (권한 요청과 맞춰 보고, 질문 · 계획 승인 답에 그대로 돌려준다)
+    public static func trimmingToolResponse(_ payload: JSONValue, event: String) -> JSONValue {
+        guard event == "PostToolUse" || event == "PostToolUseFailure",
+              var object = payload.objectValue, let response = object["tool_response"]
+        else { return payload }
+        guard let fields = response.objectValue else {
+            // 문자열 · 배열 응답(Codex 툴 결과 등)은 앱이 읽지 않는다
+            object["tool_response"] = nil
+            return .object(object)
+        }
+        var kept: [String: JSONValue] = [:]
+        for key in diffResponseStructures { kept[key] = fields[key] }
+        for key in diffResponseScalars {
+            if let value = fields[key], smallScalar(value, limit: smallScalarLimit, truncating: false) != nil { kept[key] = value }
+        }
+        if fields["structuredPatch"]?.arrayValue?.isEmpty ?? true { kept["originalFile"] = fields["originalFile"] }
+        object["tool_response"] = .object(kept)
+        return .object(object)
+    }
+
     /// 스칼라 값이면 반환. 문자열이 limit 를 넘으면 잘라내거나(truncating) 버린다.
     static func smallScalar(_ value: JSONValue, limit: Int, truncating: Bool) -> JSONValue? {
         switch value {

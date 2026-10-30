@@ -12,18 +12,21 @@ public enum JSONValue: Codable, Hashable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
+        // 흔한 값(문자열 · 객체)부터 시도한다: 타입이 안 맞을 때마다 디코더가 오류를 만들어 던지므로, 예전 순서(Bool → 숫자 → …)는
+        // 문자열 하나에 오류 2개, 객체 하나에 4개를 만들고 버렸다 (큰 payload 에서 2배 넘게 느렸다).
+        // JSONDecoder 는 타입을 엄격히 가려서(true 는 숫자로, 1 은 Bool 로 읽히지 않는다) 순서를 바꿔도 결과는 같다
         if container.decodeNil() {
             self = .null
-        } else if let value = try? container.decode(Bool.self) {
-            self = .bool(value)
-        } else if let value = try? container.decode(Double.self) {
-            self = .number(value)
         } else if let value = try? container.decode(String.self) {
             self = .string(value)
-        } else if let value = try? container.decode([JSONValue].self) {
-            self = .array(value)
         } else if let value = try? container.decode([String: JSONValue].self) {
             self = .object(value)
+        } else if let value = try? container.decode([JSONValue].self) {
+            self = .array(value)
+        } else if let value = try? container.decode(Double.self) {
+            self = .number(value)
+        } else if let value = try? container.decode(Bool.self) {
+            self = .bool(value)
         } else {
             throw DecodingError.dataCorruptedError(in: container, debugDescription: "지원하지 않는 JSON 값")
         }
