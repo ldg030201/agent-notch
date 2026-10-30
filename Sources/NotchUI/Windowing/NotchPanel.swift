@@ -6,7 +6,7 @@ import SwiftUI
 /// - 활성화하지 않는 패널이라 알림이 와도 다른 앱의 키보드 포커스를 뺏지 않는다.
 /// - 아일랜드가 펼쳐졌거나 권한 요청을 보여줄 때만 키 윈도우가 될 수 있다 (클릭 후 단축키용).
 /// - 창 크기는 고정. 아일랜드 크기 변화는 SwiftUI 내용에서 애니메이션한다.
-final class NotchPanel: NSPanel {
+class NotchPanel: NSPanel {
     /// 메뉴바(.statusBar) 위, 팝업 메뉴/경고창 아래
     static let islandLevel = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 8)
 
@@ -55,34 +55,13 @@ final class NotchPanel: NSPanel {
 /// 키 반납용 보이지 않는 패널 (1×1, 투명, 클릭 통과).
 /// 키 윈도우였던 아일랜드 패널을 내렸다 다시 올리면(orderOut → orderFront) 그 사이 한 프레임 아일랜드가 비어 보일 수 있어서,
 /// 이 패널을 잠깐 키 윈도우로 만든 뒤 내려 키보드 포커스를 원래 앱으로 돌려준다.
-final class KeyReleasePanel: NSPanel {
+/// 아일랜드 패널과 창 설정(레벨 · Space 동작 · 투명)이 같아야 키를 넘겨받으므로 `NotchPanel` 을 그대로 쓴다
+/// (따로 복사해 두면 한쪽만 바뀌었을 때 키 반납이 실패해 위의 내렸다 올리기로 떨어진다)
+final class KeyReleasePanel: NotchPanel {
     convenience init() {
-        self.init(
-            contentRect: CGRect(x: 0, y: 0, width: 1, height: 1),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: true
-        )
-        isOpaque = false
-        backgroundColor = .clear
-        hasShadow = false
-        level = NotchPanel.islandLevel
-        collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
-        hidesOnDeactivate = false
-        isReleasedWhenClosed = false
-        becomesKeyOnlyIfNeeded = false
-        animationBehavior = .none
-        ignoresMouseEvents = true
+        self.init(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+        allowsKey = { true }
     }
-
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
-
-    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
-        frameRect
-    }
-
-    override func noResponder(for eventSelector: Selector) {}
 }
 
 /// 첫 클릭부터 바로 SwiftUI 로 전달되는 호스팅 뷰.
