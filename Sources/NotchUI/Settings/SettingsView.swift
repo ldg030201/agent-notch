@@ -397,7 +397,7 @@ struct SettingsView: View {
                 SettingsDivider()
                 switchRow(
                     "마우스를 올려 두면 잠깐 비켜주기",
-                    note: "접힌 아일랜드에 마우스를 1.5초 올려 두면 사라져서 뒤의 탭 · 버튼을 누를 수 있어요. 마우스가 그 자리를 떠나면 다시 보여요",
+                    note: "접힌 아일랜드에 마우스를 1초 올려 두면 사라져서 뒤의 탭 · 버튼을 누를 수 있어요. 마우스가 그 자리를 떠나면 다시 보여요",
                     isOn: $preferences.dodgesOnHover
                 )
             }

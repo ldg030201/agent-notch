@@ -537,7 +537,7 @@ Claude 의 객관식 질문과 계획 승인을 다이얼로그 대신 노치에
 접힌 아일랜드(노치 아래 띠 · 알약)가 뒤의 탭 · 버튼(예: 브라우저 새 탭 버튼)을 가릴 때, 클릭하지 않고 마우스를 올려 두면 비켜 준다
 (설정 "마우스를 올려 두면 잠깐 비켜주기", `AppPreferences.dodgesOnHover`, 기본 켬).
 
-- `ScreenManager.updateDodge`: 마우스가 접힌 아일랜드 클릭 영역 위에 `dodgeDelay`(1.5초) 머물면 그때 클릭 영역(`hitRects`)을 묶어
+- `ScreenManager.updateDodge`: 마우스가 접힌 아일랜드 클릭 영역 위에 `dodgeDelay`(1초) 머물면 그때 클릭 영역(`hitRects`)을 묶어
   `dodgeMargin`(6pt) 넓힌 자리를 기억하고 `PresentationController.setDodged(id, true)`. 영역을 떠나면 시계를 멈추고, 모드가 바뀌면(클릭으로 펼침 등) 처음부터 잰다.
 - 비킨 동안(`dodgedScreenIDs`): 접힌 상태를 투명하게 숨기고(`isConcealed`, 열린 메뉴 숨김과 같은 길) 클릭 영역이 비어 패널이 클릭을 통과시킨다.
   알림 · 일시 펼침은 열린 메뉴와 겹친 것처럼 미룬다 (`mode(for:)` 의 `occluded`): 클릭하려는 자리를 카드가 덮지 않게.
