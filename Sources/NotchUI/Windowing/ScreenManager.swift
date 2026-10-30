@@ -55,7 +55,7 @@ final class ScreenManager {
     /// 풀스크린 감지 · 패널 확인 주기(초). 설정이 "전부 표시"면 풀스크린은 감지하지 않는다 (패널 확인은 늘 한다)
     private static let fullscreenPollInterval: Double = 2
     /// 비켜주기: 접힌 아일랜드 위에 마우스를 이만큼(초) 올려 두면 비킨다 (클릭하면 예전처럼 펼친다)
-    static let dodgeDelay: Double = 2.5
+    static let dodgeDelay: Double = 1.5
     /// 비킨 자리에서 마우스가 나간 뒤 다시 보이기까지(초). 경계를 스치거나 뒤를 클릭하고 살짝 움직여도 바로 돌아오지 않게
     static let dodgeReturnDelay: Double = 0.5
     /// 비킨 자리 둘레 여유 (pt)
