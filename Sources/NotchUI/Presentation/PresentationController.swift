@@ -158,7 +158,7 @@ final class PresentationController {
         guard observing else { return }
         let current = generation
         withObservationTracking {
-            _ = store.latestSignal
+            _ = store.recentSignals
         } onChange: { [weak self] in
             // willSet 시점에 불리므로 다음 틱에서 새 값을 읽는다
             Task { @MainActor [weak self] in
@@ -1250,10 +1250,15 @@ final class PresentationController {
 
     func handleLatestSignal() {
         pruneTransientState()
-        guard let event = store.latestSignal, event.seq != lastSignalSeq else { return }
-        lastSignalSeq = event.seq
+        let last = lastSignalSeq
+        let pending = store.recentSignals.filter { event in last.map { event.seq > $0 } ?? true }
+        guard let newest = pending.last else { return }
+        lastSignalSeq = newest.seq
+        for event in pending { handle(event.signal) }
+    }
 
-        switch event.signal {
+    private func handle(_ signal: IslandSignal) {
+        switch signal {
         case let .edited(sessionID, diff):
             guard preferences.peekOnEdit, sessionID == store.focusedSessionID else { return }
             // 완료/실패 요약이 떠 있으면 피크로 덮지 않는다
@@ -1272,6 +1277,8 @@ final class PresentationController {
             inputMessages[sessionID] = message
             // 그 세션이 다시 물으면 접어 둔 그 세션 카드를 다시 띄운다 (다른 세션의 접어 둔 카드는 그대로)
             let kept = suppressedInputKeys.filter { $0.sessionID != sessionID }
+    /// 지난번 이후 쌓인 신호를 순서대로 모두 처리한다 (`SessionStore.recentSignals`).
+    /// 같은 메인 큐 차례에 신호가 여럿 와도(연달아 들어온 이벤트) 앞 신호의 완료 카드 · 입력 대기 메시지를 잃지 않는다
             if kept != suppressedInputKeys { suppressedInputKeys = kept }
         case .permissionRequested, .sessionStarted:
             break

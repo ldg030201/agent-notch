@@ -34,8 +34,14 @@ public final class SessionStore {
     /// 누가(어느 에이전트의 어느 호출이) 기다리는지 기억해서 병렬로 도는 다른 에이전트의 툴 진행으로 대기가 지워지지 않게 한다.
     /// 밖에서는 `isInputHandedOff` 로 넘긴 질문을 본다 (관찰 대상이라 `@ObservationIgnored` 를 붙이지 않는다)
     private var waits: [String: [Wait]] = [:]
-    /// UI 일시 반응용 최신 신호
-    public private(set) var latestSignal: SignalEvent?
+    /// UI 일시 반응용 최근 신호 (오래된 것부터, 최대 `maxRecentSignals` 개).
+    /// 한 칸만 두면 UI 가 처리하기 전(같은 메인 큐 차례 · 연달아 들어온 envelope · `checkStalledTools` 한 번)에 온 다음 신호가
+    /// 앞 신호를 덮어써서 완료 · 미리보기 · 입력 대기 알림을 잃었다. UI 는 지난번 이후의 신호를 순서대로 모두 처리한다
+    public private(set) var recentSignals: [SignalEvent] = []
+    /// 가장 최근 신호
+    public var latestSignal: SignalEvent? { recentSignals.last }
+    /// 최근 신호를 이만큼만 남긴다 (UI 는 보통 다음 차례에 바로 처리하므로 몇 개면 충분하다)
+    public static let maxRecentSignals = 32
     /// 세션별 응답 스트리밍 텍스트 (MessageDisplay delta 누적, 최근 `AgentSession.maxStreamingCharacters` 자).
     /// 세션과 따로 두는 이유: delta 는 초당 여러 번 오는데 이 글을 보여주는 곳은 미리보기 · 완료 · 펼친 상세뿐이다.
     /// `sessions` 에 쓰면 접힌 아일랜드 · 모든 화면 레이아웃이 delta 마다 다시 계산된다
@@ -1550,7 +1556,10 @@ public final class SessionStore {
             break
         }
         signalSeq += 1
-        latestSignal = SignalEvent(seq: signalSeq, signal: signal)
+        recentSignals.append(SignalEvent(seq: signalSeq, signal: signal))
+        if recentSignals.count > Self.maxRecentSignals {
+            recentSignals.removeFirst(recentSignals.count - Self.maxRecentSignals)
+        }
     }
 
     /// notch-hook 의 PayloadShrinker 가 payload 를 줄였는지 (`NotchWire.truncatedMarkerKey`)
