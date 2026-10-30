@@ -136,6 +136,14 @@ final class OverlapMonitor {
     private var scanInFlight = false
     /// 마지막 확인 때 감시할 화면이 없었는지
     private var watchingNothing = true
+    /// 화면이 잠긴 동안 쉰다 (`ScreenManager` 가 정한다. 그동안 열린 메뉴도 없고, 드물게 깨어나기만 한다)
+    var paused = false {
+        didSet {
+            guard paused != oldValue, paused else { return }
+            tracking = Tracking()
+            update(State(notchConflicts: state.notchConflicts))
+        }
+    }
     private var tokens: [(NotificationCenter, NSObjectProtocol)] = []
     private var running = false
 
@@ -171,7 +179,7 @@ final class OverlapMonitor {
         pollTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 // 아일랜드가 안 보이면(감시할 화면 없음) 드물게 깨어난다
-                let idle = self?.watchingNothing ?? true
+                let idle = (self?.watchingNothing ?? true) || (self?.paused ?? false)
                 try? await Task.sleep(for: idle ? Self.idleInterval : Self.pollInterval)
                 guard let self, self.running else { return }
                 self.scanNow()
@@ -191,7 +199,7 @@ final class OverlapMonitor {
     }
 
     func scanNow() {
-        guard running, !scanInFlight else { return }
+        guard running, !scanInFlight, !paused else { return }
         let targets = targetsProvider()
         watchingNothing = targets.isEmpty && !ownMenuOpen
         guard !targets.isEmpty else {

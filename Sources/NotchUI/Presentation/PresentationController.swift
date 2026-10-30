@@ -66,8 +66,8 @@ final class PresentationController {
     private var transient: Transient?
     /// ⎋ 로 접어 둔 권한 요청 (요청은 계속 대기)
     private var suppressedPermissionIDs: Set<UUID> = []
-    /// ⎋ 로 접어 둔 입력 대기 알림
-    private var suppressedInputKey: String?
+    /// ⎋ 로 접어 둔 입력 대기 알림 (세션 · 메시지). 권한 요청처럼 접어 둔 것만 건너뛰고 다음 세션의 입력 대기를 띄운다
+    private var suppressedInputKeys: Set<InputKey> = []
     /// needsInput 신호로 받은 메시지 (세션별 최신)
     private var inputMessages: [String: String] = [:]
 
@@ -318,13 +318,35 @@ final class PresentationController {
     // MARK: - 모드 계산
 
     func mode(for id: ScreenID) -> IslandMode {
+        mode(for: id, occluded: isOccluded(id))
+    }
+
+    /// 알림 · 일시 펼침을 미루는 화면: 열린 메뉴와 겹치면 알림 펼침은 메뉴가 닫힐 때까지 미루고(접힌 상태 + 주황 점),
+    /// 일시 펼침은 보이지 않는다. 마우스를 올려 두어 비킨 동안도 같다 (그때 접힌 상태는 투명하게 숨긴다)
+    private func isOccluded(_ id: ScreenID) -> Bool {
+        occludedScreenIDs.contains(id) || dodgedScreenIDs.contains(id)
+    }
+
+    /// 열린 메뉴 · 비켜주기 때문에 미뤄 둔 카드 (알림 · 일시 펼침). 미루지 않았으면 nil
+    func deferredMode(for id: ScreenID) -> IslandMode? {
+        guard isOccluded(id) else { return nil }
+        let open = mode(for: id, occluded: false)
+        return open.isOpen && open != mode(for: id, occluded: true) ? open : nil
+    }
+
+    /// 미뤄 둔 알림(권한 요청 · 질문 · 계획 승인 · 입력 대기)이 있는지
+    func hasDeferredAlert(on id: ScreenID) -> Bool {
+        switch deferredMode(for: id) {
+        case .permission?, .needsInput?: return true
+        default: return false
+        }
+    }
+
+    private func mode(for id: ScreenID, occluded: Bool) -> IslandMode {
         guard geometries[id] != nil, isVisible(id) else { return .hidden }
         let isTarget = id == transientTargetScreenID
         let fullscreen = fullscreenScreenIDs.contains(id)
         let behavior = preferences.fullscreenBehavior
-        // 열린 메뉴와 겹치면 알림 펼침은 메뉴가 닫힐 때까지 미루고(접힌 상태 + 주황 점), 일시 펼침은 보이지 않는다.
-        // 마우스를 올려 두어 비킨 동안도 같다 (그때 접힌 상태는 투명하게 숨긴다)
-        let occluded = occludedScreenIDs.contains(id) || dodgedScreenIDs.contains(id)
 
         if isTarget, !(fullscreen && behavior == .hide), let alert = alertMode() {
             return occluded ? compactMode(for: id) : alert
@@ -393,7 +415,7 @@ final class PresentationController {
         if let request = pending.first(where: { !suppressedPermissionIDs.contains($0.id) }) {
             return .permission(request, queueCount: pending.count)
         }
-        if let input = pendingInput(), suppressedInputKey != Self.inputKey(input.sessionID, input.message) {
+        if let input = pendingInputs().first(where: { !suppressedInputKeys.contains($0.key) }) {
             return .needsInput(sessionID: input.sessionID, message: input.message, isPermissionPrompt: input.isPermissionPrompt)
         }
         // 앱 안내는 세션의 알림이 없을 때 (입력 필요 카드와 같은 자리)
@@ -414,27 +436,45 @@ final class PresentationController {
         onNoticeResponse?(response)
     }
 
-    /// 입력 대기 중이거나, 훅 대기 없이 터미널(또는 Claude 앱)에서 승인을 기다리는 세션
-    private func pendingInput() -> (sessionID: String, message: String, isPermissionPrompt: Bool)? {
+    /// 입력 대기 알림 하나 (세션 · 보여줄 메시지)
+    private struct PendingInput {
+        var sessionID: String
+        var message: String
+        var isPermissionPrompt: Bool
+
+        var key: InputKey { InputKey(sessionID: sessionID, message: message) }
+    }
+
+    /// 접어 둔 입력 대기 알림을 알아보는 값. 같은 세션이라도 메시지가 바뀌면 새 알림이다
+    private struct InputKey: Hashable {
+        var sessionID: String
+        var message: String
+    }
+
+    /// 입력 대기 중이거나, 훅 대기 없이 터미널(또는 Claude 앱)에서 승인을 기다리는 세션들 (포커스 세션 먼저, 그다음 순위대로)
+    private func pendingInputs() -> [PendingInput] {
         var candidates: [AgentSession] = []
         if let focused = store.focusedSession { candidates.append(focused) }
         candidates.append(contentsOf: store.rankedSessions)
         let hookPendingSessions = Set(store.pendingPermissions.map(\.sessionID))
 
-        for session in candidates {
+        var seen = Set<String>()
+        var inputs: [PendingInput] = []
+        for session in candidates where seen.insert(session.id).inserted {
             switch session.phase {
             case .waitingInput where !hookPendingSessions.contains(session.id) && !store.isInputHandedOff(session.id):
                 // 노치에서 답하는 질문 카드가 있거나(접어 둔 경우 포함) "터미널로" 넘긴 질문이면 입력 대기 카드를 따로 띄우지 않는다
                 let message = inputMessages[session.id] ?? session.lastNotification ?? "입력이 필요해"
-                return (session.id, message, false)
+                inputs.append(PendingInput(sessionID: session.id, message: message, isPermissionPrompt: false))
             case .waitingPermission where !hookPendingSessions.contains(session.id):
                 // 버튼("터미널로" · "Claude로")과 같은 곳을 가리킨다
-                return (session.id, "\(SessionHost(session.terminal).placeName)에서 승인 필요", true)
+                let message = "\(SessionHost(session.terminal).placeName)에서 승인 필요"
+                inputs.append(PendingInput(sessionID: session.id, message: message, isPermissionPrompt: true))
             default:
                 continue
             }
         }
-        return nil
+        return inputs
     }
 
     private func transientMode() -> IslandMode? {
@@ -450,10 +490,6 @@ final class PresentationController {
             guard store.sessions[sessionID]?.phase == .failed else { return nil }
             return .failed(sessionID: sessionID)
         }
-    }
-
-    private static func inputKey(_ sessionID: String, _ message: String) -> String {
-        sessionID + "\u{1F}" + message
     }
 
     // MARK: - 레이아웃 (순수 계산)
@@ -836,16 +872,24 @@ final class PresentationController {
         }
     }
 
-    /// 열린 메뉴와 겹치는지 볼 영역 (패널 기준). `layout` 은 지금 그린 레이아웃
-    /// - zone: 지금 아일랜드 + 카드가 펼쳐질 자리 (겹치면 알림 펼침을 미루고 일시 펼침을 접는다)
+    /// 열린 메뉴와 겹치는지 볼 영역 (패널 기준). `mode` · `layout` 은 지금 그린 모드 · 레이아웃
+    /// - zone: 지금 아일랜드 + 카드가 펼쳐질 자리 + 미뤄 둔 카드가 열릴 자리 (겹치면 알림 펼침을 미루고 일시 펼침을 접는다).
+    ///   미뤄 둔 카드 자리를 빼면 메뉴가 카드 아래쪽에만 걸칠 때 미루자마자 겹침이 풀려 카드가 열렸다 접혔다를 되풀이한다
+    ///   (그때마다 내용 없는 검은 카드가 비치고 승인 대기도 처음부터 다시 잰다)
     /// - island: 지금 아일랜드 + 그 아래 메뉴바 끝까지 6pt 더 (메뉴바 아이템에서 내려온 메뉴 · 팝오버).
     ///   여기와 겹칠 때만 접힌 상태를 숨긴다 (카드 자리 아래쪽에 뜬 다른 앱 팝업 · 툴팁엔 숨지 않는다)
-    func overlapZones(for id: ScreenID, layout: IslandLayout) -> (zone: CGRect, island: CGRect)? {
+    /// 아일랜드를 숨겼으면 미뤄 둔 카드가 있을 때만 감시한다 (그때 숨길 접힌 모양은 없다)
+    func overlapZones(for id: ScreenID, mode: IslandMode, layout: IslandLayout) -> (zone: CGRect, island: CGRect)? {
         guard let engine = layoutEngine(for: id) else { return nil }
+        let deferred = deferredMode(for: id)
+        guard mode != .hidden || deferred != nil else { return nil }
+        var zone = engine.cardZone()
+        if let deferred { zone = zone.union(self.layout(for: id, mode: deferred).panelRect) }
+        guard mode != .hidden else { return (zone, .zero) }
         let current = layout.panelRect
         let bottom = max(current.maxY, engine.menuBarHeight) + 6
         let island = CGRect(x: current.minX - 4, y: current.minY, width: current.width + 8, height: bottom - current.minY)
-        return (current.union(engine.cardZone()), island)
+        return (zone.union(current), island)
     }
 
     /// 설정이 켜져 있을 때만 보여줄 최근 응답 한 줄
@@ -878,6 +922,16 @@ final class PresentationController {
             expandedScreenID = nil
             return
         }
+        // 알림이 이 화면을 차지하는 동안(보이는 중 · 열린 메뉴나 비켜주기로 미룬 중)엔 펼침을 걸어 두지 않는다.
+        // 걸어 두면 알림을 처리하는 순간 큰 펼침이 저절로 열리고, 펼침은 키 윈도우라 다른 앱으로 갈 키 입력을 삼킨다.
+        // 보이는 알림이면 키만 받아 단축키로 결정하게 한다 (전역 단축키 · 메뉴바 메뉴의 "펼치기")
+        switch mode(for: id) {
+        case .permission, .needsInput:
+            onRequestKey?(id)
+            return
+        default:
+            if hasDeferredAlert(on: id) { return }
+        }
         expandedScreenID = id
         if let focused = store.focusedSession, focused.hasUnseenCompletion {
             store.markSeen(sessionID: focused.id)
@@ -894,7 +948,7 @@ final class PresentationController {
             if let notice, notice.id == sessionID {
                 respondToNotice(.dismissed(id: notice.id))
             } else {
-                suppressedInputKey = Self.inputKey(sessionID, message)
+                suppressedInputKeys.insert(InputKey(sessionID: sessionID, message: message))
             }
         case .expanded:
             expandedScreenID = nil
@@ -912,7 +966,7 @@ final class PresentationController {
 
     /// 입력 대기 카드 "접기"
     func minimizeInput(sessionID: String, message: String) {
-        suppressedInputKey = Self.inputKey(sessionID, message)
+        suppressedInputKeys.insert(InputKey(sessionID: sessionID, message: message))
     }
 
     /// 아일랜드 바깥(다른 앱)을 클릭하면 사용자가 연 펼침과 일시 펼침(피크/완료)을 바로 접는다.
@@ -931,8 +985,8 @@ final class PresentationController {
             suppressedPermissionIDs.removeAll()
             restored = true
         }
-        if let key = suppressedInputKey, let input = pendingInput(), Self.inputKey(input.sessionID, input.message) == key {
-            suppressedInputKey = nil
+        if !suppressedInputKeys.isEmpty, !suppressedInputKeys.isDisjoint(with: pendingInputs().map(\.key)) {
+            suppressedInputKeys.removeAll()
             restored = true
         }
         return restored
@@ -1174,6 +1228,8 @@ final class PresentationController {
     /// 요청 카드(권한 · 질문 · 계획)면 이때부터 승인 대기(`shortcutSettleDelay`)를 잰다: 모드가 바뀐 때가 아니라
     /// 그 요청 내용이 실제로 나타난 때부터라, 내용 교체 지연이 길어져도 승인을 막는 시간이 줄지 않는다
     func contentDidAppear(_ key: IslandContentKey, on screen: ScreenID) {
+        // 사라진 화면 패널의 늦은 알림은 무시한다 (남은 화면이 보여주는 요청의 승인 대기를 덮어쓰지 않게)
+        guard geometries[screen] != nil else { return }
         guard let request = key.request else {
             if displayedPermission?.screen == screen { displayedPermission = nil }
             return
@@ -1214,7 +1270,9 @@ final class PresentationController {
             showTransient(.failed(sessionID: sessionID), duration: preferences.completionDisplayDuration)
         case let .needsInput(sessionID, message):
             inputMessages[sessionID] = message
-            suppressedInputKey = nil
+            // 그 세션이 다시 물으면 접어 둔 그 세션 카드를 다시 띄운다 (다른 세션의 접어 둔 카드는 그대로)
+            let kept = suppressedInputKeys.filter { $0.sessionID != sessionID }
+            if kept != suppressedInputKeys { suppressedInputKeys = kept }
         case .permissionRequested, .sessionStarted:
             break
         }
@@ -1269,9 +1327,10 @@ final class PresentationController {
             let kept = suppressedPermissionIDs.intersection(pendingIDs)
             if kept != suppressedPermissionIDs { suppressedPermissionIDs = kept }
         }
-        if suppressedInputKey != nil {
-            let current = pendingInput().map { Self.inputKey($0.sessionID, $0.message) }
-            if current != suppressedInputKey { suppressedInputKey = nil }
+        if !suppressedInputKeys.isEmpty {
+            // 답했거나 메시지가 바뀌어 더는 대기하지 않는 알림은 잊는다
+            let kept = suppressedInputKeys.intersection(pendingInputs().map(\.key))
+            if kept != suppressedInputKeys { suppressedInputKeys = kept }
         }
         let stale = inputMessages.keys.filter { store.sessions[$0]?.phase != .waitingInput }
         for key in stale { inputMessages.removeValue(forKey: key) }

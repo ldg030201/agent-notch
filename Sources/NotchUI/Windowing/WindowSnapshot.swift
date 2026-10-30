@@ -45,6 +45,17 @@ struct WindowSnapshot: Sendable {
     }
 }
 
+/// 이 로그인 세션의 화면을 지금 볼 수 없는지: 화면이 잠겼거나(잠금 화면 · 잠그는 화면 보호기) 다른 사용자로 전환됨.
+/// 그동안엔 창 목록에서 우리 패널 · 메뉴바가 빠지므로, 패널이 사라졌다고 보거나 메뉴바 빈 공간 · 열린 메뉴를 재지 않는다.
+/// 잠금 키(`CGSSessionScreenIsLocked`)는 문서에 없는 값이라, 없으면 잠기지 않은 것으로 본다
+enum SessionScreen {
+    static var isUnavailable: Bool {
+        guard let info = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
+        if let onConsole = info[kCGSessionOnConsoleKey] as? Bool, !onConsole { return true }
+        return info["CGSSessionScreenIsLocked"] as? Bool ?? false
+    }
+}
+
 /// 창 레벨 상수 (CGWindowLevelForKey 값)
 enum WindowLevels {
     static let mainMenu = Int(CGWindowLevelForKey(.mainMenuWindow))

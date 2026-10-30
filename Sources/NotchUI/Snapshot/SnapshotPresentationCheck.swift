@@ -249,11 +249,87 @@ enum SnapshotDodgeCheck {
                 problems.append("비킨 동안 온 권한 요청 카드가 바로 뜸 (모드 \(String(describing: waiting?.mode.kind)))")
             }
 
+            // 미룬 카드가 열릴 자리까지 겹침을 지켜본다 (접힌 모양 자리만 보면 메뉴가 카드 아래쪽에만 걸칠 때
+            // 미루자마자 겹침이 풀려 카드가 열렸다 접혔다를 되풀이한다)
+            cases += 1
+            if let waiting, let deferred = presentation.deferredMode(for: id), deferred.kind == .permission,
+               presentation.hasDeferredAlert(on: id),
+               let zones = presentation.overlapZones(for: id, mode: waiting.mode, layout: waiting.layout) {
+                let card = presentation.layout(for: id, mode: deferred).panelRect
+                if !zones.zone.contains(card) {
+                    problems.append("겹침 감시 영역이 미룬 카드 자리를 덮지 않음 (영역 \(zones.zone), 카드 \(card))")
+                }
+            } else {
+                problems.append("미룬 권한 요청 카드를 찾지 못함")
+            }
+
+            // 미룬 알림이 있는 동안 펼치기(전역 단축키 · 메뉴)는 펼침을 걸어 두지 않는다 (알림을 처리하는 순간 펼침이 저절로 열리지 않게)
+            cases += 1
+            presentation.toggleExpanded(on: id)
+            if presentation.expandedScreenID != nil { problems.append("미룬 알림이 있는데 펼침이 걸림") }
+
             cases += 1
             presentation.setDodged(id, false)
             let back = presentation.commitScreens()[id]
             if back?.mode.kind != .permission || back?.concealed != false {
                 problems.append("다시 보일 때 미뤄 둔 권한 요청 카드가 안 뜸 (모드 \(String(describing: back?.mode.kind)))")
+            }
+        } catch {
+            problems.append("장면 준비 실패: \(error.localizedDescription)")
+        }
+        return (cases, problems)
+    }
+}
+
+// MARK: - 입력 대기 접기
+
+/// 두 세션이 입력을 기다릴 때 한쪽 카드를 접으면(⎋) 다른 세션 카드가 뜨고, 둘 다 접어야 접힌 상태로 돌아간다
+/// (예전엔 접은 키가 하나뿐이라, 접은 세션이 앞 순위로 남아 있으면 다른 세션 카드가 아예 뜨지 않았다)
+@MainActor
+enum SnapshotInputCollapseCheck {
+    static func run() -> (cases: Int, problems: [String]) {
+        var problems: [String] = []
+        var cases = 0
+        do {
+            let setup = try SnapshotStage.prepare(.working, style: .notch)
+            let id = setup.screenID
+            let presentation = setup.presentation
+            var world = setup.world
+            world.blogAsksQuestion()
+            presentation.handleLatestSignal()
+            let docs = SnapshotWorld.docsSite
+            world.send(docs, "UserPromptSubmit", at: 780, ["prompt": "문서 고쳐줘"])
+            world.send(docs, "PreToolUse", at: 785, [
+                "tool_name": "AskUserQuestion", "tool_use_id": "snapshot-docs-question",
+                "tool_input": ["questions": [["question": "목차도 바꿀까요?", "header": "목차", "options": [["label": "바꾸기"], ["label": "그대로"]]]]],
+            ])
+            presentation.handleLatestSignal()
+
+            func waitingSession() -> String? {
+                if case let .needsInput(sessionID, _, _) = setup.mode { return sessionID }
+                return nil
+            }
+
+            cases += 1
+            guard let first = waitingSession() else {
+                problems.append("입력 대기 카드가 안 뜸 (모드 \(setup.mode.kind))")
+                return (cases, problems)
+            }
+
+            cases += 1
+            presentation.collapse(on: id)
+            let second = waitingSession()
+            if second == nil || second == first {
+                problems.append("한 세션 카드를 접었는데 다른 세션 입력 대기 카드가 안 뜸 (모드 \(setup.mode.kind))")
+            }
+
+            cases += 1
+            presentation.collapse(on: id)
+            if !setup.mode.isCompact { problems.append("둘 다 접었는데 접힌 상태가 아님 (모드 \(setup.mode.kind))") }
+
+            cases += 1
+            if !presentation.restoreSuppressedAlerts() || waitingSession() == nil {
+                problems.append("접힌 아일랜드를 눌러도 접어 둔 입력 대기 카드가 다시 안 뜸")
             }
         } catch {
             problems.append("장면 준비 실패: \(error.localizedDescription)")
