@@ -33,6 +33,17 @@ cp "$BIN_DIR/AgentNotch" "$BIN"
 cp "$BIN_DIR/notch-hook" "$HELPER"
 chmod 755 "$BIN" "$HELPER"
 
+# 번들에 넣은 사본에서 로컬 심벌 · 디버그 맵을 뺀다 (실행 파일이 절반 가까이 준다: 6.8MB → 3.4MB).
+# 실행 중에 심벌 이름을 찾는 코드는 없다. 서명보다 먼저 해야 서명이 유효하다.
+# .build/ 의 원본은 그대로 두므로, 크래시를 함수 이름으로 보려면 그쪽 바이너리로 심벌화한다
+if [[ "$CONFIG" == "release" ]]; then
+  if ! strip_log="$(strip -x "$BIN" "$HELPER" 2>&1)"; then
+    echo "$strip_log" >&2
+    echo "strip 실패" >&2
+    exit 1
+  fi
+fi
+
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 # 변형마다 이름과 번들 ID 만 바꾼다. 실행 파일 이름(AgentNotch)은 그대로다.
 for key_value in \
