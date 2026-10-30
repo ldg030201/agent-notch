@@ -57,7 +57,10 @@ struct StaleToolTests {
     }
 
     @Test func interactionsWaitLongerThanPermissions() {
-        let preferences = AppPreferences(defaults: UserDefaults(suiteName: "agentnotch-test-\(UUID().uuidString)")!)
+        let suite = "agentnotch-test-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let preferences = AppPreferences(defaults: defaults)
         preferences.permissionTimeout = 120
         #expect(preferences.replyTimeout(isInteraction: false) == 120)
         #expect(preferences.replyTimeout(isInteraction: true) == Double(NotchWire.maxAppReplyTimeout))
