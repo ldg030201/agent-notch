@@ -86,7 +86,12 @@ else
     echo "키체인 창이 뜨면 '항상 허용' 을 눌러야 다음 빌드부터 묻지 않아요." >&2
   fi
   if ! sign_with "-"; then
-    echo "경고: ad-hoc 서명도 실패했어요. 앱은 서명 없이 만들어졌어요." >&2
+    # 심벌을 뺀 바이너리는 링커가 붙인 서명이 깨져 서명 없이는 Apple Silicon 에서 실행되지 않는다.
+    # 링커가 서명한 원본으로 되돌려 둔다 (크기는 커도 실행은 된다, 예전과 같은 결과)
+    cp "$BIN_DIR/AgentNotch" "$BIN"
+    cp "$BIN_DIR/notch-hook" "$HELPER"
+    chmod 755 "$BIN" "$HELPER"
+    echo "경고: ad-hoc 서명도 실패했어요. 앱은 서명 없이(심벌을 빼지 않은 원본으로) 만들어졌어요." >&2
   fi
 fi
 

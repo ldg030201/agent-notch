@@ -577,7 +577,8 @@ public final class SocketServer: @unchecked Sendable {
         var uid: uid_t = 0
         var gid: gid_t = 0
         guard getpeereid(fd, &uid, &gid) == 0 else { return false }
-        return uid == getuid()
+        // 헬퍼(`HookSocket`)와 같은 기준: getpeereid 는 상대의 유효 UID 를 돌려주므로 우리도 유효 UID 와 비교한다
+        return uid == geteuid()
     }
 
     /// 논블로킹 소켓에 끝까지 쓴다 (부분 쓰기·EINTR·EAGAIN 처리, 전체 시간 제한)

@@ -679,25 +679,25 @@ enum FullscreenDetector {
     static func fullscreenScreens(_ geometries: [NotchGeometry], snapshot: WindowSnapshot) -> Set<ScreenID> {
         guard !geometries.isEmpty else { return [] }
         let ownPID = Int(ProcessInfo.processInfo.processIdentifier)
-        let menuBarLevels: Set<Int> = [WindowLevels.mainMenu, WindowLevels.status]
 
         var covered = Set<ScreenID>()
-        var menuBarVisible = Set<ScreenID>()
-
-        for window in snapshot.windows where window.pid != ownPID {
-            let rect = window.frame
-            for geometry in geometries {
-                let screen = geometry.frame
-                if window.layer == 0, approximatelyEqual(rect, screen) {
-                    covered.insert(geometry.screenID)
-                } else if menuBarLevels.contains(window.layer),
-                          rect.intersects(screen),
-                          abs(rect.maxY - screen.maxY) < 2 {
-                    menuBarVisible.insert(geometry.screenID)
-                }
+        for window in snapshot.windows where window.pid != ownPID && window.layer == 0 {
+            for geometry in geometries where approximatelyEqual(window.frame, geometry.frame) {
+                covered.insert(geometry.screenID)
             }
         }
-        return covered.subtracting(menuBarVisible)
+        guard !covered.isEmpty else { return [] }
+        // 메뉴바가 보이는 화면은 풀스크린이 아니다. 메뉴바 · 상태 아이템은 메뉴바 빈 공간 측정과 같은 기준으로 찾는다
+        // (`MenuBarScanner`: 크기 · 투명도까지 본다). 예전처럼 메뉴바 레벨 창이 위 끝에 닿기만 하면 메뉴바로 보면,
+        // 다른 노치 · 메뉴바 앱이 모든 Space 에 띄운 화면 폭 투명 패널 때문에 풀스크린을 늘 놓쳤다
+        let screens = geometries.map {
+            MenuBarScanner.Screen(id: $0.screenID, frame: $0.frame, fallbackMenuBarHeight: $0.menuBarHeight)
+        }
+        let scan = MenuBarScanner.scan(snapshot, screens: screens, ownPID: ownPID)
+        return covered.filter { id in
+            guard let result = scan[id] else { return true }
+            return result.menuBarHeight == nil && result.statusMinX == nil
+        }
     }
 
     private static func approximatelyEqual(_ a: CGRect, _ b: CGRect) -> Bool {
