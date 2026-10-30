@@ -13,6 +13,7 @@ struct SpinnerView: View {
     var animated: Bool = true
 
     @Environment(\.islandRenderContext) private var renderContext
+    @Environment(\.islandMotionPaused) private var motionPaused
 
     var body: some View {
         if renderContext.isSnapshot {
@@ -22,7 +23,7 @@ struct SpinnerView: View {
                 .stroke(Color(nsColor: color), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                 .rotationEffect(.degrees(-90))
         } else {
-            LayerSpinner(color: color, lineWidth: lineWidth, animated: animated)
+            LayerSpinner(color: color, lineWidth: lineWidth, animated: animated && !motionPaused)
         }
     }
 }
@@ -44,6 +45,9 @@ private struct LayerSpinner: NSViewRepresentable {
 }
 
 final class SpinnerNSView: NSView {
+    /// 반복 애니메이션(스피너 · 깜빡이는 점)의 프레임 빈도
+    static let frameRate = CAFrameRateRange(minimum: 10, maximum: 30, preferred: 30)
+
     private let arc = CAShapeLayer()
     private var animated = true
 
@@ -103,6 +107,8 @@ final class SpinnerNSView: NSView {
         spin.duration = 1
         spin.repeatCount = .infinity
         spin.isRemovedOnCompletion = false
+        // 작은 스피너라 30fps 면 충분하다 (ProMotion 화면에서 120Hz 로 합성하지 않게)
+        spin.preferredFrameRateRange = Self.frameRate
         arc.add(spin, forKey: "spin")
     }
 }
@@ -115,12 +121,13 @@ struct PulsingDot: View {
     var animated: Bool = true
 
     @Environment(\.islandRenderContext) private var renderContext
+    @Environment(\.islandMotionPaused) private var motionPaused
 
     var body: some View {
         if renderContext.isSnapshot {
             Circle().fill(Color(nsColor: color))
         } else {
-            LayerPulsingDot(color: color, animated: animated)
+            LayerPulsingDot(color: color, animated: animated && !motionPaused)
         }
     }
 }
@@ -186,6 +193,7 @@ final class PulsingDotNSView: NSView {
         pulse.repeatCount = .infinity
         pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         pulse.isRemovedOnCompletion = false
+        pulse.preferredFrameRateRange = SpinnerNSView.frameRate
         dot.add(pulse, forKey: "pulse")
     }
 }

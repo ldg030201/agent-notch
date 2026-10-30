@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import os
 
 /// 화면에 보이는 창 목록 한 번 조회 결과.
 /// 화면 기록 권한 없이 읽히는 정보(경계 · 레이어 · PID)만 쓴다. 창 제목 · 앱 이름은 읽지 않는다.
@@ -38,6 +39,24 @@ struct WindowSnapshot: Sendable {
         }
         return WindowSnapshot(windows: windows)
     }
+
+    /// 방금 다른 감시가 조회한 결과(`maxAge` 초 안)가 있으면 그걸 쓰고, 없으면 새로 조회해 남긴다.
+    /// 열린 메뉴 감시(0.25초) · 메뉴바 측정(1초) · 풀스크린 확인(2초)이 같은 순간 따로 조회하지 않게 한다
+    /// (앱을 바꿀 때마다 셋이 한꺼번에 조회하던 것도 하나로 준다)
+    static func capture(primaryHeight: CGFloat, reusingWithin maxAge: TimeInterval) -> WindowSnapshot {
+        let now = ProcessInfo.processInfo.systemUptime
+        if let cached = recent.withLock({ $0 }), cached.primaryHeight == primaryHeight, now - cached.at <= maxAge {
+            return cached.snapshot
+        }
+        let snapshot = capture(primaryHeight: primaryHeight)
+        recent.withLock { $0 = (now, primaryHeight, snapshot) }
+        return snapshot
+    }
+
+    /// 마지막 조회 결과 (조회는 메인 밖 여러 작업에서 하므로 잠금으로 지킨다)
+    private static let recent = OSAllocatedUnfairLock<(at: TimeInterval, primaryHeight: CGFloat, snapshot: WindowSnapshot)?>(
+        initialState: nil
+    )
 
     /// CG 좌표(원점 왼쪽 위, 주 화면 기준) → Cocoa 전역 좌표
     static func cocoaRect(fromGlobalTopLeft rect: CGRect, primaryHeight: CGFloat) -> CGRect {

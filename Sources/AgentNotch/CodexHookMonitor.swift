@@ -22,6 +22,8 @@ final class CodexHookMonitor {
     static let quietThreshold: TimeInterval = 10
     /// 안내를 띄운 훅 지문 (같은 훅 내용으로는 다시 띄우지 않는다)
     static let noticeShownKey = "codexHooksNoticeShownFingerprint"
+    /// Codex 활동은 오늘부터 이 날수의 기록 폴더에서만 찾는다 (쌓인 기록 폴더 전체를 10초마다 훑지 않게)
+    static let activityDays = 3
 
     private let settings: AppSettingsProvider
     private let ui: NotchUIController
@@ -33,6 +35,8 @@ final class CodexHookMonitor {
     private var scanning = false
     /// 훅 이벤트 없이 Codex 활동을 처음 본 시각
     private var quietSince: Date?
+    /// 마지막으로 지문을 다시 읽을 때 본 훅 파일 수정 시각 (안 바뀌었으면 파일을 다시 읽고 해시하지 않는다)
+    private var checkedHooksModifiedAt: Date?
     private let log = Logger(subsystem: NotchServices.logSubsystem, category: "codex-hooks")
 
     init(settings: AppSettingsProvider, ui: NotchUIController) {
@@ -99,16 +103,21 @@ final class CodexHookMonitor {
     }
 
     private func check() {
-        // 다른 도구가 훅 파일을 바꿨을 수 있다
-        settings.reloadCodexFingerprint()
+        // 다른 도구가 훅 파일을 바꿨을 수 있다 (바뀌었을 때만 다시 읽어 지문을 만든다)
+        let modifiedAt = settings.codexHooksModifiedAt
+        if modifiedAt != checkedHooksModifiedAt {
+            checkedHooksModifiedAt = modifiedAt
+            settings.reloadCodexFingerprint()
+        }
         guard settings.codexHooksAwaitingTrust else { evaluate(); return }
         guard !scanning else { return }
         scanning = true
         let restorer = restorer
-        let installedAt = settings.codexHooksModifiedAt ?? .distantPast
+        let installedAt = modifiedAt ?? .distantPast
+        let days = Self.activityDays
         Task { @MainActor [weak self] in
             // 기록 폴더 훑기는 메인 밖에서
-            let latest = await Task.detached(priority: .utility) { restorer.latestCodexActivity() }.value
+            let latest = await Task.detached(priority: .utility) { restorer.latestCodexActivity(recentDays: days) }.value
             guard let self else { return }
             self.scanning = false
             self.decide(latestActivity: latest, installedAt: installedAt)

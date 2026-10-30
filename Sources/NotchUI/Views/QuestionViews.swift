@@ -389,7 +389,7 @@ struct PlanApprovalView: View {
     let reduceMotion: Bool
 
     var body: some View {
-        let card = PlanCardModel(plan: plan)
+        let card = presentation.planCard(for: request, plan: plan)
         let host = SessionHost(session?.terminal)
 
         CardScaffold(layout: layout) {

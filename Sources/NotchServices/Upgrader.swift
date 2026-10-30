@@ -33,6 +33,8 @@ public final class Upgrader {
     public private(set) var phase: Phase = .idle
     /// brew 출력 (stdout + stderr, 뒤쪽 `logLimit` 자만 유지)
     public private(set) var log = ""
+    /// `log` 의 글자 수 (조각마다 다시 세지 않으려고 이어서 센다. 조각 경계에서 합쳐지는 글자 때문에 조금 많을 수 있다)
+    @ObservationIgnored private var logCharacters = 0
 
     public var isBusy: Bool { phase == .running || phase == .swapping }
 
@@ -84,6 +86,7 @@ public final class Upgrader {
             return
         }
         log = ""
+        logCharacters = 0
         readyBrew = nil
         expectedVersion = latestVersion
         runCounter += 1
@@ -186,8 +189,12 @@ public final class Upgrader {
 
     private func append(_ text: String) {
         log += text
-        if log.count > Self.logLimit {
-            log = String(log.suffix(Self.logLimit))
+        // 글자 수를 이어서 세고(`log.count` 는 매번 문자열 전체를 센다), 한도를 넘으면 한도의 3/4 만 남겨 자주 자르지 않는다
+        logCharacters += text.count
+        if logCharacters > Self.logLimit {
+            let kept = Self.logLimit * 3 / 4
+            log = String(log.suffix(kept))
+            logCharacters = kept
         }
     }
 

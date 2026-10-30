@@ -80,6 +80,8 @@ final class PresentationController {
     /// 권한 · 질문 카드 내용 (요청 · 카드 폭마다 한 번 계산해 레이아웃 · 뷰 · 단축키가 함께 쓴다). 요청이 대기열에서 빠지면 지운다
     @ObservationIgnored private var permissionCards: [CardKey: PermissionCardModel] = [:]
     @ObservationIgnored private var questionCards: [CardKey: QuestionCardModel] = [:]
+    /// 계획 승인 카드 내용 (요청마다 한 번. 계획 전문을 줄로 나누는 계산을 레이아웃 · 뷰가 렌더마다 되풀이하지 않게)
+    @ObservationIgnored private var planCards: [UUID: PlanCardModel] = [:]
     private struct CardKey: Hashable {
         var request: UUID
         var width: CGFloat
@@ -200,7 +202,8 @@ final class PresentationController {
                 var waited = false
                 while !Task.isCancelled, self?.isShowingCompact == false {
                     waited = true
-                    try? await Task.sleep(for: .milliseconds(500))
+                    // 접힌 상태가 다시 보일 때까지 관찰로 기다린다 (예전엔 0.5초마다 깨어났다. 입력 대기 카드는 몇 시간씩 떠 있기도 한다)
+                    await self?.waitForCompactChange()
                 }
                 if waited { try? await Task.sleep(for: Self.rotationResumeDelay) }
                 guard !Task.isCancelled, let self else { return }
@@ -211,6 +214,18 @@ final class PresentationController {
 
     /// 접힌 상태로 돌아온 뒤 넘기기 전에 보여주는 시간
     static let rotationResumeDelay: Duration = .seconds(2)
+
+    /// `isShowingCompact` 가 읽는 상태(펼침 · 일시 펼침 · 호버 · 알림)가 바뀔 때까지 기다린다.
+    /// 넘기기 시계를 다시 재면(취소) 다음 상태 변화에 깨어나 끝난다
+    private func waitForCompactChange() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            withObservationTracking {
+                _ = isShowingCompact
+            } onChange: {
+                continuation.resume()
+            }
+        }
+    }
 
     private var rotationInterval: Double {
         max(Self.minimumRotationInterval, preferences.sessionRotationInterval)
@@ -844,7 +859,7 @@ final class PresentationController {
                     self.questionCard(for: request, questions: questions, width: width).bodyHeight
                 }
             case let .plan(plan):
-                let body = PlanCardModel(plan: plan).bodyHeight
+                let body = planCard(for: request, plan: plan).bodyHeight
                 return card(M.permissionWidth, radius: 22) { _ in body }
             }
 
@@ -1038,6 +1053,15 @@ final class PresentationController {
     }
 
     /// 권한 카드 내용 (요청 · 카드 폭마다 한 번 계산한다)
+    /// 계획 승인 카드 내용 (요청마다 한 번 계산한다)
+    func planCard(for request: PermissionRequestInfo, plan: PlanInfo) -> PlanCardModel {
+        if let card = planCards[request.id] { return card }
+        if !planCards.isEmpty { planCards = planCards.filter { isPending($0.key) } }
+        let card = PlanCardModel(plan: plan)
+        planCards[request.id] = card
+        return card
+    }
+
     func permissionCard(for request: PermissionRequestInfo, width: CGFloat) -> PermissionCardModel {
         let key = CardKey(request: request.id, width: width)
         if let card = permissionCards[key] { return card }
@@ -1248,6 +1272,8 @@ final class PresentationController {
 
     // MARK: - 신호 처리
 
+    /// 지난번 이후 쌓인 신호를 순서대로 모두 처리한다 (`SessionStore.recentSignals`).
+    /// 같은 메인 큐 차례에 신호가 여럿 와도(연달아 들어온 이벤트) 앞 신호의 완료 카드 · 입력 대기 메시지를 잃지 않는다
     func handleLatestSignal() {
         pruneTransientState()
         let last = lastSignalSeq
@@ -1277,8 +1303,6 @@ final class PresentationController {
             inputMessages[sessionID] = message
             // 그 세션이 다시 물으면 접어 둔 그 세션 카드를 다시 띄운다 (다른 세션의 접어 둔 카드는 그대로)
             let kept = suppressedInputKeys.filter { $0.sessionID != sessionID }
-    /// 지난번 이후 쌓인 신호를 순서대로 모두 처리한다 (`SessionStore.recentSignals`).
-    /// 같은 메인 큐 차례에 신호가 여럿 와도(연달아 들어온 이벤트) 앞 신호의 완료 카드 · 입력 대기 메시지를 잃지 않는다
             if kept != suppressedInputKeys { suppressedInputKeys = kept }
         case .permissionRequested, .sessionStarted:
             break
@@ -1341,11 +1365,12 @@ final class PresentationController {
         }
         let stale = inputMessages.keys.filter { store.sessions[$0]?.phase != .waitingInput }
         for key in stale { inputMessages.removeValue(forKey: key) }
-        if !questionDrafts.isEmpty || !permissionCards.isEmpty || !questionCards.isEmpty {
+        if !questionDrafts.isEmpty || !permissionCards.isEmpty || !questionCards.isEmpty || !planCards.isEmpty {
             let pendingIDs = Set(store.pendingPermissions.map(\.id))
             questionDrafts = questionDrafts.filter { pendingIDs.contains($0.key) }
             permissionCards = permissionCards.filter { pendingIDs.contains($0.key.request) }
             questionCards = questionCards.filter { pendingIDs.contains($0.key.request) }
+            planCards = planCards.filter { pendingIDs.contains($0.key) }
         }
     }
 }

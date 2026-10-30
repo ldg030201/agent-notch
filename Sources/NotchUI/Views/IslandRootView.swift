@@ -66,6 +66,8 @@ struct IslandContainer: View {
                 reduceMotion: reduceMotion
             )
             .frame(width: shown.layout.size.width, height: shown.layout.size.height, alignment: .topLeading)
+            // 투명하게 숨은 동안 스피너 · 깜빡이는 점을 멈춘다 (보이지 않는 채로 계속 합성되지 않게)
+            .environment(\.islandMotionPaused, invisible)
             .opacity(viewState.contentVisible ? 1 : 0)
             // 마우스를 올리면 내용만 살짝 밝게 (모양 크기는 바꾸지 않아 노치 밖으로 삐져나오지 않음)
             .brightness(lit ? 0.12 : 0)

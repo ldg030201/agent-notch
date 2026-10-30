@@ -216,7 +216,7 @@ final class OverlapMonitor {
         Task { @MainActor [weak self] in
             let candidates = await Task.detached(priority: .userInitiated) {
                 OverlapScanner.scan(
-                    WindowSnapshot.capture(primaryHeight: primaryHeight),
+                    WindowSnapshot.capture(primaryHeight: primaryHeight, reusingWithin: 0.2),
                     targets: targets,
                     ownPID: ownPID,
                     ourLevel: level,

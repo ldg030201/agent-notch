@@ -95,13 +95,15 @@ public struct SessionRestorer: Sendable {
     }
 
     /// 가장 최근에 바뀐 Codex 기록의 수정 시각 (`activeWindow` 안, 서브에이전트 기록 포함). Codex 가 지금 일하는지 가늠한다
-    public func latestCodexActivity(now: Date = Date()) -> Date? {
-        recentCodexRollouts(now: now).first?.modified
+    public func latestCodexActivity(now: Date = Date(), recentDays: Int? = nil) -> Date? {
+        recentCodexRollouts(now: now, recentDays: recentDays).first?.modified
     }
 
     /// `activeWindow` 안에 바뀐 Codex 기록 (`<연>/<월>/<일>/*.jsonl`, 최근 것부터 `maxFiles` 개).
-    /// 기록은 시작한 날의 폴더에 남아 계속 쓰이므로 날짜 폴더를 모두 보고 수정 시각으로 고른다. 심볼릭 링크는 따라가지 않는다
-    func recentCodexRollouts(now: Date) -> [(url: URL, modified: Date)] {
+    /// 기록은 시작한 날의 폴더에 남아 계속 쓰이므로 날짜 폴더를 모두 보고 수정 시각으로 고른다. 심볼릭 링크는 따라가지 않는다.
+    /// `recentDays` 를 주면 오늘부터 그 날수의 날짜 폴더만 본다: 자주 부르는 곳(`CodexHookMonitor`, 10초마다)이 쌓인 기록 폴더 전체를
+    /// 매번 훑지 않게 (며칠 넘게 이어지는 기록은 놓쳐도 되는 곳에서만 쓴다)
+    func recentCodexRollouts(now: Date, recentDays: Int? = nil) -> [(url: URL, modified: Date)] {
         guard let root = codexSessionsDirectory else { return [] }
         let fileManager = FileManager.default
         let keys: [URLResourceKey] = [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey]
@@ -113,19 +115,31 @@ public struct SessionRestorer: Sendable {
             return values.isDirectory == true && values.isSymbolicLink != true
         }
 
+        let dayFolders: [URL]
+        if let recentDays {
+            let calendar = Calendar.current
+            dayFolders = (0..<max(1, recentDays)).compactMap { offset in
+                guard let date = calendar.date(byAdding: .day, value: -offset, to: now) else { return nil }
+                let parts = calendar.dateComponents([.year, .month, .day], from: date)
+                guard let year = parts.year, let month = parts.month, let day = parts.day else { return nil }
+                let folder = root.appendingPathComponent(String(format: "%04d/%02d/%02d", year, month, day), isDirectory: true)
+                return isDirectory(folder) ? folder : nil
+            }
+        } else {
+            dayFolders = children(root).filter(isDirectory)
+                .flatMap { children($0).filter(isDirectory) }
+                .flatMap { children($0).filter(isDirectory) }
+        }
+
         var found: [(url: URL, modified: Date)] = []
-        for year in children(root) where isDirectory(year) {
-            for month in children(year) where isDirectory(month) {
-                for day in children(month) where isDirectory(day) {
-                    for file in children(day) where file.pathExtension == "jsonl" {
-                        guard let values = try? file.resourceValues(forKeys: Set(keys)),
-                              values.isRegularFile == true, values.isSymbolicLink != true,
-                              let modified = values.contentModificationDate,
-                              now.timeIntervalSince(modified) <= activeWindow
-                        else { continue }
-                        found.append((file, modified))
-                    }
-                }
+        for day in dayFolders {
+            for file in children(day) where file.pathExtension == "jsonl" {
+                guard let values = try? file.resourceValues(forKeys: Set(keys)),
+                      values.isRegularFile == true, values.isSymbolicLink != true,
+                      let modified = values.contentModificationDate,
+                      now.timeIntervalSince(modified) <= activeWindow
+                else { continue }
+                found.append((file, modified))
             }
         }
         return Array(found.sorted { $0.modified > $1.modified }.prefix(maxFiles))

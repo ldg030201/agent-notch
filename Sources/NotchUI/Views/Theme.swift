@@ -68,10 +68,21 @@ private struct IslandRenderContextKey: EnvironmentKey {
     static let defaultValue = IslandRenderContext()
 }
 
+private struct IslandMotionPausedKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
 extension EnvironmentValues {
     var islandRenderContext: IslandRenderContext {
         get { self[IslandRenderContextKey.self] }
         set { self[IslandRenderContextKey.self] = newValue }
+    }
+
+    /// 아일랜드가 투명하게 숨은 동안(숨김 · 열린 메뉴 숨김 · 비켜주기) 반복 애니메이션(스피너 · 깜빡이는 점)을 멈춘다.
+    /// 패널은 화면에 그대로라 멈추지 않으면 보이지 않는 채로 계속 돌며 합성된다
+    var islandMotionPaused: Bool {
+        get { self[IslandMotionPausedKey.self] }
+        set { self[IslandMotionPausedKey.self] = newValue }
     }
 }
 

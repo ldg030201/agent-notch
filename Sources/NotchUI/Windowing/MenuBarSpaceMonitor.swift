@@ -219,7 +219,9 @@ final class MenuBarSpaceMonitor {
 
         Task { @MainActor [weak self] in
             let scan = await Task.detached(priority: .utility) {
-                MenuBarScanner.scan(WindowSnapshot.capture(primaryHeight: primaryHeight), screens: screens, ownPID: ownPID)
+                MenuBarScanner.scan(
+                    WindowSnapshot.capture(primaryHeight: primaryHeight, reusingWithin: 0.25), screens: screens, ownPID: ownPID
+                )
             }.value
             guard let self else { return }
             self.refreshInFlight = false

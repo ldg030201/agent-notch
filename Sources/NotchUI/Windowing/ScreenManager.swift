@@ -596,7 +596,7 @@ final class ScreenManager {
         let result = await Task.detached(priority: .utility) { () -> (fullscreen: Set<ScreenID>, own: Set<Int>)? in
             // 화면이 잠긴 동안엔 창 목록에 우리 패널도 메뉴바도 없다: 풀스크린 · 빠진 패널을 판단하지 않는다
             guard !SessionScreen.isUnavailable else { return nil }
-            let snapshot = WindowSnapshot.capture(primaryHeight: primaryHeight)
+            let snapshot = WindowSnapshot.capture(primaryHeight: primaryHeight, reusingWithin: 0.25)
             let ownPID = Int(ProcessInfo.processInfo.processIdentifier)
             let own = Set(snapshot.windows.lazy.filter { $0.pid == ownPID }.map(\.number))
             let fullscreen = detectsFullscreen ? FullscreenDetector.fullscreenScreens(geometries, snapshot: snapshot) : []
