@@ -90,10 +90,15 @@ struct IslandContainer: View {
         // 클릭 모양: 그린 모양 + 레이아웃 클릭 영역(점 둘레처럼 모양보다 넓힌 자리).
         // 패널은 클릭 영역 안에서 클릭을 받으므로(`ScreenManager`) 여기서도 받아야 삼키지 않는다
         .contentShape(IslandHitShape(layout: layout, shape: shape))
-        .opacity(invisible ? 0 : 1)
-        .allowsHitTesting(!invisible)
+        // 화면 기하가 바뀐 업데이트(해상도 · 노치 유무 변경)는 새 자리에 바로 그린다. 스프링으로 넘어가면 노치 위치까지
+        // 보간돼서 노치를 덮는 목이 화면 왼쪽 끝 쪽으로 늘어나, 검은 띠가 메뉴바를 덮고 지나간다
+        .transaction(value: presentation.geometries[screenID]) { $0.animation = nil }
         .animation(motion, value: layout.animationKey)
         .animation(IslandMotion.hover, value: lit)
+        // 숨김 · 보임 페이드는 모양 스프링 바깥에 둔다: 안쪽에 두면 같은 업데이트에 모양이 바뀔 때 스프링이 투명도까지 가져가
+        // 0.2초 페이드 대신 반투명한 검은 모양이 숨김 자리로 미끄러지며 오래 남는다
+        .opacity(invisible ? 0 : 1)
+        .allowsHitTesting(!invisible)
         .animation(.easeOut(duration: 0.2), value: invisible)
         .onTapGesture {
             presentation.handleIslandClick(on: screenID)
@@ -115,6 +120,10 @@ struct IslandContainer: View {
             } else {
                 presentation.contentDidAppear(contentKey, on: screenID)
             }
+        }
+        .onDisappear {
+            // 패널을 내리거나 다시 만들면 이 뷰 상태는 버려진다: 남은 교체가 사라진 뷰 대신 승인 대기를 건드리지 않게
+            viewState.cancelSwap()
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("AgentNotch")
@@ -164,21 +173,27 @@ struct IslandContainer: View {
         if presentation.hoveredScreenID == screenID { state.blockHover() }
         switch state.beginSwap(to: key, reduceMotion: reduceMotion) {
         case .none:
+            state.swapDeadline = nil
             if !state.contentVisible {
                 withAnimation(reduceMotion ? nil : IslandMotion.contentFadeIn) { state.contentVisible = true }
             }
             presentation.contentDidAppear(key, on: screenID)
         case .restore:
             // 전환 중 원래 종류로 돌아왔다: 흐리던 내용을 다시 보인다
+            state.swapDeadline = nil
             withAnimation(IslandMotion.contentFadeIn) { state.contentVisible = true }
             presentation.contentDidAppear(key, on: screenID)
         case .fadeOut:
             withAnimation(IslandMotion.contentFadeOut) { state.contentVisible = false }
-            let delay = state.contentDelay(to: key)
+            // 흐린 채 기다리는 중에 내용이 또 바뀌면 기다림을 처음부터 다시 재지 않는다 (처음 흐린 때 + 지연에 지금 내용을 보인다).
+            // 다시 재면 내용이 잇달아 바뀌는 동안 내용 없는 검은 모양만 계속 남는다
+            let deadline = state.swapDeadline ?? .now + state.contentDelay(to: key)
+            state.swapDeadline = deadline
             state.swapTask = Task { @MainActor in
-                try? await Task.sleep(for: delay)
+                try? await Task.sleep(until: deadline, clock: .continuous)
                 guard !Task.isCancelled else { return }
                 state.swapTask = nil
+                state.swapDeadline = nil
                 // 이전 내용 → 지금 내용 (자리 이동 없이 바로), 그다음 나타난다
                 var transaction = Transaction()
                 transaction.disablesAnimations = true
@@ -284,6 +299,8 @@ final class IslandViewState {
     /// 마지막으로 그린 지금 내용 (구조가 바뀐 첫 렌더에 이전 내용을 바로 쓰려고 기억)
     @ObservationIgnored private(set) var lastShown: IslandShownContent?
     @ObservationIgnored var swapTask: Task<Void, Never>?
+    /// 흐린 이전 내용 뒤 새 내용을 보일 시각 (처음 흐리기 시작할 때 정하고, 기다리는 중 내용이 또 바뀌어도 미루지 않는다)
+    @ObservationIgnored var swapDeadline: ContinuousClock.Instant?
 
     /// 마지막 크기 · 위치 변화 뒤 모양이 다 자리 잡았는지
     private(set) var shapeSettled = true
@@ -348,6 +365,20 @@ final class IslandViewState {
     func finishSwap() {
         outgoing = nil
         lastShown = nil
+    }
+
+    /// 뷰가 사라질 때: 기다리던 교체 · 자리 잡기 시계를 멈추고, 다시 붙으면 지금 내용을 바로 그리게 한다
+    /// (교체를 기다리던 중에 사라졌어도 다시 붙었을 때 내용이 숨은 채 검은 모양만 남지 않게)
+    func cancelSwap() {
+        swapTask?.cancel()
+        swapTask = nil
+        swapDeadline = nil
+        settleTask?.cancel()
+        settleTask = nil
+        outgoing = nil
+        lastShown = nil
+        if !contentVisible { contentVisible = true }
+        if !shapeSettled { shapeSettled = true }
     }
 
     /// 기억한 내용이 지금과 다른 구조인지 (패널이 다시 붙었을 때 확인)
