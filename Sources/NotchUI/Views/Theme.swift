@@ -23,6 +23,8 @@ enum Palette {
     /// 새 버전 배지 (파랑)
     static let badgeBackground = Color(hex: 0x0C447C)
     static let badgeText = Color(hex: 0xB5D4F4)
+    /// 접힌 상태의 새 버전 아이콘 동그라미 (검은 아일랜드 위에서 보이게 배지보다 밝은 파랑)
+    static let update = Color(hex: 0x378ADD)
 
     // CALayer 로 그리는 스피너·점용
     static let greenNS = NSColor(hex: 0x97C459)

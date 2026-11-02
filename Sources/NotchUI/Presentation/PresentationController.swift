@@ -416,9 +416,15 @@ final class PresentationController {
         SessionStatusSummary(sessions: store.rankedSessions)
     }
 
+    /// 새 버전이 있는지: 접힌 상태 맨 왼쪽에 다운로드 아이콘을 붙이고, 세션이 없어도 접힌 상태를 띄운다
+    var hasUpdate: Bool {
+        updateProvider?.hasUpdate == true
+    }
+
     /// 접힌 상태. 둘 자리가 없으면(메뉴바가 숨었거나 빈 구간이 없음, "표시 안 함") 숨긴다.
+    /// 세션이 없으면 숨기되, 새 버전이 있으면 아이콘만 있는 접힌 상태로 띄운다 (누르면 펼친 머리에 "새 버전")
     private func compactMode(for id: ScreenID) -> IslandMode {
-        guard !store.rankedSessions.isEmpty else { return .hidden }
+        guard !store.rankedSessions.isEmpty || hasUpdate else { return .hidden }
         let mode: IslandMode = compactSession == nil ? .idle : .working
         if let engine = layoutEngine(for: id), engine.compactPlacement(for: compactContent(for: mode)) == .none {
             return .hidden
@@ -695,14 +701,15 @@ final class PresentationController {
             _ = holdRevision
             return .session(compactHold.value(for: measured.metrics, key: measured.session, now: uptime()))
         }
-        return .idle(content: CompactText.summaryWidth(allSessionsSummary))
+        return .idle(content: CompactText.idleWidth(summary: allSessionsSummary, hasUpdate: hasUpdate))
     }
 
     /// 접힌 상태가 보여주는 세션의 폭 측정값 (안정화 전). 작업 중인 세션이 없으면 nil
     private func compactMeasurement() -> CompactMeasurement? {
         guard let session = compactSession else { return nil }
         let summary = compactSummary(showing: session)
-        return CompactMeasurement(metrics: CompactMetrics(session: session, summary: summary), session: session.id)
+        let metrics = CompactMetrics(session: session, summary: summary, hasUpdate: hasUpdate)
+        return CompactMeasurement(metrics: metrics, session: session.id)
     }
 
     // MARK: - 커밋 (관찰 패스)

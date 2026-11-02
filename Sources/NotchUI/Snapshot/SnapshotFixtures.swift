@@ -181,6 +181,13 @@ struct SnapshotWorld {
         send(Self.apiServer, "SessionStart", at: 300, ["source": "startup"])
     }
 
+    /// `startSessions` 의 세 세션을 모두 끝낸다 (세션이 하나도 없는 장면용)
+    mutating func endSessions() {
+        for project in [Self.blog, Self.webApp, Self.apiServer] {
+            send(project, "SessionEnd", at: 320, ["reason": "other"])
+        }
+    }
+
     /// 세션 둘 더 (쉬는 중) — 다른 세션 상태 요약 장면용 (모두 5개)
     mutating func startMoreSessions() {
         send(Self.docsSite, "SessionStart", at: 400, ["source": "startup"])

@@ -118,22 +118,30 @@ struct CompactMetrics: Equatable {
     var summary: CGFloat
     /// 상태 문구(승인 필요 등)를 보여주는 단계라 툴 이름이 없는지
     var isAttention: Bool
+    /// 맨 앞 새 버전 아이콘 폭 (없으면 0, `CompactText.updateWidth`)
+    var update: CGFloat
 
-    init(project: CGFloat, tool: CGFloat, trailing: CGFloat, badge: CGFloat = 0, summary: CGFloat = 0, isAttention: Bool) {
+    init(
+        project: CGFloat, tool: CGFloat, trailing: CGFloat, badge: CGFloat = 0, summary: CGFloat = 0, isAttention: Bool,
+        update: CGFloat = 0
+    ) {
         self.project = project
         self.tool = tool
         self.trailing = trailing
         self.badge = badge
         self.summary = summary
         self.isAttention = isAttention
+        self.update = update
     }
 
     /// - summary: 접힌 상태의 세션 상태 요약 (`PresentationController.compactSummary`)
+    /// - hasUpdate: 새 버전이 있어 맨 앞에 다운로드 아이콘을 붙이는지
     @MainActor
-    init(session: AgentSession, summary: SessionStatusSummary = .empty) {
+    init(session: AgentSession, summary: SessionStatusSummary = .empty, hasUpdate: Bool = false) {
         let attention = CompactText.attentionText(session)
         badge = CompactText.backgroundBadgeWidth(session.backgroundTaskCount)
         self.summary = CompactText.summaryWidth(summary)
+        update = CompactText.updateWidth(hasUpdate)
         project = CompactText.width(session.projectName, font: IslandFont.bodyNS)
         if let attention {
             tool = 0
@@ -220,6 +228,18 @@ enum CompactText {
             width += M.summaryDotSize + M.summaryDotGap + CGFloat(String(item.count).count) * summaryDigitWidth
         }
         return ceil(width)
+    }
+
+    /// 맨 앞 새 버전 아이콘 폭 (없으면 0). 뒤 간격은 틀마다 다르므로 `lineNeed` · `idleWidth` 가 더한다
+    static func updateWidth(_ hasUpdate: Bool) -> CGFloat {
+        hasUpdate ? IslandMetrics.updateIconSize : 0
+    }
+
+    /// 작업 중인 세션이 없을 때 접힌 내용 폭: 새 버전 아이콘 + 모든 세션 요약 (사이 간격 `IdleCompactView.spacing`)
+    static func idleWidth(summary: SessionStatusSummary, hasUpdate: Bool) -> CGFloat {
+        let chips = summaryWidth(summary)
+        let update = updateWidth(hasUpdate)
+        return update > 0 && chips > 0 ? update + IdleCompactView.spacing + chips : update + chips
     }
 }
 
@@ -473,10 +493,11 @@ struct IslandLayoutEngine {
         return text
     }
 
-    /// 한 줄 내용 폭 (요약 제외): 틀 + 제목 + `+N −M`(또는 상태 문구) + 백그라운드 배지.
+    /// 한 줄 내용 폭 (요약 제외): 틀 + 새 버전 아이콘 + 제목 + `+N −M`(또는 상태 문구) + 백그라운드 배지.
     /// 배지를 둘째 줄로 내릴 수 있는 틀(노치 아래 띠)은 배지 없이 잰다 (제목 줄에 함께 두면 `badgeNeed` 만큼 더)
     static func lineNeed(_ metrics: CompactMetrics, items: CompactItems, squeezed: Bool, chrome: LineChrome) -> CGFloat {
         var width = chrome.base
+        if metrics.update > 0 { width += metrics.update + chrome.spacing }
         let text = titleWidth(metrics, items: items, squeezed: squeezed)
         if text > 0 { width += chrome.spacing + text }
         let trailing = chrome.wraps ? metrics.trailing : metrics.trailingWithBadge

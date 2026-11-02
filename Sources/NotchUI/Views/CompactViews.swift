@@ -4,24 +4,29 @@ import NotchCore
 // MARK: - idle
 
 /// idle: 모든 세션 상태 요약 ("● 3" — 기다리는 중 주황 · 진행 중 초록 · 끝남 회색). 레이아웃이 정한 자리에 둔다.
+/// 새 버전이 있으면 맨 앞에 다운로드 아이콘 (세션이 없으면 아이콘만)
 struct IdleCompactView: View {
     let layout: IslandLayout
     /// 모든 세션 요약 (보여주는 세션이 없으므로 빼는 세션 없음)
     let summary: SessionStatusSummary
+    var hasUpdate = false
     let reduceMotion: Bool
+
+    /// 새 버전 아이콘과 요약 사이 (`CompactText.idleWidth`)
+    static let spacing: CGFloat = 6
 
     var body: some View {
         Group {
             switch layout.compact {
             case .strip:
                 CompactStrip(layout: layout) {
-                    chips
+                    content
                 }
             case .pill:
-                chips
+                content
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .dot:
-                MenuBarDotView(tone: summary.working > 0 ? .green : .muted, reduceMotion: reduceMotion)
+                MenuBarDotView(tone: summary.working > 0 ? .green : hasUpdate ? .blue : .muted, reduceMotion: reduceMotion)
             case nil:
                 Color.clear
             }
@@ -30,13 +35,37 @@ struct IdleCompactView: View {
         .accessibilityLabel(accessibilityText)
     }
 
-    private var chips: some View {
-        SessionSummaryChips(summary: summary)
+    /// 빈 요약은 빼서 아이콘 뒤에 간격이 남지 않게 (아이콘만 가운데)
+    private var content: some View {
+        HStack(spacing: Self.spacing) {
+            if hasUpdate { UpdateIndicator() }
+            if !summary.isEmpty { SessionSummaryChips(summary: summary) }
+        }
     }
 
     private var accessibilityText: String {
         let spoken = summary.spokenText
-        return spoken.isEmpty ? "세션 \(summary.total)개" : "세션 \(summary.total)개, \(spoken)"
+        let sessions = spoken.isEmpty ? "세션 \(summary.total)개" : "세션 \(summary.total)개, \(spoken)"
+        guard hasUpdate else { return sessions }
+        return summary.isEmpty ? UpdateIndicator.label : "\(UpdateIndicator.label), \(sessions)"
+    }
+}
+
+// MARK: - 새 버전
+
+/// 새 버전이 있을 때 접힌 상태 맨 왼쪽에 붙는 파란 동그라미 다운로드 아이콘.
+/// 따로 누르는 자리는 없다: 아일랜드를 누르면 펼쳐지고, 펼친 머리의 "새 버전" 배지로 업데이트한다
+struct UpdateIndicator: View {
+    static let label = "새 버전 있음"
+
+    var body: some View {
+        Image(systemName: "arrow.down.circle.fill")
+            .resizable()
+            .scaledToFit()
+            .symbolRenderingMode(.palette)
+            .foregroundStyle(Palette.text, Palette.update)
+            .frame(width: IslandMetrics.updateIconSize, height: IslandMetrics.updateIconSize)
+            .accessibilityLabel(Self.label)
     }
 }
 
@@ -50,6 +79,8 @@ struct CompactSessionView: View {
     let session: AgentSession?
     /// 모든 세션 요약 (펼친 목록 머리와 같은 값. 세션이 이 세션 하나뿐이면 비어 있다)
     var summary: SessionStatusSummary = .empty
+    /// 새 버전이 있으면 띠 · 알약 맨 앞에 다운로드 아이콘 (`CompactMetrics.update` 와 같은 값)
+    var hasUpdate = false
     let layout: IslandLayout
     let reduceMotion: Bool
 
@@ -94,6 +125,7 @@ struct CompactSessionView: View {
 
         case let .pill(items):
             HStack(spacing: 6) {
+                if hasUpdate { UpdateIndicator() }
                 StatusIndicator(session: session, reduceMotion: reduceMotion, size: min(14, layout.size.height - 6))
                 AgentIcon(agent: session.agent)
                 pillTitle(session, items: items)
@@ -128,6 +160,7 @@ struct CompactSessionView: View {
         let badgeCount = session.backgroundTaskCount
         let wraps = layout.hasTwoLineStrip && (showsSummary || badgeCount > 0)
         let line = HStack(spacing: 5) {
+            if hasUpdate { UpdateIndicator() }
             StatusIndicator(session: session, reduceMotion: reduceMotion, size: 12)
             AgentIcon(agent: session.agent)
             pillTitle(session, items: items)
@@ -304,7 +337,8 @@ struct CompactStrip<Content: View>: View {
 
 /// 메뉴바 안 12pt 점 (검정 원 안에 상태 색 점)
 struct MenuBarDotView: View {
-    enum Tone { case green, amber, red, muted }
+    /// `blue`: 작업 중인 세션 없이 새 버전만 있음
+    enum Tone { case green, amber, red, muted, blue }
 
     let tone: Tone
     let reduceMotion: Bool
@@ -320,6 +354,8 @@ struct MenuBarDotView: View {
                 Circle().fill(Palette.green)
             case .muted:
                 Circle().fill(Palette.muted)
+            case .blue:
+                Circle().fill(Palette.update)
             }
         }
         .frame(width: 6, height: 6)
@@ -333,6 +369,7 @@ struct MenuBarDotView: View {
         case .amber: return "확인 필요"
         case .red: return "실패"
         case .muted: return "대기"
+        case .blue: return UpdateIndicator.label
         }
     }
 }

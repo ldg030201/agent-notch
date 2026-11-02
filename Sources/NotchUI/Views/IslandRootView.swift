@@ -443,11 +443,14 @@ struct IslandContentView: View {
         case .hidden:
             Color.clear
         case .idle:
-            IdleCompactView(layout: layout, summary: presentation.compactSummary, reduceMotion: reduceMotion)
+            IdleCompactView(
+                layout: layout, summary: presentation.compactSummary, hasUpdate: presentation.hasUpdate, reduceMotion: reduceMotion
+            )
         case .working:
             CompactSessionView(
                 session: presentation.compactSession,
                 summary: presentation.compactSummary,
+                hasUpdate: presentation.hasUpdate,
                 layout: layout,
                 reduceMotion: reduceMotion
             )

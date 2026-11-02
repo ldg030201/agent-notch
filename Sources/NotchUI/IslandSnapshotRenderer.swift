@@ -74,7 +74,11 @@ enum SnapshotScenario: String, CaseIterable {
     case idle
     /// 쉬는 세션 5개: 모든 세션 요약 ("● 5")
     case idleSummary = "idle-summary"
+    /// 세션 없이 새 버전만: 접힌 상태에 다운로드 아이콘만
+    case updateOnly = "update-only"
     case working
+    /// `working` 에 새 버전: 맨 왼쪽에 다운로드 아이콘
+    case workingUpdate = "working-update"
     /// 작업 중 + 백그라운드 셸 1 · 서브에이전트 2 (접힌 상태 끝에 배지 "⧉ 3")
     case workingBackground = "working-background"
     /// `working-background` 를 양옆이 막힌 메뉴바에서 (노치 아래 띠가 앱 메뉴 · 상태 아이콘을 가리지 않는지)
@@ -128,6 +132,8 @@ enum SnapshotScenario: String, CaseIterable {
     /// `failed` 세션을 펼친 모습: 상세 머리 경과 시간이 흐르지 않고 "실패 · 소요 시간"
     case expandedFailed = "expanded-failed"
     case menubarWorking = "menubar-working"
+    /// `menubar-working` 에 새 버전: 알약 맨 왼쪽에 다운로드 아이콘
+    case menubarUpdate = "menubar-update"
     /// 제목이 긴 MCP 툴 실행 중 (수정 없음), 빈 곳이 화면 가운데에서 오른쪽으로 치우친 메뉴바 (가운데에 두면 좁아 빈 곳 안으로 밀어 놓음)
     case menubarWorkingLongTool = "menubar-working-long-tool"
     /// `menubar-working-long-tool` 을 빈 곳이 좁은 메뉴바에 (제목을 줄여서라도 넣음)
@@ -150,8 +156,8 @@ enum SnapshotScenario: String, CaseIterable {
     /// 메뉴바 안 알약 장면은 style 과 관계없이 노치 없는 화면으로 그린다
     var forcesMenuBar: Bool {
         switch self {
-        case .menubarWorking, .menubarWorkingLongTool, .menubarWorkingTight, .menubarBackground, .menubarDot, .menubarPermission,
-             .menubarQuestion, .menubarBelowWorking, .menubarBelowPermission: return true
+        case .menubarWorking, .menubarUpdate, .menubarWorkingLongTool, .menubarWorkingTight, .menubarBackground, .menubarDot,
+             .menubarPermission, .menubarQuestion, .menubarBelowWorking, .menubarBelowPermission: return true
         default: return false
         }
     }
@@ -493,10 +499,16 @@ enum SnapshotStage {
                 showCompact()
                 presentation.toggleExpanded(on: screenID)
             }
-        case .working, .menubarWorking, .menubarDot, .menubarBelowWorking, .workingTest:
+        case .updateOnly:
+            world.endSessions()
+            presentation.updateProvider = SnapshotUpdateProvider(now: world.clock.now)
+        case .working, .workingUpdate, .menubarWorking, .menubarUpdate, .menubarDot, .menubarBelowWorking, .workingTest:
             world.apiServerEdits()
             world.apiServerRunsTests()
             presentation.showsTestBorder = scene == .workingTest
+            if scene == .workingUpdate || scene == .menubarUpdate {
+                presentation.updateProvider = SnapshotUpdateProvider(now: world.clock.now)
+            }
         case .menubarWorkingLongTool, .menubarWorkingTight:
             world.apiServerUsesBrowser()
         case .workingBackground, .workingBackgroundStrip, .menubarBackground, .expandedBackground:

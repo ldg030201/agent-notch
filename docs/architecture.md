@@ -655,6 +655,9 @@ brew tap ldg030201/agent-notch https://github.com/ldg030201/agent-notch && brew 
   **릴리스(버전 자리 결정 · 태그)는 사용자에게 먼저 묻고 진행한다.**
 - 업데이트 확인: 하루 한 번 `https://raw.githubusercontent.com/ldg030201/agent-notch/main/docs/changelog.json` 을 받아 비교
   (날짜가 있는 항목만 "나간 버전"). 설정 "버전" 탭과 펼친 아일랜드 헤더에 새 버전 표시. 끄기 가능.
+  접힌 상태(띠 · 알약) 맨 왼쪽에도 파란 다운로드 아이콘(`UpdateIndicator`)을 붙인다. 폭은 `CompactMetrics.update` ·
+  `CompactText.idleWidth` 로 레이아웃에 넣고, 세션이 없어도 아이콘만 있는 접힌 상태를 띄운다(`compactMode`). 메뉴바 점이면 점이 파랗다.
+  아이콘은 따로 누르는 자리가 없다: 아일랜드를 누르면 펼쳐지고 머리의 "새 버전" 배지로 업데이트한다.
 - 업데이트 실행: 앱이 `brew upgrade agent-notch` 를 직접 실행(진행 로그 표시) → 사용자가 "다시 띄우기" 를 누르면
   분리된 스크립트가 앱을 종료 · `/Applications` 사본 교체 · 재실행.
 - 로그인 시 실행: `SMAppService.mainApp` (시스템 설정의 로그인 항목과 항상 일치).

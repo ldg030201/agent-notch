@@ -3,19 +3,37 @@
     {
       "groups" : [
         {
+          "icon" : "arrow.down.circle.fill",
+          "isNew" : false,
+          "notes" : [
+            {
+              "kind" : "new",
+              "text" : "접힌 아일랜드 맨 왼쪽에 새 버전 아이콘 추가 (세션이 없어도 표시)"
+            }
+          ],
+          "tab" : "version",
+          "title" : "업데이트"
+        },
+        {
           "icon" : "app.fill",
           "isNew" : false,
           "notes" : [
             {
               "kind" : "new",
               "text" : "앱 아이콘 추가"
+            },
+            {
+              "kind" : "remove",
+              "text" : "메뉴바 메뉴의 데모 제거"
             }
           ],
           "title" : "앱"
         }
       ],
       "notes" : [
-        "[앱] 앱 아이콘 추가"
+        "[업데이트] 접힌 아일랜드 맨 왼쪽에 새 버전 아이콘 추가 (세션이 없어도 표시)",
+        "[앱] 앱 아이콘 추가",
+        "[앱] 메뉴바 메뉴의 데모 제거"
       ],
       "version" : "1.2.1"
     },

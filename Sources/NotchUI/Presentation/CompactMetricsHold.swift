@@ -11,7 +11,7 @@ struct CompactMetricsHold {
     static let holdDuration: TimeInterval = 4
 
     private static let fields: [WritableKeyPath<CompactMetrics, CGFloat>] = [
-        \.project, \.tool, \.trailing, \.badge, \.summary,
+        \.project, \.tool, \.trailing, \.badge, \.summary, \.update,
     ]
 
     private var key: String?

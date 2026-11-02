@@ -54,8 +54,7 @@
 - **고정**: 펼친 목록에서 세션을 **우클릭 → 고정** 하면(핀 표시) 넘기지 않고 그 세션만 보여줘요. 다시 우클릭 → 고정 해제 하면 다시 넘겨요.
 - **접힌 상태는 짧게**: 툴은 이름만 보여줘요 (`Bash`, `Edit`, MCP 는 서버 이름). 명령 · 경로는 펼친 화면에 있어요.
 - **터미널로 이동**: 세션을 띄운 터미널을 앞으로 가져와요. iTerm2 는 해당 탭까지 찾아가요. Claude 앱 · Codex 앱 세션은 그 앱 안의 세션을 바로 열어요.
-- **메뉴바 메뉴**: 세션 목록 (앞에 에이전트 아이콘, 클릭하면 포커스, `⌥` 를 누르면 고정/해제), 노치 펼치기, 데모, Claude Code · Codex 훅 설치 · 제거, 설정.
-- **데모 모드**: 훅을 설치하지 않아도 약 40초짜리 가짜 시나리오로 모든 상태를 미리 볼 수 있어요.
+- **메뉴바 메뉴**: 세션 목록 (앞에 에이전트 아이콘, 클릭하면 포커스, `⌥` 를 누르면 고정/해제), 노치 펼치기, Claude Code · Codex 훅 설치 · 제거, 설정.
 
 ## 노치 · 외부 모니터
 
@@ -134,7 +133,7 @@
 - `notch-hook` 을 `~/Library/Application Support/AgentNotch/bin/` 에 복사해요 (업데이트로 Homebrew 경로가 바뀌어도 훅이 깨지지 않게). Claude Code · Codex 가 같이 써요.
 - Claude Code: `~/.claude/settings.json` 을 `settings.json.agentnotch-backup-<날짜>` (0600) 로 백업한 뒤 AgentNotch 항목만 추가해요. **다른 훅과 설정은 그대로 둬요.**
 - Codex: `~/.codex/hooks.json` 을 같은 방식으로 백업하고 AgentNotch 항목만 추가해요 (명령에 `--agent codex` 가 붙어요).
-- 이미 열려 있던 세션도 Claude Code 가 바뀐 설정을 다시 읽으면 바로 나타나요 (안 나타나면 세션을 다시 시작하세요). 데모는 `open /Applications/AgentNotch.app --args --demo` 로도 볼 수 있어요.
+- 이미 열려 있던 세션도 Claude Code 가 바뀐 설정을 다시 읽으면 바로 나타나요 (안 나타나면 세션을 다시 시작하세요).
 - 명령줄로도 돼요: `agent-notch --install-hooks` (Claude Code), `agent-notch --install-hooks --codex` (Codex), `agent-notch --hook-status` (둘 다).
 
 ## Codex
@@ -165,7 +164,8 @@ Claude Code 와 다른 점
 
 ## 업데이트
 
-**앱 안에서**: 설정 → **버전** 탭에 새 버전이 뜨면 **업데이트** 를 누르세요.
+**앱 안에서**: 새 버전이 나오면 접힌 아일랜드 맨 왼쪽에 파란 다운로드 아이콘이 붙어요 (세션이 없어도 아이콘만 떠요).
+아일랜드를 눌러 펼치고 머리의 **새 버전** 을 누르거나, 설정 → **버전** 탭에서 **업데이트** 를 누르세요.
 앱이 `brew upgrade agent-notch` 를 직접 돌리면서 진행 로그를 보여주고, 다 받으면 **지금 다시 띄우기** 를 누를 때까지 기다려요.
 누르면 앱이 잠깐 꺼졌다가 `/Applications` 사본을 새 버전으로 바꾸고 다시 떠요 (교체 기록: `~/Library/Application Support/AgentNotch/upgrade.log`).
 

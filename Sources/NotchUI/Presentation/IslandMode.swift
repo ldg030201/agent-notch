@@ -87,6 +87,8 @@ enum IslandMetrics {
     static let stripSecondLineHeight: CGFloat = 14
     /// 세션 앞 에이전트 아이콘 칸 폭 (`AgentIcon`, Clawd 16pt · Codex 14pt 를 같은 칸에)
     static let agentIconWidth: CGFloat = 16
+    /// 새 버전이 있을 때 접힌 상태 맨 왼쪽에 붙는 다운로드 아이콘 지름 (`UpdateIndicator`)
+    static let updateIconSize: CGFloat = 13
 
     static let lineHeight: CGFloat = 18
     static let diffRowHeight: CGFloat = 17
