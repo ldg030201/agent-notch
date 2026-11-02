@@ -8,16 +8,12 @@
 class AgentNotch < Formula
   desc "Claude Code · Codex 세션을 맥북 노치에 다이나믹 아일랜드처럼 보여주는 메뉴바 앱"
   homepage "https://github.com/ldg030201/agent-notch"
-  url "https://github.com/ldg030201/agent-notch/archive/refs/tags/v1.2.0.tar.gz"
+  url "https://github.com/ldg030201/agent-notch/archive/refs/tags/v1.2.1.tar.gz"
   # 첫 릴리스 전 자리표시자. scripts/release.sh 가 태그를 올린 뒤 tarball 해시로 채운다.
-  sha256 "790371aa7424aaf4858d5c28a2e317293e98c6ab381c2b45fc277f25de5714b4"
+  sha256 "66217f1f10c50b33e948e42abe08ef3f6ed304535eaf7e0dca75c086371573d6"
   license "MIT"
   head "https://github.com/ldg030201/agent-notch.git", branch: "main"
 
-  bottle do
-    root_url "https://github.com/ldg030201/agent-notch/releases/download/v1.2.0"
-    sha256 arm64_sequoia: "ca69bb1310e94dc43edbf5d0673f34b8868b5211bbc121505f1331b5340aa6d6"
-  end
 
 
 
