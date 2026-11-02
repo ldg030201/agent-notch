@@ -1,6 +1,25 @@
 {
   "entries" : [
     {
+      "groups" : [
+        {
+          "icon" : "app.fill",
+          "isNew" : false,
+          "notes" : [
+            {
+              "kind" : "new",
+              "text" : "앱 아이콘 추가"
+            }
+          ],
+          "title" : "앱"
+        }
+      ],
+      "notes" : [
+        "[앱] 앱 아이콘 추가"
+      ],
+      "version" : "1.2.1"
+    },
+    {
       "date" : "2026-11-02",
       "groups" : [
         {

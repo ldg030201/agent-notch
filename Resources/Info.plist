@@ -8,6 +8,8 @@
 	<string>AgentNotch</string>
 	<key>CFBundleExecutable</key>
 	<string>AgentNotch</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.ldg.agent-notch</string>
 	<key>CFBundleInfoDictionaryVersion</key>

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/*.sh (build · dev · run · stop · release · test · simulate-events · make-signing-cert) 가 함께 쓰는 값과 함수.
+# scripts/*.sh (build · dev · run · stop · release · test · simulate-events · make-signing-cert · make-icon · readme-images) 가 함께 쓰는 값과 함수.
 #
 # 앱 이름 · 번들 경로 · 빌드 호출을 스크립트마다 따로 계산하면, 이름을 바꿀 때 한 곳을 놓쳐서
 # 없는 번들을 열거나 엉뚱한 앱을 끄게 된다. 여기 한 곳만 고친다.

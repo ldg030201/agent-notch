@@ -21,6 +21,11 @@ enum Changelog {
 
     /// 최신이 위로 온다
     static let entries: [ChangelogEntry] = [
+        ChangelogEntry(version: "1.2.1", date: nil, groups: [
+            ChangelogGroup(title: "앱", icon: "app.fill", notes: [
+                .new("앱 아이콘 추가"),
+            ]),
+        ]),
         ChangelogEntry(version: "1.2.0", date: "2026-11-02", groups: [
             ChangelogGroup(title: "노치 아일랜드", icon: "rectangle.topthird.inset.filled", notes: [
                 .fix("메뉴 · 팝업이 카드를 가리면 카드가 열렸다 닫혔다 깜빡이던 문제"),

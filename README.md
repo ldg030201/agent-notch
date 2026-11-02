@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/images/icon.png" width="128" alt="AgentNotch 아이콘: 맥북 화면 위쪽 노치에서 검은 아일랜드가 내려온 모습">
+
 # AgentNotch
 
 **맥북 노치에서 Claude Code · Codex 세션이 지금 뭘 하는지 보여주는 메뉴바 앱**
@@ -7,6 +9,9 @@
 ![macOS](https://img.shields.io/badge/macOS-14+-3A72C4?logo=apple&logoColor=white)
 [![Release](https://img.shields.io/github/v/release/ldg030201/agent-notch?label=release&color=3A72C4)](https://github.com/ldg030201/agent-notch/releases)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
+
+<img src="docs/images/expanded.png" width="520" alt="펼친 아일랜드: 세션 목록과 보고 있는 세션의 타임라인, 바뀐 줄, 최근 응답">
+<img src="docs/images/permission-desktop.png" width="420" alt="권한 요청 카드: 실행할 명령, 항상 허용 규칙, 허용 · 항상 허용 · 거부 버튼">
 
 </div>
 
