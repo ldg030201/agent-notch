@@ -14,6 +14,11 @@ class AgentNotch < Formula
   license "MIT"
   head "https://github.com/ldg030201/agent-notch.git", branch: "main"
 
+  bottle do
+    root_url "https://github.com/ldg030201/agent-notch/releases/download/v1.2.1"
+    sha256 arm64_sequoia: "5b7e41bfbb19cd5bebc5dda82e88f03cc0ec5b5e0dcb9a4366c2222b713b6b5f"
+  end
+
 
 
 
