@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# README 스크린샷(docs/images/*.png)을 다시 만든다.
+# 사용 가이드(docs/usage.md) 스크린샷(docs/images/*.png)을 다시 만든다.
 # 실제 아일랜드 뷰를 가짜 데이터로 그려(화면 기록 권한 불필요) 아일랜드 둘레만 자른다 (`--render-island … --crop`).
-# 화면이 바뀌면 이 스크립트로 다시 뽑고 README 와 함께 커밋한다.
+# 화면이 바뀌면 이 스크립트로 다시 뽑고 사용 가이드와 함께 커밋한다.
 #
 # 사용법: scripts/readme-images.sh
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-# README 에 쓰는 장면 (파일 이름 = 장면 이름)
+# 사용 가이드에 쓰는 장면 (파일 이름 = 장면 이름)
 SCENES=(working menubar-working expanded permission-desktop question-desktop peek done permission-codex working-codex)
 
 swift_build >&2

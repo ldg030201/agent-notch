@@ -2,6 +2,38 @@
 
 [← README](../README.md) · 개발은 [development.md](development.md) · 설계는 [architecture.md](architecture.md)
 
+터미널이나 Claude · Codex 앱으로 돌아가지 않고 노치에서 바로 확인하고 처리해요.
+
+<p align="center">
+  <img src="images/expanded.png" width="640" alt="펼친 아일랜드: Clawd · Codex 아이콘이 붙은 세션 목록(진행 중인 세션이 위)과 보고 있는 세션의 타임라인, 바뀐 줄, 최근 응답">
+</p>
+
+## 주요 기능
+
+- **Claude Code · Codex 함께**: 두 에이전트 세션을 한곳에서 보여주고, 세션 앞의 Clawd · Codex 아이콘으로 구분해요.
+- **지금 하는 일**: 프로젝트와 쓰고 있는 툴, 바뀐 줄 수, 전체 세션 상태, 백그라운드 작업 수를 보여줘요.
+- **여러 세션**: 일하는 세션을 몇 초마다 번갈아 보여주고, 알림이 온 세션은 바로 띄워요. 우클릭으로 고정할 수 있고, 펼친 목록은 진행 중인 세션이 위로 와요.
+- **권한 요청과 질문**: 삭제 같은 권한 요청을 노치에서 바로 허용하거나 거부하고, Claude가 묻는 객관식 질문과 계획 승인에도 답해요. Claude 앱을 보고 있을 때도 돼요. Codex 권한 요청도 노치에서 허용 · 거부해요.
+- **세션으로 바로 이동**: 카드의 "Claude로" · "Codex로"를 누르면 그 앱에서 세션이 바로 열려요. 터미널 세션은 그 터미널로 가요.
+- **파일 수정 미리보기**: 파일을 고치면 잠깐 펼쳐서 바뀐 줄을 보여줘요.
+- **완료 알림**: 걸린 시간과 바뀐 파일, 마지막 응답 한 줄을 보여줘요.
+- **외부 모니터**: 노치가 없는 화면에서는 메뉴바 안의 알약으로 같은 내용을 보여줘요.
+- **개인정보**: 세션 내용은 내 맥 밖으로 나가지 않아요. 네트워크 통신은 하루 한 번 새 버전 확인뿐이에요.
+
+## 스크린샷
+
+| 권한 요청 (노치에서 바로 승인) | 질문 (Claude 앱 세션도 노치에서 고르기) |
+|:-:|:-:|
+| <img src="images/permission-desktop.png" width="420" alt="Claude 앱 세션의 삭제 권한 요청 카드: 실행할 명령, 항상 허용 규칙, 허용, 항상 허용, 거부, Claude로 버튼"> | <img src="images/question-desktop.png" width="420" alt="Claude 앱 세션의 질문 카드: 권장 표시가 붙은 선택지, 기타 직접 입력, Claude로 버튼"> |
+| **파일 수정 미리보기** | **완료** |
+| <img src="images/peek.png" width="420" alt="수정 미리보기: 파일 이름, 줄 번호, 바뀐 줄"> | <img src="images/done.png" width="420" alt="완료 카드: 걸린 시간, 바뀐 파일 수, 마지막 응답 한 줄"> |
+| **작업 중 (노치 아래 띠)** | **외부 모니터 (메뉴바 안 알약)** |
+| <img src="images/working.png" width="420" alt="노치 아래 띠: Clawd 아이콘, 프로젝트, 바뀐 줄 수와 세션 상태 요약"> | <img src="images/menubar-working.png" width="420" alt="메뉴바 안 알약: 같은 내용을 한 줄로"> |
+| **Codex 권한 요청 (Codex로)** | **Codex 작업 중** |
+| <img src="images/permission-codex.png" width="420" alt="Codex 앱 세션의 권한 요청 카드: Codex 아이콘, 실행할 명령, 허용, 거부, Codex로 버튼"> | <img src="images/working-codex.png" width="420" alt="노치 아래 띠: Codex 아이콘, 프로젝트, 파일 수정 툴 이름과 세션 상태 요약"> |
+
+스크린샷은 가짜 데이터로 실제 화면을 그린 거예요 (`scripts/readme-images.sh`).
+
 ## 화면
 
 | 상태 | 언제 | 노치에 보이는 것 |

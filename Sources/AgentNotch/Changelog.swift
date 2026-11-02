@@ -21,6 +21,29 @@ enum Changelog {
 
     /// 최신이 위로 온다
     static let entries: [ChangelogEntry] = [
+        ChangelogEntry(version: "1.2.0", date: nil, groups: [
+            ChangelogGroup(title: "노치 아일랜드", icon: "rectangle.topthird.inset.filled", notes: [
+                .fix("메뉴 · 팝업이 카드를 가리면 카드가 열렸다 닫혔다 깜빡이던 문제"),
+                .fix("해상도를 바꿀 때 검은 띠가 메뉴바를 덮던 문제"),
+                .fix("내용이 잇달아 바뀔 때 빈 검은 카드가 오래 보이던 문제"),
+                .fix("숨을 때 반투명한 검은 모양이 남던 문제"),
+                .fix("이벤트가 몰리면 완료 · 미리보기 · 입력 대기 알림이 빠지던 문제"),
+                .fix("다른 메뉴바 앱을 함께 쓰면 전체 화면 앱 위에 아일랜드가 남던 문제"),
+            ]),
+            ChangelogGroup(title: "권한 · 질문", icon: "hand.raised.fill", tab: "general", notes: [
+                .fix("마우스를 아일랜드 위에 둔 채 일하면 권한 요청이 계속 숨던 문제"),
+                .fix("입력 대기 카드 하나를 접으면 다른 세션 카드까지 안 뜨던 문제"),
+                .fix("알림이 떠 있을 때 펼치기 단축키를 누르면 처리 뒤 큰 카드가 저절로 열리던 문제"),
+            ]),
+            ChangelogGroup(title: "표시", icon: "display", tab: "display", notes: [
+                .change("마우스를 올려 두면 비켜주기까지 1초로 변경"),
+            ]),
+            ChangelogGroup(title: "성능 · 용량", icon: "speedometer", notes: [
+                .improve("앱 용량 절반으로 축소 (6.7MB → 3.4MB)"),
+                .improve("메모리 사용 개선 (쓰지 않는 툴 결과 받지 않기, 닫은 설정 창 정리)"),
+                .improve("애니메이션 · 화면 감시 부담 감소 (숨은 스피너 멈춤, 화면이 잠긴 동안 감시 쉼)"),
+            ]),
+        ]),
         ChangelogEntry(version: "1.1.0", date: "2026-10-25", groups: [
             ChangelogGroup(title: "Codex", icon: "terminal.fill", tab: "general", isNew: true, notes: [
                 .new("Codex 세션 표시 (CLI · Codex 앱, 앱을 다시 켜도 이어 보기)"),
