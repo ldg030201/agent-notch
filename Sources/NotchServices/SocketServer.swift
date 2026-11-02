@@ -141,18 +141,9 @@ public final class SocketServer: @unchecked Sendable {
     private func startOnQueue() throws {
         guard listenSource == nil else { return }
 
-        var address = sockaddr_un()
-        let pathBytes = Array(socketPath.utf8)
-        let capacity = MemoryLayout.size(ofValue: address.sun_path)
         // NUL 종료 문자 자리를 남겨야 한다
-        guard !pathBytes.isEmpty, pathBytes.count < capacity else {
+        guard let address = UnixSocket.address(path: socketPath) else {
             throw SocketServerError.pathTooLong
-        }
-        address.sun_family = sa_family_t(AF_UNIX)
-        address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
-        withUnsafeMutableBytes(of: &address.sun_path) { raw in
-            raw.copyBytes(from: pathBytes)
-            raw[pathBytes.count] = 0
         }
 
         try prepareDirectory()
@@ -167,11 +158,7 @@ public final class SocketServer: @unchecked Sendable {
         defer { if !started { _ = Darwin.close(fd) } }
         _ = fcntl(fd, F_SETFD, FD_CLOEXEC)
 
-        let bound = withUnsafePointer(to: &address) { pointer in
-            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
-            }
-        }
+        let bound = UnixSocket.withSockaddr(address) { bind(fd, $0, $1) }
         guard bound == 0 else {
             let code = errno
             if code == EADDRINUSE { throw SocketServerError.alreadyRunning }
@@ -336,7 +323,7 @@ public final class SocketServer: @unchecked Sendable {
         var on: Int32 = 1
         _ = setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
 
-        guard Self.peerIsCurrentUser(fd) else {
+        guard UnixSocket.peerIsCurrentUser(fd) else {
             log.error("다른 사용자의 연결 거부")
             _ = Darwin.close(fd)
             return
@@ -573,13 +560,6 @@ public final class SocketServer: @unchecked Sendable {
         return fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0
     }
 
-    private static func peerIsCurrentUser(_ fd: Int32) -> Bool {
-        var uid: uid_t = 0
-        var gid: gid_t = 0
-        guard getpeereid(fd, &uid, &gid) == 0 else { return false }
-        // 헬퍼(`HookSocket`)와 같은 기준: getpeereid 는 상대의 유효 UID 를 돌려주므로 우리도 유효 UID 와 비교한다
-        return uid == geteuid()
-    }
 
     /// 논블로킹 소켓에 끝까지 쓴다 (부분 쓰기·EINTR·EAGAIN 처리, 전체 시간 제한)
     private static func writeAll(_ bytes: UnsafeRawBufferPointer, to fd: Int32, timeout: TimeInterval) -> Bool {
@@ -616,13 +596,7 @@ public final class SocketServer: @unchecked Sendable {
         defer { _ = Darwin.close(fd) }
         var on: Int32 = 1
         _ = setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
-        var address = address
-        let result = withUnsafePointer(to: &address) { pointer in
-            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
-            }
-        }
-        return result == 0
+        return UnixSocket.withSockaddr(address) { connect(fd, $0, $1) } == 0
     }
 
     private static func posixCode(of error: Error) -> Int32 {

@@ -65,6 +65,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
         installMainMenu()
         installTerminationSignalHandlers()
         wireSocketServer()
+        // Claude 앱 확인 카드 추정은 지켜볼 툴이 생길 때만 돈다 (데모 · 되살린 세션도 같은 길)
+        store.onConsentWatchAdded = { [weak self] in self?.startStallTimer() }
         guard startSocketServer() else { return }
         restoreRecentSessions()
 
@@ -81,7 +83,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
         pruneTimer = Timer.scheduledTimer(withTimeInterval: Self.pruneInterval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.pruneStaleSessions() }
         }
-        startStallTimer()
         settings.refreshHelperIfNeeded()
         // Codex 훅을 Codex 가 아직 실행하지 않는 것 같으면 안내 (데모 · 테스트판에서는 안 함)
         if !options.demo, !AppInfo.isTestBuild { codexHooks.start() }
@@ -203,10 +204,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
     }
 
     /// Claude 데스크톱 앱이 띄우는 확인 카드(화면 제어 · 사이트 접근 등)는 훅이 오지 않아 1초마다 멈춘 툴을 살핀다.
+    /// 지켜볼 툴이 생길 때만 켜고(`SessionStore.onConsentWatchAdded`) 다 끝나면 끈다 (CLI 만 쓰면 거의 늘 볼 게 없다).
     /// 메뉴가 열려 있어도 돌도록 common 모드에 건다.
     private func startStallTimer() {
+        guard stallTimer == nil else { return }
         let timer = Timer(timeInterval: Self.stallCheckInterval, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.store.checkStalledTools() }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.store.checkStalledTools()
+                if !self.store.hasConsentWatches {
+                    self.stallTimer?.invalidate()
+                    self.stallTimer = nil
+                }
+            }
         }
         timer.tolerance = 0.3
         RunLoop.main.add(timer, forMode: .common)

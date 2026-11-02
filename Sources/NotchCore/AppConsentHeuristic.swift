@@ -141,8 +141,8 @@ extension TerminalContext {
         return URL(string: "codex://threads/\(id.lowercased())")
     }
 
-    /// 8-4-4-4-12 16진수 UUID 인지 (링크에 넣기 전 검증)
-    static func isUUID(_ text: String) -> Bool {
+    /// 8-4-4-4-12 16진수 UUID 인지 (링크 · AppleScript 에 넣기 전 검증. `TerminalJumper` 도 같은 검사를 쓴다)
+    public static func isUUID<S: StringProtocol>(_ text: S) -> Bool {
         let bytes = Array(text.utf8)
         guard bytes.count == 36 else { return false }
         for (index, byte) in bytes.enumerated() {

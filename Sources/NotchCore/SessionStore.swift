@@ -65,6 +65,10 @@ public final class SessionStore {
     @ObservationIgnored private var phaseBeforeCompact: [String: SessionPhase] = [:]
     /// Claude 앱 확인 카드를 띄울 수 있어 지켜보는 실행 중인 툴 (세션 ID → tool_use_id → 상태)
     @ObservationIgnored private var consentWatches: [String: [String: ConsentWatch]] = [:]
+    /// 지켜볼 툴이 새로 생겼을 때 (앱이 `checkStalledTools` 를 부르는 시계를 그때만 켠다)
+    @ObservationIgnored public var onConsentWatchAdded: (() -> Void)?
+    /// 지켜보는 툴이 있는지 (없으면 `checkStalledTools` 를 부를 필요가 없다)
+    public var hasConsentWatches: Bool { !consentWatches.isEmpty }
     /// 세션별로 도는 것을 본 서브에이전트 `agent_id` (SubagentStart, 시작을 놓쳤으면 그 서브에이전트의 다른 이벤트).
     /// 턴 끝 목록에서만 아는 작업은 "task:<id>". `activeSubagents` 는 이 집합의 크기다
     @ObservationIgnored private var runningSubagents: [String: Set<String>] = [:]
@@ -621,6 +625,7 @@ public final class SessionStore {
             consentWatches[session.id, default: [:]][item.id] = ConsentWatch(
                 since: now, delay: delay, toolName: toolName, toolInput: Self.isShrunk(payload) ? nil : toolInput
             )
+            onConsentWatchAdded?()
         }
 
         if Self.userInteractionTools.contains(toolName) {

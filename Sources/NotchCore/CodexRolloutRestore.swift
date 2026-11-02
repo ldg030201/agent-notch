@@ -63,7 +63,7 @@ public enum CodexRolloutTail {
         guard !meta.isSubagent else { return nil }
         var cwd = meta.cwd
         var lastStamp: String?
-        var pending: [(id: String?, name: String, input: JSONValue?)] = []
+        var pending: [PendingToolCall] = []
         var sawTurn = false
         var turnEnded = false
 
@@ -109,14 +109,7 @@ public enum CodexRolloutTail {
         }
 
         guard sawTurn, let lastEventAt = lastStamp.flatMap(TranscriptTail.parseTimestamp) else { return nil }
-        let state: RestoredSession.State
-        if turnEnded {
-            state = .finished
-        } else if let running = pending.last {
-            state = .runningTool(name: running.name, input: running.input, toolUseID: running.id)
-        } else {
-            state = .thinking
-        }
+        let state = RestoredSession.State(turnEnded: turnEnded, pending: pending)
         return RestoredSession(
             id: meta.sessionID,
             agent: .codex,
@@ -133,7 +126,7 @@ public enum CodexRolloutTail {
 
     /// 기록의 툴 호출 → 훅과 같은 이름 · 입력 (셸은 "Bash" + `command`, apply_patch 는 `command` 에 패치 글).
     /// 그 밖의 툴은 인자 JSON 을 그대로 쓴다 (요약 제목에만 쓴다)
-    static func toolCall(_ payload: JSONValue, type: String) -> (id: String?, name: String, input: JSONValue?) {
+    static func toolCall(_ payload: JSONValue, type: String) -> PendingToolCall {
         let id = TextUtils.nonEmpty(payload["call_id"]?.stringValue)
         let name = type == "local_shell_call" ? "shell" : (TextUtils.nonEmpty(payload["name"]?.stringValue) ?? "Tool")
         // function_call 의 인자는 JSON 글, custom_tool_call 의 입력은 글 그대로
@@ -155,14 +148,11 @@ public enum CodexRolloutTail {
 
     /// 파일 첫 줄 (`session_meta`). 일반 파일만 읽고(링크 · FIFO 는 nil) `maxBytes` 안에 줄바꿈이 없으면 nil
     public static func readFirstLine(atPath path: String, maxBytes: Int = 1024 * 1024) -> String? {
-        guard maxBytes > 0, !path.isEmpty else { return nil }
-        var info = stat()
-        guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { return nil }
-        let fd = open(path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC | O_NOCTTY)
-        guard fd >= 0 else { return nil }
-        defer { close(fd) }
-        guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { return nil }
+        guard maxBytes > 0 else { return nil }
+        return TranscriptTail.withRegularFile(atPath: path) { fd, _ in readFirstLine(fd: fd, maxBytes: maxBytes) }
+    }
 
+    private static func readFirstLine(fd: Int32, maxBytes: Int) -> String? {
         var data: [UInt8] = []
         var chunk = [UInt8](repeating: 0, count: 64 * 1024)
         while data.count < maxBytes {

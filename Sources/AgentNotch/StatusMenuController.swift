@@ -145,7 +145,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         for agent in AgentKind.allCases {
             let status = settings.hookStatus(for: agent)
             let name = agent.displayName
-            menu.addItem(Self.disabledItem("\(name) 훅: \(settings.hookState(for: agent).text)"))
+            menu.addItem(Self.disabledItem("\(name) 훅: \(settings.hookState(for: agent, status: status).text)"))
             guard settings.canChangeHooks else { continue }
             if status != .installed {
                 let title = status == .notInstalled ? "\(name) 훅 설치" : "\(name) 훅 다시 설치"
@@ -170,9 +170,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     }
 
     private static func truncate(_ text: String) -> String {
-        let singleLine = text.replacingOccurrences(of: "\n", with: " ")
-        guard singleLine.count > maxTitleCharacters else { return singleLine }
-        return String(singleLine.prefix(maxTitleCharacters - 1)) + "…"
+        TextUtils.truncate(text.replacingOccurrences(of: "\n", with: " "), max: maxTitleCharacters)
     }
 
     private static func disabledItem(_ title: String) -> NSMenuItem {

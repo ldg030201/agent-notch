@@ -1,29 +1,56 @@
 import Foundation
 import NotchShared
 
-/// 문자열 정리 · 자르기 · 경로 표시 등 공용 텍스트 유틸
-enum TextUtils {
+/// 문자열 정리 · 자르기 · 경로 표시 등 공용 텍스트 유틸 (노치 UI · 메뉴바 메뉴도 같은 규칙을 쓴다)
+public enum TextUtils {
     static let ellipsis = "…"
 
-    /// 최대 `max` 글자(말줄임표 포함)로 자른다
-    static func truncate(_ text: String, max: Int) -> String {
+    /// 최대 `max` 글자(말줄임표 포함)로 자른다. 앞에서 `max` 글자까지만 센다 (긴 글 전체를 세지 않게)
+    public static func truncate(_ text: String, max: Int) -> String {
         guard max > 0 else { return "" }
-        guard text.count > max else { return text }
+        guard let end = text.index(text.startIndex, offsetBy: max, limitedBy: text.endIndex), end != text.endIndex else {
+            return text
+        }
         return String(text.prefix(max - 1)) + ellipsis
     }
 
-    /// 첫 번째 비어 있지 않은 줄 (앞뒤 공백 제거)
+    /// 첫 번째 비어 있지 않은 줄 (앞뒤 공백 제거). 앞에서부터 찾고 나머지 줄은 나누지 않는다
     static func firstLine(_ text: String) -> String {
-        for line in text.split(whereSeparator: \.isNewline) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
+        var rest = text[...]
+        while !rest.isEmpty {
+            let end = rest.firstIndex(where: \.isNewline) ?? rest.endIndex
+            let trimmed = rest[..<end].trimmingCharacters(in: .whitespaces)
             if !trimmed.isEmpty { return trimmed }
+            rest = end == rest.endIndex ? rest[end...] : rest[rest.index(after: end)...]
         }
         return ""
     }
 
     /// 연속 공백·줄바꿈을 공백 하나로 합치고 앞뒤 공백 제거
-    static func collapseWhitespace(_ text: String) -> String {
+    public static func collapseWhitespace(_ text: String) -> String {
         text.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).joined(separator: " ")
+    }
+
+    /// `truncate(collapseWhitespace(text), max:)` 와 같은 결과. 공백을 합치며 `max` 글자를 넘으면 멈춘다 (긴 글을 다 훑지 않게)
+    static func collapsedPrefix(_ text: String, max: Int) -> String {
+        var result = ""
+        var count = 0
+        var pendingSpace = false
+        for character in text {
+            if character.isWhitespace || character.isNewline {
+                if count > 0 { pendingSpace = true }
+                continue
+            }
+            if pendingSpace {
+                result.append(" ")
+                count += 1
+                pendingSpace = false
+            }
+            result.append(character)
+            count += 1
+            if count > max { break }
+        }
+        return truncate(result, max: max)
     }
 
     /// 빈 문자열이면 nil
@@ -47,14 +74,15 @@ enum TextUtils {
     /// 노치에 보여줄 프롬프트: 붙여넣은 내용은 "[붙여넣음]" 으로 바꾸고 공백 정리, 최대 200자
     static func cleanPrompt(_ prompt: String) -> String {
         var text = prompt
-        for regex in pastedPatterns {
+        // 세 패턴 모두 이 글로 시작한다: 없으면 정규식으로 프롬프트 전체를 세 번 훑지 않는다
+        for regex in pastedPatterns where prompt.contains("<pasted_content") {
             let range = NSRange(text.startIndex..., in: text)
             text = regex.stringByReplacingMatches(
                 in: text, range: range,
                 withTemplate: NSRegularExpression.escapedTemplate(for: " \(pastedPlaceholder) ")
             )
         }
-        return truncate(collapseWhitespace(text), max: maxPromptCharacters)
+        return collapsedPrefix(text, max: maxPromptCharacters)
     }
 
     // MARK: - 경로
@@ -183,7 +211,22 @@ enum TextUtils {
         return lines
     }
 
-    /// 줄 수만 센다 (큰 파일용, 마지막 줄바꿈 뒤 빈 줄 제외)
+    /// 앞에서부터 최대 `max` 줄 (`splitLines(text).prefix(max)` 와 같다. 뒤쪽은 나누지 않는다)
+    static func leadingLines(_ text: String, max: Int) -> [Substring] {
+        var lines: [Substring] = []
+        var rest = text[...]
+        while lines.count < max, !rest.isEmpty {
+            guard let end = rest.firstIndex(where: isLineSeparator) else {
+                lines.append(rest)
+                break
+            }
+            lines.append(rest[..<end])
+            rest = rest[rest.index(after: end)...]
+        }
+        return lines
+    }
+
+    /// 줄 수만 센다 (마지막 줄바꿈 뒤 빈 줄 제외, `splitLines(text).count` 와 같다). LF 는 늘 혼자 또는 CRLF 로만 글자를 이룬다
     static func countLines(_ text: String) -> Int {
         guard !text.isEmpty else { return 0 }
         var count = 0

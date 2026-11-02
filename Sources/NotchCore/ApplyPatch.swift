@@ -68,6 +68,11 @@ struct ApplyPatch: Equatable {
         }
         var files: [File] = []
         for line in lines {
+            // 더하고 빼는 줄은 머리 줄이 될 수 없어 다듬지 않고 바로 담는다 (큰 패치에서 줄마다 새 문자열을 만들지 않게)
+            if let first = line.first, first == "+" || first == "-" {
+                if !files.isEmpty { files[files.count - 1].lines.append(line) }
+                continue
+            }
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed == "*** End Patch" { break }
             if let path = header(trimmed, "*** Add File:") {
@@ -81,7 +86,7 @@ struct ApplyPatch: Equatable {
             } else if line.hasPrefix("***") || line.hasPrefix("@@") {
                 // *** End of File · 맥락 머리
                 continue
-            } else if let first = line.first, first == "+" || first == "-" || first == " ", !files.isEmpty {
+            } else if line.first == " ", !files.isEmpty {
                 files[files.count - 1].lines.append(line)
             }
         }

@@ -37,8 +37,7 @@ final class AppSettingsProvider: SettingsProvider {
 
     /// Codex 를 쓰는 맥인지 (`~/.codex` 폴더나 Codex 앱이 있음). 첫 실행 안내가 Codex 훅도 물어볼지 정한다
     var codexAvailable: Bool {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        if FileManager.default.fileExists(atPath: home.appendingPathComponent(".codex").path) { return true }
+        if FileManager.default.fileExists(atPath: NotchServices.codexDirectory.path) { return true }
         return NSWorkspace.shared.urlForApplication(withBundleIdentifier: TerminalContext.codexDesktopBundleID) != nil
     }
 
@@ -55,7 +54,11 @@ final class AppSettingsProvider: SettingsProvider {
 
     /// 설정 화면용: 설정 파일을 한 번 읽어 문구와 설치 여부(우리 훅 항목이 하나라도 있으면 true, 제거 버튼 활성화 기준)를 함께 만든다
     func hookState(for agent: AgentKind) -> (text: String, installed: Bool) {
-        let status = hookStatus(for: agent)
+        hookState(for: agent, status: hookStatus(for: agent))
+    }
+
+    /// 이미 읽은 상태로 문구와 설치 여부를 만든다 (메뉴바 메뉴처럼 상태도 따로 쓰는 곳이 설정 파일을 두 번 읽지 않게)
+    func hookState(for agent: AgentKind, status: HookInstallStatus) -> (text: String, installed: Bool) {
         var text = Self.hookStatusText(for: status)
         if agent == .codex, status != .notInstalled, codexHooksAwaitingTrust {
             text += " · Codex 에서 허용 필요"

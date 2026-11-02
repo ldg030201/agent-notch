@@ -12,6 +12,18 @@ public struct RestoredSession: Equatable, Sendable {
         case thinking
         /// 턴이 끝남 (Stop 훅이 돈 뒤, 끝까지 간 응답, 사용자가 중단)
         case finished
+
+        /// 기록 끝 상태: 턴이 끝났으면 끝남, 결과가 아직 없는 툴 호출이 있으면 그중 마지막 것을 실행 중, 아니면 응답 중
+        /// (Claude Code `TranscriptTail` · Codex `CodexRolloutTail` 이 같이 쓴다)
+        init(turnEnded: Bool, pending: [PendingToolCall]) {
+            if turnEnded {
+                self = .finished
+            } else if let running = pending.last {
+                self = .runningTool(name: running.name, input: running.input, toolUseID: running.id)
+            } else {
+                self = .thinking
+            }
+        }
     }
 
     public var id: String
@@ -57,6 +69,9 @@ public struct RestoredSession: Equatable, Sendable {
     }
 }
 
+/// 기록에서 읽은, 결과가 아직 오지 않은 툴 호출
+typealias PendingToolCall = (id: String?, name: String, input: JSONValue?)
+
 /// 대화 기록 끝부분 → `RestoredSession`
 public enum TranscriptTail {
     /// jsonl 줄들(오래된 것 → 최근 것)로 세션 상태를 만든다. 세션 ID · 작업 폴더 · 시각을 모르면 nil.
@@ -73,7 +88,7 @@ public enum TranscriptTail {
         var gitBranch: String?
         var entrypoint: String?
         var lastStamp: String?
-        var pending: [(id: String?, name: String, input: JSONValue?)] = []
+        var pending: [PendingToolCall] = []
         var sawTurn = false
         var turnEnded = false
         /// 슬래시 명령 · 작업 알림 뒤: 모델 응답이 이어지면 그때 턴 (로컬 명령이면 응답 없이 끝난다)
@@ -174,14 +189,7 @@ public enum TranscriptTail {
 
         // 시각은 마지막 줄 것만 읽는다 (줄마다 날짜 변환기를 만들지 않게)
         guard !exited, let sessionID, let cwd, sawTurn, let lastEventAt = lastStamp.flatMap(parseTimestamp) else { return nil }
-        let state: RestoredSession.State
-        if turnEnded {
-            state = .finished
-        } else if let running = pending.last {
-            state = .runningTool(name: running.name, input: running.input, toolUseID: running.id)
-        } else {
-            state = .thinking
-        }
+        let state = RestoredSession.State(turnEnded: turnEnded, pending: pending)
         return RestoredSession(
             id: sessionID, cwd: cwd, gitBranch: gitBranch, entrypoint: entrypoint, state: state, lastEventAt: lastEventAt
         )
@@ -267,21 +275,29 @@ public enum TranscriptTail {
         return path.hasPrefix((home as NSString).appendingPathComponent(".claude") + "/")
     }
 
-    /// 파일 끝 `maxBytes` 바이트까지를 줄 단위로 (오래된 것 → 최근 것). 중간부터 읽었으면 잘린 첫 줄은 버린다.
-    /// 훅이 넘긴 경로(`transcript_path`)를 메인 스레드에서 읽으므로 일반 파일만 읽는다: 심볼릭 링크 · FIFO · 장치 파일은 nil
+    /// 일반 파일만 열어 `body` 에 넘긴다: 심볼릭 링크 · FIFO · 장치 파일은 nil
     /// (FIFO 는 읽다가 영원히 멈추고, `/dev/zero` 는 끝없이 메모리를 먹는다). lstat 으로 먼저 거르고,
     /// 확인과 열기 사이에 바뀌는 경우를 위해 링크를 따라가지 않고(`O_NOFOLLOW`) 논블로킹으로 열어 fstat 으로 한 번 더 확인한다.
-    /// 깨진 UTF-8 은 대체 문자로 읽는다
-    public static func readTail(atPath path: String, maxBytes: Int) -> [Substring]? {
-        guard maxBytes > 0, !path.isEmpty else { return nil }
+    /// 기록 끝 읽기(`readTail`) · Codex 기록 첫 줄 읽기(`CodexRolloutTail.readFirstLine`)가 같이 쓴다
+    static func withRegularFile<T>(atPath path: String, _ body: (_ fd: Int32, _ info: stat) -> T?) -> T? {
+        guard !path.isEmpty else { return nil }
         var info = stat()
         guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { return nil }
         let fd = open(path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC | O_NOCTTY)
         guard fd >= 0 else { return nil }
         defer { close(fd) }
         guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { return nil }
+        return body(fd, info)
+    }
 
-        let size = Int64(info.st_size)
+    /// 파일 끝 `maxBytes` 바이트까지를 줄 단위로 (오래된 것 → 최근 것). 중간부터 읽었으면 잘린 첫 줄은 버린다.
+    /// 훅이 넘긴 경로(`transcript_path`)를 메인 스레드에서 읽으므로 일반 파일만 읽는다 (`withRegularFile`). 깨진 UTF-8 은 대체 문자로 읽는다
+    public static func readTail(atPath path: String, maxBytes: Int) -> [Substring]? {
+        guard maxBytes > 0 else { return nil }
+        return withRegularFile(atPath: path) { fd, info in readTail(fd: fd, size: Int64(info.st_size), maxBytes: maxBytes) }
+    }
+
+    private static func readTail(fd: Int32, size: Int64, maxBytes: Int) -> [Substring]? {
         let offset = max(0, size - Int64(maxBytes))
         var data = [UInt8](repeating: 0, count: Int(size - offset))
         var filled = 0

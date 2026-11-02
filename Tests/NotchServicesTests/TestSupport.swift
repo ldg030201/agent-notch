@@ -74,20 +74,9 @@ final class TestClient: @unchecked Sendable {
         var on: Int32 = 1
         _ = setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
 
-        var address = sockaddr_un()
-        address.sun_family = sa_family_t(AF_UNIX)
-        address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
-        let bytes = Array(path.utf8)
-        withUnsafeMutableBytes(of: &address.sun_path) { raw in
-            raw.copyBytes(from: bytes)
-            raw[bytes.count] = 0
-        }
-        let result = withUnsafePointer(to: &address) { pointer in
-            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
-            }
-        }
-        guard result == 0 else {
+        guard let address = UnixSocket.address(path: path),
+              UnixSocket.withSockaddr(address, { connect(fd, $0, $1) }) == 0
+        else {
             Darwin.close(fd)
             return nil
         }
@@ -196,17 +185,6 @@ func bindUnlistenedSocket(_ path: String) -> Bool {
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
     guard fd >= 0 else { return false }
     defer { Darwin.close(fd) }
-    var address = sockaddr_un()
-    address.sun_family = sa_family_t(AF_UNIX)
-    let bytes = Array(path.utf8)
-    withUnsafeMutableBytes(of: &address.sun_path) { raw in
-        raw.copyBytes(from: bytes)
-        raw[bytes.count] = 0
-    }
-    let bound = withUnsafePointer(to: &address) { pointer in
-        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-            bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
-        }
-    }
-    return bound == 0
+    guard let address = UnixSocket.address(path: path) else { return false }
+    return UnixSocket.withSockaddr(address) { bind(fd, $0, $1) } == 0
 }

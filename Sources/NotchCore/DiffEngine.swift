@@ -147,12 +147,10 @@ public enum DiffEngine {
     /// 원본 없이 새로 쓴 파일: 모든 줄이 추가
     private static func created(path: String, content: String, isNewFile: Bool) -> DiffOutcome? {
         var parsed = ParsedDiff()
-        if content.utf8.count > maxTextBytes {
-            parsed.added = TextUtils.countLines(content)
-        } else {
-            let lines = TextUtils.splitLines(content)
-            parsed.added = lines.count
-            for line in lines.prefix(DiffSnippet.maxStoredLines) {
+        // 줄 수는 바이트로 세고 미리보기 몇 줄만 앞에서 꺼낸다 (새 파일 전체를 줄 배열로 나누지 않게)
+        parsed.added = TextUtils.countLines(content)
+        if content.utf8.count <= maxTextBytes {
+            for line in TextUtils.leadingLines(content, max: DiffSnippet.maxStoredLines) {
                 parsed.preview.append(DiffLine(kind: .added, text: TextUtils.sanitizeDiffLine(line)))
             }
         }

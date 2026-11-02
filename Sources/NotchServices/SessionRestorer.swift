@@ -68,30 +68,7 @@ public struct SessionRestorer: Sendable {
 
     /// `activeWindow` 안에 바뀐 세션 기록 (최근 것부터 `maxFiles` 개)
     func recentTranscripts(now: Date) -> [(url: URL, modified: Date)] {
-        let fileManager = FileManager.default
-        let keys: [URLResourceKey] = [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey]
-        guard let projects = try? fileManager.contentsOfDirectory(
-            at: projectsDirectory, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]
-        ) else { return [] }
-
-        var found: [(url: URL, modified: Date)] = []
-        for project in projects {
-            guard let values = try? project.resourceValues(forKeys: Set(keys)),
-                  values.isDirectory == true, values.isSymbolicLink != true,
-                  let files = try? fileManager.contentsOfDirectory(
-                      at: project, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]
-                  )
-            else { continue }
-            for file in files where file.pathExtension == "jsonl" {
-                guard let values = try? file.resourceValues(forKeys: Set(keys)),
-                      values.isRegularFile == true, values.isSymbolicLink != true,
-                      let modified = values.contentModificationDate,
-                      now.timeIntervalSince(modified) <= activeWindow
-                else { continue }
-                found.append((file, modified))
-            }
-        }
-        return Array(found.sorted { $0.modified > $1.modified }.prefix(maxFiles))
+        recentJSONL(in: Self.children(projectsDirectory).filter(Self.isDirectory), now: now)
     }
 
     /// 가장 최근에 바뀐 Codex 기록의 수정 시각 (`activeWindow` 안, 서브에이전트 기록 포함). Codex 가 지금 일하는지 가늠한다
@@ -105,16 +82,6 @@ public struct SessionRestorer: Sendable {
     /// 매번 훑지 않게 (며칠 넘게 이어지는 기록은 놓쳐도 되는 곳에서만 쓴다)
     func recentCodexRollouts(now: Date, recentDays: Int? = nil) -> [(url: URL, modified: Date)] {
         guard let root = codexSessionsDirectory else { return [] }
-        let fileManager = FileManager.default
-        let keys: [URLResourceKey] = [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey]
-        func children(_ url: URL) -> [URL] {
-            (try? fileManager.contentsOfDirectory(at: url, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles])) ?? []
-        }
-        func isDirectory(_ url: URL) -> Bool {
-            guard let values = try? url.resourceValues(forKeys: Set(keys)) else { return false }
-            return values.isDirectory == true && values.isSymbolicLink != true
-        }
-
         let dayFolders: [URL]
         if let recentDays {
             let calendar = Calendar.current
@@ -123,18 +90,40 @@ public struct SessionRestorer: Sendable {
                 let parts = calendar.dateComponents([.year, .month, .day], from: date)
                 guard let year = parts.year, let month = parts.month, let day = parts.day else { return nil }
                 let folder = root.appendingPathComponent(String(format: "%04d/%02d/%02d", year, month, day), isDirectory: true)
-                return isDirectory(folder) ? folder : nil
+                return Self.isDirectory(folder) ? folder : nil
             }
         } else {
-            dayFolders = children(root).filter(isDirectory)
-                .flatMap { children($0).filter(isDirectory) }
-                .flatMap { children($0).filter(isDirectory) }
+            dayFolders = Self.children(root).filter(Self.isDirectory)
+                .flatMap { Self.children($0).filter(Self.isDirectory) }
+                .flatMap { Self.children($0).filter(Self.isDirectory) }
         }
+        return recentJSONL(in: dayFolders, now: now)
+    }
 
+    // MARK: - 기록 파일 찾기 (Claude Code · Codex 공용)
+
+    private static let resourceKeys: [URLResourceKey] = [
+        .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey,
+    ]
+
+    private static func children(_ url: URL) -> [URL] {
+        (try? FileManager.default.contentsOfDirectory(
+            at: url, includingPropertiesForKeys: resourceKeys, options: [.skipsHiddenFiles]
+        )) ?? []
+    }
+
+    /// 심볼릭 링크가 아닌 폴더
+    private static func isDirectory(_ url: URL) -> Bool {
+        guard let values = try? url.resourceValues(forKeys: Set(resourceKeys)) else { return false }
+        return values.isDirectory == true && values.isSymbolicLink != true
+    }
+
+    /// 폴더들 바로 아래의 `.jsonl` 일반 파일 중 `activeWindow` 안에 바뀐 것 (최근 것부터 `maxFiles` 개, 링크는 따라가지 않는다)
+    private func recentJSONL(in folders: [URL], now: Date) -> [(url: URL, modified: Date)] {
         var found: [(url: URL, modified: Date)] = []
-        for day in dayFolders {
-            for file in children(day) where file.pathExtension == "jsonl" {
-                guard let values = try? file.resourceValues(forKeys: Set(keys)),
+        for folder in folders {
+            for file in Self.children(folder) where file.pathExtension == "jsonl" {
+                guard let values = try? file.resourceValues(forKeys: Set(Self.resourceKeys)),
                       values.isRegularFile == true, values.isSymbolicLink != true,
                       let modified = values.contentModificationDate,
                       now.timeIntervalSince(modified) <= activeWindow

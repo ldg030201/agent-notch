@@ -1,4 +1,5 @@
 import Foundation
+import NotchShared
 #if canImport(Darwin)
 import Darwin
 #else
@@ -21,12 +22,9 @@ final class HookSocket {
 
     /// 연결 실패(소켓 없음, 앱 꺼짐, 경로 너무 김, 다른 사용자 소유 등) 시 nil.
     static func connect(path: String, sendTimeout: TimeInterval, debug: HookDebug) -> HookSocket? {
-        var address = sockaddr_un()
-        let pathBytes = Array(path.utf8)
-        let capacity = MemoryLayout.size(ofValue: address.sun_path)
         // sun_path 는 NUL 포함 104바이트 제한
-        guard !pathBytes.isEmpty, pathBytes.count < capacity else {
-            debug.log("소켓 경로가 너무 김 (\(pathBytes.count)바이트)")
+        guard let address = UnixSocket.address(path: path) else {
+            debug.log("소켓 경로가 너무 김 (\(path.utf8.count)바이트)")
             return nil
         }
 
@@ -45,42 +43,18 @@ final class HookSocket {
         var timeout = timeval(seconds: sendTimeout)
         _ = setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
 
-        address.sun_family = sa_family_t(AF_UNIX)
-        #if canImport(Darwin)
-        address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
-        #endif
-        withUnsafeMutableBytes(of: &address.sun_path) { raw in
-            raw.copyBytes(from: pathBytes)
-            raw[pathBytes.count] = 0
-        }
-
-        let result = withUnsafePointer(to: &address) { pointer in
-            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                posixConnect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
-            }
-        }
+        let result = UnixSocket.withSockaddr(address) { posixConnect(fd, $0, $1) }
         guard result == 0 else {
             debug.log("connect() 실패 errno=\(errno)")
             return nil
         }
 
         // 같은 사용자의 프로세스가 연 소켓인지 확인 (권한 결정을 위조당하지 않게)
-        guard client.peerIsCurrentUser() else {
+        guard UnixSocket.peerIsCurrentUser(fd) else {
             debug.log("소켓 소유자가 현재 사용자가 아님")
             return nil
         }
         return client
-    }
-
-    private func peerIsCurrentUser() -> Bool {
-        #if canImport(Darwin)
-        var uid: uid_t = 0
-        var gid: gid_t = 0
-        guard getpeereid(fd, &uid, &gid) == 0 else { return false }
-        return uid == geteuid()
-        #else
-        return true
-        #endif
     }
 
     /// 전부 보내면 true. 송신 타임아웃(SO_SNDTIMEO)·끊김 시 false.

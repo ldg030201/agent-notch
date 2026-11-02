@@ -92,25 +92,7 @@ public final class TerminalJumper {
         } else {
             candidate = raw[...]
         }
-        return isStrictUUID(candidate) ? String(candidate) : nil
-    }
-
-    /// 8-4-4-4-12 형식의 16진수 UUID 인지
-    nonisolated static func isStrictUUID(_ text: Substring) -> Bool {
-        let utf8 = Array(text.utf8)
-        guard utf8.count == 36 else { return false }
-        for (index, byte) in utf8.enumerated() {
-            switch index {
-            case 8, 13, 18, 23:
-                guard byte == UInt8(ascii: "-") else { return false }
-            default:
-                let isHex = (UInt8(ascii: "0")...UInt8(ascii: "9")).contains(byte)
-                    || (UInt8(ascii: "a")...UInt8(ascii: "f")).contains(byte)
-                    || (UInt8(ascii: "A")...UInt8(ascii: "F")).contains(byte)
-                guard isHex else { return false }
-            }
-        }
-        return true
+        return TerminalContext.isUUID(candidate) ? String(candidate) : nil
     }
 
     // MARK: - 내부
@@ -130,7 +112,7 @@ public final class TerminalJumper {
     /// iTerm2 의 해당 세션이 있는 창·탭·세션을 고르는 AppleScript. `sessionUUID` 는 검증된 UUID 만 받는다.
     /// `with timeout`: iTerm2 가 응답하지 않으면 기다리지 않고 오류로 끝낸다
     nonisolated static func iTermSelectScript(_ sessionUUID: String) -> String? {
-        guard isStrictUUID(sessionUUID[...]) else { return nil }
+        guard TerminalContext.isUUID(sessionUUID) else { return nil }
         return """
         with timeout of \(scriptTimeoutSeconds) seconds
             tell application id "\(iTermBundleID)"
