@@ -34,13 +34,12 @@ struct IslandContainer: View {
 
     let viewState: IslandViewState
 
-    @Environment(\.accessibilityReduceMotion) private var environmentReduceMotion
-
     var body: some View {
         let mode = presentation.mode(for: screenID)
         let layout = presentation.layout(for: screenID, mode: mode)
-        let concealed = presentation.isConcealed(screenID)
-        let reduceMotion = presentation.reduceMotion || environmentReduceMotion
+        let concealed = presentation.isConcealed(screenID, mode: mode)
+        // 동작 줄이기: 시스템 설정을 표시 상태가 들고 있다 (바뀌면 `ScreenManager` 가 알려 준다)
+        let reduceMotion = presentation.reduceMotion
         let contentKey = IslandContentKey(mode: mode, layout: layout)
         let outgoing = viewState.outgoingContent(current: mode, layout: layout, reduceMotion: reduceMotion)
         let shown = outgoing ?? IslandShownContent(mode: mode, layout: layout)
@@ -56,7 +55,7 @@ struct IslandContainer: View {
         // 모드 종류가 바뀔 때만 resize, 같은 종류 안의 변화(표시 방식만 바뀌는 교체 포함)는 adjust
         let motion = outgoing.map { $0.mode.kind != mode.kind } == true
             ? IslandMotion.resize(reduceMotion: reduceMotion)
-            : IslandMotion.adjust(reduceMotion: reduceMotion)
+            : IslandMotion.adjust
 
         ZStack(alignment: .topLeading) {
             IslandContentView(
@@ -115,13 +114,9 @@ struct IslandContainer: View {
             if !over { viewState.pointerLeft() }
         }
         .onAppear {
-            // 패널이 다시 붙었을 때 기억한 내용이 다른 구조면 교체를 시작한다 (onChange 는 처음 값엔 불리지 않음).
-            // 아니면 지금 내용이 바로 보인다 (요청 카드면 승인 대기를 이때부터 잰다)
-            if viewState.needsSwap(current: contentKey) {
-                beginContentSwap(to: contentKey, reduceMotion: reduceMotion)
-            } else {
-                presentation.contentDidAppear(contentKey, on: screenID)
-            }
+            // 지금 내용이 바로 보인다 (요청 카드면 승인 대기를 이때부터 잰다). 패널마다 새 뷰 상태이고, 사라질 때 교체를 비우므로
+            // (`cancelSwap`) 붙는 순간 이어서 할 교체는 없다
+            presentation.contentDidAppear(contentKey, on: screenID)
         }
         .onDisappear {
             // 패널을 내리거나 다시 만들면 이 뷰 상태는 버려진다: 남은 교체가 사라진 뷰 대신 승인 대기를 건드리지 않게
@@ -175,27 +170,22 @@ struct IslandContainer: View {
         if presentation.hoveredScreenID == screenID { state.blockHover() }
         switch state.beginSwap(to: key, reduceMotion: reduceMotion) {
         case .none:
-            state.swapDeadline = nil
             if !state.contentVisible {
                 withAnimation(reduceMotion ? nil : IslandMotion.contentFadeIn) { state.contentVisible = true }
             }
             presentation.contentDidAppear(key, on: screenID)
         case .restore:
             // 전환 중 원래 종류로 돌아왔다: 흐리던 내용을 다시 보인다
-            state.swapDeadline = nil
             withAnimation(IslandMotion.contentFadeIn) { state.contentVisible = true }
             presentation.contentDidAppear(key, on: screenID)
         case .fadeOut:
             withAnimation(IslandMotion.contentFadeOut) { state.contentVisible = false }
-            // 흐린 채 기다리는 중에 내용이 또 바뀌면 기다림을 처음부터 다시 재지 않는다 (처음 흐린 때 + 지연에 지금 내용을 보인다).
-            // 다시 재면 내용이 잇달아 바뀌는 동안 내용 없는 검은 모양만 계속 남는다
-            let deadline = state.swapDeadline ?? .now + state.contentDelay(to: key)
-            state.swapDeadline = deadline
+            // 새 내용을 보일 때는 뷰 상태가 정한다 (흐린 채 기다리는 중에 또 바뀌어도 미루지 않는다, `beginSwap`)
+            let deadline = state.swapDeadline ?? .now
             state.swapTask = Task { @MainActor in
                 try? await Task.sleep(until: deadline, clock: .continuous)
                 guard !Task.isCancelled else { return }
                 state.swapTask = nil
-                state.swapDeadline = nil
                 // 이전 내용 → 지금 내용 (자리 이동 없이 바로), 그다음 나타난다
                 var transaction = Transaction()
                 transaction.disablesAnimations = true
@@ -301,8 +291,8 @@ final class IslandViewState {
     /// 마지막으로 그린 지금 내용 (구조가 바뀐 첫 렌더에 이전 내용을 바로 쓰려고 기억)
     @ObservationIgnored private(set) var lastShown: IslandShownContent?
     @ObservationIgnored var swapTask: Task<Void, Never>?
-    /// 흐린 이전 내용 뒤 새 내용을 보일 시각 (처음 흐리기 시작할 때 정하고, 기다리는 중 내용이 또 바뀌어도 미루지 않는다)
-    @ObservationIgnored var swapDeadline: ContinuousClock.Instant?
+    /// 흐린 이전 내용 뒤 새 내용을 보일 시각 (`beginSwap` 이 처음 흐리기 시작할 때 정하고, 기다리는 중 내용이 또 바뀌어도 미루지 않는다)
+    @ObservationIgnored private(set) var swapDeadline: ContinuousClock.Instant?
 
     /// 마지막 크기 · 위치 변화 뒤 모양이 다 자리 잡았는지
     private(set) var shapeSettled = true
@@ -315,7 +305,7 @@ final class IslandViewState {
     enum SwapStart: Equatable {
         /// 바꿀 내용 없음 (이미 지금 종류를 그리는 중)
         case none
-        /// 이전 내용을 흐리고 `contentDelay` 뒤 `finishSwap`
+        /// 이전 내용을 흐리고 `swapDeadline` 에 `finishSwap`
         case fadeOut
         /// 전환 중 원래 종류로 돌아옴: 흐리던 내용을 다시 보인다
         case restore
@@ -337,22 +327,32 @@ final class IslandViewState {
         return nil
     }
 
-    /// 내용 구조가 바뀌었을 때 (`onChange`)
-    func beginSwap(to key: IslandContentKey, reduceMotion: Bool) -> SwapStart {
+    /// 내용 구조가 바뀌었을 때 (`onChange`). 새로 흐리기 시작하면 새 내용을 보일 때(`swapDeadline` = 지금 + `contentDelay`)를 정한다.
+    /// 흐린 채 기다리는 중에 또 바뀌면 그때를 그대로 둔다: 다시 재면 내용이 잇달아 바뀌는 동안 내용 없는 검은 모양만 계속 남는다
+    func beginSwap(to key: IslandContentKey, reduceMotion: Bool, now: ContinuousClock.Instant = .now) -> SwapStart {
         if reduceMotion {
             outgoing = nil
             lastShown = nil
+            swapDeadline = nil
             return .none
         }
         if let pending = outgoing {
-            guard pending.key == key else { return .fadeOut }
+            guard pending.key == key else {
+                if swapDeadline == nil { swapDeadline = now + contentDelay(to: key) }
+                return .fadeOut
+            }
             outgoing = nil
             lastShown = nil
+            swapDeadline = nil
             return .restore
         }
-        guard let last = lastShown, last.key != key else { return .none }
+        guard let last = lastShown, last.key != key else {
+            swapDeadline = nil
+            return .none
+        }
         outgoing = last
         lastShown = nil
+        swapDeadline = now + contentDelay(to: key)
         return .fadeOut
     }
 
@@ -367,6 +367,7 @@ final class IslandViewState {
     func finishSwap() {
         outgoing = nil
         lastShown = nil
+        swapDeadline = nil
     }
 
     /// 뷰가 사라질 때: 기다리던 교체 · 자리 잡기 시계를 멈추고, 다시 붙으면 지금 내용을 바로 그리게 한다
@@ -383,7 +384,7 @@ final class IslandViewState {
         if !shapeSettled { shapeSettled = true }
     }
 
-    /// 기억한 내용이 지금과 다른 구조인지 (패널이 다시 붙었을 때 확인)
+    /// 기억한 내용이 지금과 다른 구조인지 (교체가 남았는지. 스냅숏 검사가 교체가 끝났는지 볼 때)
     func needsSwap(current key: IslandContentKey) -> Bool {
         if let pending = outgoing { return pending.key != key }
         return lastShown.map { $0.key != key } ?? false

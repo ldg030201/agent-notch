@@ -398,6 +398,30 @@ struct DiffRowsView: View {
 
 // MARK: - 버튼
 
+/// 세션을 띄운 곳(터미널 · Claude 앱 · Codex 앱)으로 가는 카드 버튼 ("터미널로" · "Claude로" 등). 권한 · 입력 대기 · 질문 · 계획 카드가 같이 쓴다
+struct HostJumpButton: View {
+    let host: SessionHost
+    var prominent = false
+    var help: String?
+    let action: () -> Void
+
+    var body: some View {
+        let button = Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: host.symbolName)
+                Text(host.jumpLabel)
+            }
+        }
+        .buttonStyle(IslandButtonStyle(prominent: prominent))
+        .accessibilityLabel(host.jumpLabel)
+        if let help {
+            button.help(help)
+        } else {
+            button
+        }
+    }
+}
+
 struct IslandButtonStyle: ButtonStyle {
     var prominent = false
 

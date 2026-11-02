@@ -24,12 +24,10 @@ final class ScreenManager {
         var hitRects: [CGRect] = []
         /// 열린 메뉴 겹침 감시 영역 (아일랜드가 보일 때만). 0.25초마다 레이아웃을 다시 계산하지 않도록 상태가 바뀔 때만 갱신한다
         var overlapTarget: OverlapScanner.Target?
-        /// 패널이 화면에 없다고 본 연속 횟수 (`reviveMissingPanels`)
-        var missingChecks = 0
+        /// 패널이 화면에 없다고 처음 본 시각 (부팅 후 초, `reviveMissingPanels`). 보이면 nil
+        var missingSince: TimeInterval?
         /// 다시 만든 뒤로 아직 화면에서 보지 못함 (잠금 화면처럼 모든 창이 빠지는 동안 계속 다시 만들지 않게 더 오래 기다린다)
         var revivedUnseen = false
-        /// 패널이 화면에 없다고 마지막으로 센 시각 (부팅 후 초). 붙어 오는 확인을 한 번으로 센다 (`missRecountInterval`)
-        var lastMissAt: TimeInterval?
     }
 
     private var screens: [ScreenID: Screen] = [:]
@@ -70,12 +68,11 @@ final class ScreenManager {
     /// 비킨 자리를 떠나지 않아 알림이 끝없이 숨으므로, 뒤를 누를 시간만 주고 다시 보인다
     static let dodgeAlertHold: Double = 3
 
-    /// 패널이 이 횟수만큼 연속으로 화면에 없으면 다시 만든다 (Space 전환 중 잠깐 빠지는 것과 헷갈리지 않게).
-    /// 다시 만든 패널도 아직 못 봤으면 훨씬 오래 기다린다 (약 30초)
-    private static let missingChecksBeforeRevive = 2
-    private static let missingChecksAfterRevive = 15
-    /// 빠진 패널을 한 번 센 뒤 다음 확인을 새로 세기까지(초). 주기 확인(2초)은 늘 세고, 앱 전환에 붙어 온 확인은 세지 않는다
-    private static let missRecountInterval: Double = 1.8
+    /// 패널이 이만큼(초) 계속 화면에 없으면 다시 만든다 (Space 전환 중 잠깐 빠지는 것과 헷갈리지 않게).
+    /// 확인이 언제 몇 번 오든(2초 주기, 앱 · Space 전환 때 바로 · 0.7초 뒤) 처음 못 본 때부터 잰다
+    private static let missingBeforeRevive: TimeInterval = 1.8
+    /// 다시 만든 패널도 아직 못 봤으면 훨씬 오래 기다린다 (잠금 화면처럼 모든 창이 빠지는 동안 계속 다시 만들지 않게)
+    private static let missingAfterRevive: TimeInterval = 28
 
     init(presentation: PresentationController, makeRootView: @escaping @MainActor (ScreenID) -> AnyView) {
         self.presentation = presentation
@@ -112,8 +109,6 @@ final class ScreenManager {
         spaceMonitor.stop()
         overlapMonitor.stop()
         sessionUnavailable = false
-        spaceMonitor.paused = false
-        overlapMonitor.paused = false
         keyReleasePanel.orderOut(nil)
         for id in Array(screens.keys) { removeScreen(id) }
     }
@@ -128,15 +123,12 @@ final class ScreenManager {
     // MARK: - 패널 구성
 
     private func rebuildPanels() {
-        // 화면 구성이 바뀌는 중에 두 화면이 같은 ID 를 내는 순간이 있어도 화면마다 패널 하나 (뒤의 것은 버린다).
-        // 겹친 채 넘기면 패널 하나가 두 프레임 사이를 오가고, 메뉴바 측정이 같은 키로 사전을 만들다 멈춘다
-        var seen = Set<ScreenID>()
-        let geometries = NSScreen.screens.map(NotchGeometry.init(screen:)).filter { seen.insert($0.screenID).inserted }
+        // 화면 목록(같은 ID 가 둘이면 앞의 것만)은 표시 상태가 한 곳에서 정한다 (`PresentationController.updateScreens`)
+        presentation.updateScreens(NSScreen.screens.map(NotchGeometry.init(screen:)))
+        let geometries = presentation.screenOrder.compactMap { presentation.geometries[$0] }
         let ids = Set(geometries.map(\.screenID))
 
         for id in screens.keys where !ids.contains(id) { removeScreen(id) }
-
-        presentation.updateScreens(geometries)
 
         for geometry in geometries {
             let id = geometry.screenID
@@ -228,7 +220,7 @@ final class ScreenManager {
             let previous = screen.lastMode
             screen.lastMode = state.mode
             screens[id] = screen
-            holdDodgedAlert(id)
+            holdDodgedAlert(id, deferred: state.deferred)
             guard previous != state.mode else { continue }
             // 비켜주기 시계는 접힌 상태에 머문 시간만 잰다. 펼치거나 숨으면 비킨 것도 끝낸다
             dodgeTimers.removeValue(forKey: id)?.cancel()
@@ -375,8 +367,8 @@ final class ScreenManager {
     }
 
     /// 비킨 동안 알림이 오면 `dodgeAlertHold` 뒤에 비킨 것을 끝낸다 (그 전에 마우스가 떠나면 바로 보인다)
-    private func holdDodgedAlert(_ id: ScreenID) {
-        guard dodgeAreas[id] != nil, presentation.hasDeferredAlert(on: id) else {
+    private func holdDodgedAlert(_ id: ScreenID, deferred: IslandMode?) {
+        guard dodgeAreas[id] != nil, deferred?.isAlert == true else {
             alertHoldTimers.removeValue(forKey: id)?.cancel()
             return
         }
@@ -506,8 +498,9 @@ final class ScreenManager {
     // MARK: - 메뉴바 빈 공간 · 열린 메뉴 감시
 
     private func startOverlapMonitoring() {
+        // 화면이 잠긴 동안엔 잴 화면이 없다고 알린다 (메뉴바가 창 목록에서 빠져 빈 공간을 잘못 잰다)
         spaceMonitor.screensProvider = { [weak self] in
-            guard let self else { return [] }
+            guard let self, !self.sessionUnavailable else { return [] }
             return self.presentation.screenOrder.compactMap { self.presentation.geometries[$0] }
         }
         // 1초 주기 측정은 접힌 상태가 보이는 화면이 있을 때만
@@ -519,7 +512,6 @@ final class ScreenManager {
         }
         spaceMonitor.start()
 
-        overlapMonitor.ourLevel = NotchPanel.islandLevel.rawValue
         overlapMonitor.targetsProvider = { [weak self] in
             self?.overlapTargets() ?? []
         }
@@ -534,7 +526,9 @@ final class ScreenManager {
 
     /// 아일랜드가 보이는 화면의 감시 영역 (지금 아일랜드 + 카드가 펼쳐질 자리).
     /// 영역은 표시 상태가 바뀔 때 계산해 둔 것을 쓰고, 지금 숨겨도 되는지만 새로 본다
+    /// 화면이 잠긴 동안엔 감시할 화면이 없다 (열린 메뉴도 없고, 감시는 드물게만 깨어난다)
     private func overlapTargets() -> [OverlapScanner.Target] {
+        guard !sessionUnavailable else { return [] }
         let now = ProcessInfo.processInfo.systemUptime
         return screens.compactMap { id, screen in
             guard var target = screen.overlapTarget else { return nil }
@@ -545,7 +539,9 @@ final class ScreenManager {
 
     /// 화면의 감시 영역 (Cocoa 전역). 아일랜드를 숨겼으면 nil
     private func overlapTarget(_ id: ScreenID, _ state: ScreenFrame, geometry: NotchGeometry?) -> OverlapScanner.Target? {
-        guard let geometry, let zones = presentation.overlapZones(for: id, mode: state.mode, layout: state.layout) else { return nil }
+        guard let geometry,
+              let zones = presentation.overlapZones(for: id, mode: state.mode, deferred: state.deferred, layout: state.layout)
+        else { return nil }
         return OverlapScanner.Target(
             id: id,
             screenFrame: geometry.frame,
@@ -596,7 +592,7 @@ final class ScreenManager {
         let result = await Task.detached(priority: .utility) { () -> (fullscreen: Set<ScreenID>, own: Set<Int>)? in
             // 화면이 잠긴 동안엔 창 목록에 우리 패널도 메뉴바도 없다: 풀스크린 · 빠진 패널을 판단하지 않는다
             guard !SessionScreen.isUnavailable else { return nil }
-            let snapshot = WindowSnapshot.capture(primaryHeight: primaryHeight, reusingWithin: 0.25)
+            let snapshot = WindowSnapshot.captureShared(primaryHeight: primaryHeight)
             let ownPID = Int(ProcessInfo.processInfo.processIdentifier)
             let own = Set(snapshot.windows.lazy.filter { $0.pid == ownPID }.map(\.number))
             let fullscreen = detectsFullscreen ? FullscreenDetector.fullscreenScreens(geometries, snapshot: snapshot) : []
@@ -609,19 +605,18 @@ final class ScreenManager {
         reviveMissingPanels(onScreen: result.own)
     }
 
-    /// 화면이 잠긴 동안(`SessionScreen`)엔 메뉴바 · 열린 메뉴 측정을 쉬고, 빠진 패널 횟수를 세지 않는다
-    /// (예전엔 잠긴 동안 패널을 약 30초마다 계속 다시 만들었다). 풀리면 바로 다시 잰다
+    /// 화면이 잠긴 동안(`SessionScreen`)엔 메뉴바 · 열린 메뉴 측정을 쉬고(잴 화면 · 감시할 화면이 없다고 알린다),
+    /// 빠진 패널을 세지 않는다 (예전엔 잠긴 동안 패널을 약 30초마다 계속 다시 만들었다). 풀리면 바로 다시 잰다
     private func setSessionUnavailable(_ unavailable: Bool) {
         guard unavailable != sessionUnavailable else { return }
         sessionUnavailable = unavailable
         logger.info("화면 \(unavailable ? "잠김: 측정 쉼" : "풀림: 측정 다시", privacy: .public)")
-        overlapMonitor.paused = unavailable
-        spaceMonitor.paused = unavailable
         if unavailable {
-            for id in Array(screens.keys) { screens[id]?.missingChecks = 0 }
+            for id in Array(screens.keys) { screens[id]?.missingSince = nil }
         } else {
             spaceMonitor.refresh()
         }
+        overlapMonitor.scanNow()
     }
 
     // MARK: - 화면에서 빠진 패널 다시 만들기
@@ -634,26 +629,21 @@ final class ScreenManager {
     /// 다시 넣어도 그 Space 에 들어가지 않고, 새로 만든 패널만 들어간다 (실제 화면에서 확인).
     /// 패널은 지울 때 말고는 내리지 않으므로(내용만 투명) 창 목록에 없으면 빠진 것이다
     private func reviveMissingPanels(onScreen: Set<Int>) {
+        let now = ProcessInfo.processInfo.systemUptime
         for (id, screen) in screens {
             if onScreen.contains(screen.panel.windowNumber) {
-                if screen.missingChecks != 0 || screen.revivedUnseen || screen.lastMissAt != nil {
-                    screens[id]?.missingChecks = 0
+                if screen.missingSince != nil || screen.revivedUnseen {
+                    screens[id]?.missingSince = nil
                     screens[id]?.revivedUnseen = false
-                    screens[id]?.lastMissAt = nil
                 }
                 continue
             }
-            // 앱 전환 · Space 전환 때는 확인이 바로 한 번, 0.7초 뒤 한 번 더 붙는다. 그 사이 확인은 세지 않는다
-            // (세면 1초 안에 "연속 2번" 이 차서 Space 전환 중 잠깐 빠진 패널까지 다시 만든다)
-            let now = ProcessInfo.processInfo.systemUptime
-            if let last = screen.lastMissAt, now - last < Self.missRecountInterval { continue }
-            screens[id]?.lastMissAt = now
-            let misses = screen.missingChecks + 1
-            let limit = screen.revivedUnseen ? Self.missingChecksAfterRevive : Self.missingChecksBeforeRevive
-            guard misses >= limit else {
-                screens[id]?.missingChecks = misses
+            guard let since = screen.missingSince else {
+                screens[id]?.missingSince = now
                 continue
             }
+            let limit = screen.revivedUnseen ? Self.missingAfterRevive : Self.missingBeforeRevive
+            guard now - since >= limit else { continue }
             recreatePanel(id)
         }
     }
@@ -665,7 +655,7 @@ final class ScreenManager {
         old.orderOut(nil)
         old.contentView = nil
         screen.panel = makePanel(for: geometry)
-        screen.missingChecks = 0
+        screen.missingSince = nil
         screen.revivedUnseen = true
         screens[id] = screen
         logger.info("화면에 없는 패널을 다시 만듦 (다른 앱의 전체 화면 Space 등)")

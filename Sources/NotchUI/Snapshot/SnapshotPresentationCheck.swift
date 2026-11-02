@@ -76,8 +76,7 @@ enum SnapshotDecisionCheck {
                     case .none, .restore:
                         presentation.contentDidAppear(key, on: screenID)
                     case .fadeOut:
-                        let delay = view.contentDelay(to: key).components
-                        pendingSwap = (key, now, Double(delay.seconds) + Double(delay.attoseconds) / 1e18)
+                        pendingSwap = (key, now, view.contentDelay(to: key) / .seconds(1))
                     }
                 }
             }
@@ -254,7 +253,8 @@ enum SnapshotDodgeCheck {
             cases += 1
             if let waiting, let deferred = presentation.deferredMode(for: id), deferred.kind == .permission,
                presentation.hasDeferredAlert(on: id),
-               let zones = presentation.overlapZones(for: id, mode: waiting.mode, layout: waiting.layout) {
+               waiting.deferred == deferred,
+               let zones = presentation.overlapZones(for: id, mode: waiting.mode, deferred: deferred, layout: waiting.layout) {
                 let card = presentation.layout(for: id, mode: deferred).panelRect
                 if !zones.zone.contains(card) {
                     problems.append("겹침 감시 영역이 미룬 카드 자리를 덮지 않음 (영역 \(zones.zone), 카드 \(card))")

@@ -174,7 +174,7 @@ struct QuestionCardModel {
 
     /// 카드에 보일 글 (줄바꿈 · 연속 공백을 한 칸으로)
     static func displayText(_ text: String) -> String {
-        text.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).joined(separator: " ")
+        TextUtils.collapseWhitespace(text)
     }
 }
 

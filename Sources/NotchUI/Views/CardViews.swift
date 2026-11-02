@@ -91,7 +91,7 @@ struct PermissionView: View {
             CardHeaderLeading(
                 session: session,
                 reduceMotion: reduceMotion,
-                indicator: AnyView(PulsingDot(animated: !reduceMotion).frame(width: 8, height: 8))
+                indicator: CardHeaderLeading.attentionDot(reduceMotion: reduceMotion)
             )
         } trailing: {
             Text(queueCount > 1 ? "승인 필요 · \(queueCount)" : "승인 필요")
@@ -195,17 +195,9 @@ struct PermissionView: View {
                     .accessibilityLabel("접기")
                     .help("요청은 그대로 두고 접기" + presentation.keyNote("⎋", .collapse) + ". 아일랜드를 누르면 다시 펼쳐져")
 
-                    Button {
+                    HostJumpButton(host: host, prominent: card.isClipped, help: "\(host.placeName)에서 직접 결정") {
                         presentation.sendToTerminal(request)
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: host.symbolName)
-                            Text(host.jumpLabel)
-                        }
                     }
-                    .buttonStyle(IslandButtonStyle(prominent: card.isClipped))
-                    .accessibilityLabel(host.jumpLabel)
-                    .help("\(host.placeName)에서 직접 결정")
                 }
                 .padding(.top, 12)
             }
@@ -245,7 +237,7 @@ struct NeedsInputView: View {
             CardHeaderLeading(
                 session: session,
                 reduceMotion: reduceMotion,
-                indicator: AnyView(PulsingDot(animated: !reduceMotion).frame(width: 8, height: 8))
+                indicator: CardHeaderLeading.attentionDot(reduceMotion: reduceMotion)
             )
         } trailing: {
             Text(isPermissionPrompt ? "승인 필요" : "입력 필요")
@@ -270,16 +262,9 @@ struct NeedsInputView: View {
                     .accessibilityLabel("접기")
                     .help("접기" + presentation.keyNote("⎋", .collapse))
 
-                    Button {
+                    HostJumpButton(host: host, prominent: isPermissionPrompt) {
                         presentation.actions.jumpToTerminal(sessionID: sessionID)
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: host.symbolName)
-                            Text(host.jumpLabel)
-                        }
                     }
-                    .buttonStyle(IslandButtonStyle(prominent: isPermissionPrompt))
-                    .accessibilityLabel(host.jumpLabel)
                 }
                 .padding(.top, 10)
             }
@@ -291,10 +276,7 @@ struct NeedsInputView: View {
     }
 
     private var messageLines: Int {
-        TextMeasure.lineCount(
-            message, font: IslandFont.bodyNS, lineHeight: IslandMetrics.bodyLineHeight,
-            width: layout.cardWidth - IslandMetrics.bodyPadding * 2, maxLines: 2
-        )
+        presentation.inputMessageLines(message, cardWidth: layout.cardWidth)
     }
 }
 
@@ -363,10 +345,7 @@ struct NoticeView: View {
     }
 
     private var messageLines: Int {
-        TextMeasure.lineCount(
-            notice.message, font: IslandFont.bodyNS, lineHeight: IslandMetrics.bodyLineHeight,
-            width: layout.cardWidth - IslandMetrics.bodyPadding * 2, maxLines: 2
-        )
+        presentation.inputMessageLines(notice.message, cardWidth: layout.cardWidth)
     }
 }
 

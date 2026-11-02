@@ -18,7 +18,7 @@ let package = Package(
         .executableTarget(name: "notch-hook", dependencies: ["NotchShared"], swiftSettings: swiftSettings),
         // 세션 상태, 이벤트 파싱, 포커스 엔진, diff 계산 (UI 비의존)
         .target(name: "NotchCore", dependencies: ["NotchShared"], swiftSettings: swiftSettings),
-        // 소켓 서버, 훅 설치기, 터미널 점프, 사운드 등 시스템 연동
+        // 소켓 서버, 훅 설치기, 터미널 점프, 업데이트 등 시스템 연동
         .target(name: "NotchServices", dependencies: ["NotchShared", "NotchCore"], swiftSettings: swiftSettings),
         // 노치 패널, 다이나믹 아일랜드 SwiftUI 뷰
         .target(name: "NotchUI", dependencies: ["NotchCore"], swiftSettings: swiftSettings),

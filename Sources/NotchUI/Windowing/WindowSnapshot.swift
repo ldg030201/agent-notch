@@ -18,34 +18,40 @@ struct WindowSnapshot: Sendable {
 
     /// CGWindowList 조회 (보통 1ms 미만). `primaryHeight` 는 주 화면 높이 (CG 좌표 → Cocoa 좌표 변환용).
     static func capture(primaryHeight: CGFloat) -> WindowSnapshot {
+        // 창마다 Swift 사전으로 바꾸지 않고 NSDictionary 그대로 필요한 값만 읽는다
+        // (`[[String: Any]]` 로 받으면 보통 수십~수백 개 창을 하나하나 새 사전으로 옮기는데, 0.25초마다 조회한다)
         guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
-            as? [[String: Any]]
+            as? [NSDictionary]
         else { return WindowSnapshot(windows: []) }
 
         var windows: [Window] = []
         windows.reserveCapacity(list.count)
         for info in list {
-            guard let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue,
-                  let boundsDict = info[kCGWindowBounds as String] as? NSDictionary,
+            guard let layer = (info[kCGWindowLayer] as? NSNumber)?.intValue,
+                  let boundsDict = info[kCGWindowBounds] as? NSDictionary,
                   let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary)
             else { continue }
             windows.append(Window(
-                number: (info[kCGWindowNumber as String] as? NSNumber)?.intValue ?? 0,
-                pid: (info[kCGWindowOwnerPID as String] as? NSNumber)?.intValue ?? -1,
+                number: (info[kCGWindowNumber] as? NSNumber)?.intValue ?? 0,
+                pid: (info[kCGWindowOwnerPID] as? NSNumber)?.intValue ?? -1,
                 layer: layer,
                 frame: cocoaRect(fromGlobalTopLeft: bounds, primaryHeight: primaryHeight),
-                alpha: (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1
+                alpha: (info[kCGWindowAlpha] as? NSNumber)?.doubleValue ?? 1
             ))
         }
         return WindowSnapshot(windows: windows)
     }
 
-    /// 방금 다른 감시가 조회한 결과(`maxAge` 초 안)가 있으면 그걸 쓰고, 없으면 새로 조회해 남긴다.
+    /// 다른 감시의 조회 결과를 이만큼(초) 안이면 같이 쓴다. 열린 메뉴 감시 주기(`OverlapMonitor`, 0.25초)보다 짧아야 한다:
+    /// 그 감시는 같은 창을 연달아 두 번 봐야 겹침으로 인정하므로, 한 조회를 두 번 세면 안 된다
+    static let shareWindow: TimeInterval = 0.2
+
+    /// 방금 다른 감시가 조회한 결과(`shareWindow` 안)가 있으면 그걸 쓰고, 없으면 새로 조회해 남긴다.
     /// 열린 메뉴 감시(0.25초) · 메뉴바 측정(1초) · 풀스크린 확인(2초)이 같은 순간 따로 조회하지 않게 한다
     /// (앱을 바꿀 때마다 셋이 한꺼번에 조회하던 것도 하나로 준다)
-    static func capture(primaryHeight: CGFloat, reusingWithin maxAge: TimeInterval) -> WindowSnapshot {
+    static func captureShared(primaryHeight: CGFloat) -> WindowSnapshot {
         let now = ProcessInfo.processInfo.systemUptime
-        if let cached = recent.withLock({ $0 }), cached.primaryHeight == primaryHeight, now - cached.at <= maxAge {
+        if let cached = recent.withLock({ $0 }), cached.primaryHeight == primaryHeight, now - cached.at <= shareWindow {
             return cached.snapshot
         }
         let snapshot = capture(primaryHeight: primaryHeight)

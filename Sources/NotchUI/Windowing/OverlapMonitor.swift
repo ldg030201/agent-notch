@@ -125,7 +125,7 @@ final class OverlapMonitor {
     var onChange: ((State) -> Void)?
     /// 감시할 화면과 영역 (아일랜드가 보이는 화면만)
     var targetsProvider: () -> [OverlapScanner.Target] = { [] }
-    var ourLevel = NSWindow.Level.statusBar.rawValue + 8
+    let ourLevel = NotchPanel.islandLevel.rawValue
 
     private(set) var state = State()
     /// 우리 앱 메뉴(상태 아이템 메뉴)가 열려 있는지
@@ -136,14 +136,6 @@ final class OverlapMonitor {
     private var scanInFlight = false
     /// 마지막 확인 때 감시할 화면이 없었는지
     private var watchingNothing = true
-    /// 화면이 잠긴 동안 쉰다 (`ScreenManager` 가 정한다. 그동안 열린 메뉴도 없고, 드물게 깨어나기만 한다)
-    var paused = false {
-        didSet {
-            guard paused != oldValue, paused else { return }
-            tracking = Tracking()
-            update(State(notchConflicts: state.notchConflicts))
-        }
-    }
     private var tokens: [(NotificationCenter, NSObjectProtocol)] = []
     private var running = false
 
@@ -179,7 +171,7 @@ final class OverlapMonitor {
         pollTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 // 아일랜드가 안 보이면(감시할 화면 없음) 드물게 깨어난다
-                let idle = (self?.watchingNothing ?? true) || (self?.paused ?? false)
+                let idle = self?.watchingNothing ?? true
                 try? await Task.sleep(for: idle ? Self.idleInterval : Self.pollInterval)
                 guard let self, self.running else { return }
                 self.scanNow()
@@ -199,7 +191,7 @@ final class OverlapMonitor {
     }
 
     func scanNow() {
-        guard running, !scanInFlight, !paused else { return }
+        guard running, !scanInFlight else { return }
         let targets = targetsProvider()
         watchingNothing = targets.isEmpty && !ownMenuOpen
         guard !targets.isEmpty else {
@@ -216,7 +208,7 @@ final class OverlapMonitor {
         Task { @MainActor [weak self] in
             let candidates = await Task.detached(priority: .userInitiated) {
                 OverlapScanner.scan(
-                    WindowSnapshot.capture(primaryHeight: primaryHeight, reusingWithin: 0.2),
+                    WindowSnapshot.captureShared(primaryHeight: primaryHeight),
                     targets: targets,
                     ownPID: ownPID,
                     ourLevel: level,

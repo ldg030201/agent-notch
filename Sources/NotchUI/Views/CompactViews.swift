@@ -346,6 +346,11 @@ struct CardHeaderLeading: View {
     let reduceMotion: Bool
     var indicator: AnyView?
 
+    /// 알림 카드 머리의 주의 점 (권한 · 입력 대기 · 질문 · 계획 카드)
+    static func attentionDot(reduceMotion: Bool) -> AnyView {
+        AnyView(PulsingDot(animated: !reduceMotion).frame(width: 8, height: 8))
+    }
+
     var body: some View {
         HStack(spacing: 6) {
             if let indicator {

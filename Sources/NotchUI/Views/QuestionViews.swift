@@ -25,7 +25,7 @@ struct QuestionView: View {
             CardHeaderLeading(
                 session: session,
                 reduceMotion: reduceMotion,
-                indicator: AnyView(PulsingDot(animated: !reduceMotion).frame(width: 8, height: 8))
+                indicator: CardHeaderLeading.attentionDot(reduceMotion: reduceMotion)
             )
         } trailing: {
             Text(queueCount > 1 ? "답변 필요 · \(queueCount)" : "답변 필요")
@@ -130,17 +130,9 @@ private struct QuestionBody: View {
                 .accessibilityLabel("접기")
                 .help("질문은 그대로 두고 접기" + presentation.keyNote("⎋", .collapse) + ". 아일랜드를 누르면 다시 펼쳐짐")
 
-                Button {
+                HostJumpButton(host: host, help: "\(host.placeName)에서 직접 답하기") {
                     presentation.sendToTerminal(request)
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: host.symbolName)
-                        Text(host.jumpLabel)
-                    }
                 }
-                .buttonStyle(IslandButtonStyle())
-                .accessibilityLabel(host.jumpLabel)
-                .help("\(host.placeName)에서 직접 답하기")
 
                 Button {
                     presentation.advanceOrSubmit(request)
@@ -396,7 +388,7 @@ struct PlanApprovalView: View {
             CardHeaderLeading(
                 session: session,
                 reduceMotion: reduceMotion,
-                indicator: AnyView(PulsingDot(animated: !reduceMotion).frame(width: 8, height: 8))
+                indicator: CardHeaderLeading.attentionDot(reduceMotion: reduceMotion)
             )
         } trailing: {
             Text(queueCount > 1 ? "승인 필요 · \(queueCount)" : "승인 필요")
@@ -472,17 +464,9 @@ struct PlanApprovalView: View {
                     .accessibilityLabel("접기")
                     .help("승인 요청은 그대로 두고 접기" + presentation.keyNote("⎋", .collapse) + ". 아일랜드를 누르면 다시 펼쳐짐")
 
-                    Button {
+                    HostJumpButton(host: host, help: "\(host.placeName)에서 직접 결정 (다른 승인 방식 · 계획 고치기)") {
                         presentation.sendToTerminal(request)
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: host.symbolName)
-                            Text(host.jumpLabel)
-                        }
                     }
-                    .buttonStyle(IslandButtonStyle())
-                    .accessibilityLabel(host.jumpLabel)
-                    .help("\(host.placeName)에서 직접 결정 (다른 승인 방식 · 계획 고치기)")
 
                     Button {
                         presentation.approvePlan(request)

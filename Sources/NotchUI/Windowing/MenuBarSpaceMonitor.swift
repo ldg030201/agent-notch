@@ -149,8 +149,6 @@ final class MenuBarSpaceMonitor {
     private var pollTask: Task<Void, Never>?
     private var refreshInFlight = false
     private var refreshQueued = false
-    /// 화면이 잠긴 동안 쉰다 (`ScreenManager` 가 정한다. 잠긴 동안엔 메뉴바가 창 목록에서 빠져 빈 공간을 잘못 잰다)
-    var paused = false
     private var tokens: [(NotificationCenter, NSObjectProtocol)] = []
     private var running = false
 
@@ -201,7 +199,7 @@ final class MenuBarSpaceMonitor {
 
     /// 창 목록을 다시 읽는다
     func refresh() {
-        guard running, !paused else { return }
+        guard running else { return }
         if refreshInFlight {
             refreshQueued = true
             return
@@ -213,14 +211,15 @@ final class MenuBarSpaceMonitor {
         let screens = geometries.map {
             MenuBarScanner.Screen(id: $0.screenID, frame: $0.frame, fallbackMenuBarHeight: $0.menuBarHeight)
         }
-        let reports = Dictionary(geometries.map { ($0.screenID, $0.reportsMenuBar) }, uniquingKeysWith: { first, _ in first })
+        // 화면 목록은 중복 없는 목록이다 (`PresentationController.updateScreens`)
+        let reports = Dictionary(uniqueKeysWithValues: geometries.map { ($0.screenID, $0.reportsMenuBar) })
         let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
         let ownPID = Int(ProcessInfo.processInfo.processIdentifier)
 
         Task { @MainActor [weak self] in
             let scan = await Task.detached(priority: .utility) {
                 MenuBarScanner.scan(
-                    WindowSnapshot.capture(primaryHeight: primaryHeight, reusingWithin: 0.25), screens: screens, ownPID: ownPID
+                    WindowSnapshot.captureShared(primaryHeight: primaryHeight), screens: screens, ownPID: ownPID
                 )
             }.value
             guard let self else { return }

@@ -1,5 +1,4 @@
 import AppKit
-import os
 import NotchCore
 
 /// 화면 하나의 아일랜드 표시 모드.
@@ -60,6 +59,9 @@ enum IslandMode: Equatable {
 
     /// 접힌 상태(쉬는 중 · 작업 중)인지
     var isCompact: Bool { self == .idle || self == .working }
+
+    /// 알림 카드(권한 요청 · 질문 · 계획 승인 · 입력 대기 · 앱 안내)인지
+    var isAlert: Bool { kind == .permission || kind == .needsInput }
 }
 
 // MARK: - 레이아웃 상수
@@ -141,33 +143,8 @@ enum IslandMetrics {
 
 /// 텍스트 줄 수 측정 (레이아웃 높이 계산용)
 enum TextMeasure {
-    /// 같은 글 · 글꼴 · 폭의 측정 결과. 입력 대기 · 안내 카드는 레이아웃과 뷰가 렌더마다 같은 메시지를 다시 재므로 기억해 둔다
-    private struct Key: Hashable {
-        var text: String
-        var fontName: String
-        var fontSize: CGFloat
-        var lineHeight: CGFloat
-        var width: CGFloat
-        var maxLines: Int
-    }
-
-    private static let cache = OSAllocatedUnfairLock<[Key: Int]>(initialState: [:])
-    /// 기억하는 측정 결과 최대 개수 (넘으면 비운다. 보이는 카드는 한두 개뿐이다)
-    private static let cacheLimit = 64
-
     static func lineCount(_ text: String, font: NSFont, lineHeight: CGFloat, width: CGFloat, maxLines: Int) -> Int {
         guard !text.isEmpty, width > 0, lineHeight > 0 else { return 1 }
-        let key = Key(text: text, fontName: font.fontName, fontSize: font.pointSize, lineHeight: lineHeight, width: width, maxLines: maxLines)
-        if let cached = cache.withLock({ $0[key] }) { return cached }
-        let count = measure(text, font: font, lineHeight: lineHeight, width: width, maxLines: maxLines)
-        cache.withLock { cache in
-            if cache.count >= cacheLimit { cache.removeAll() }
-            cache[key] = count
-        }
-        return count
-    }
-
-    private static func measure(_ text: String, font: NSFont, lineHeight: CGFloat, width: CGFloat, maxLines: Int) -> Int {
         let rect = (text as NSString).boundingRect(
             with: CGSize(width: width, height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading],

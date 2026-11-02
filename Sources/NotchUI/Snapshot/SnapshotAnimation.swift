@@ -313,8 +313,7 @@ struct SnapshotTimeline {
 
     init(spring: SnapshotSpringCurve, swapDelay: Duration = IslandMotion.contentDelay) {
         self.spring = spring
-        let delay = swapDelay.components
-        swapMs = Double(delay.seconds) * 1000 + Double(delay.attoseconds) / 1e15
+        swapMs = swapDelay / .milliseconds(1)
     }
 
     func value(ms: Double) -> Double { spring.value(at: ms / 1000) }
@@ -347,7 +346,7 @@ struct SnapshotTimeline {
         var warnings: [String] = []
         let pairs: [(String, Animation, SnapshotSpringCurve)] = [
             ("IslandMotion.resize", IslandMotion.resize(reduceMotion: false), .resize),
-            ("IslandMotion.adjust", IslandMotion.adjust(reduceMotion: false), .adjust),
+            ("IslandMotion.adjust", IslandMotion.adjust, .adjust),
         ]
         for (name, live, curve) in pairs {
             if String(describing: live) != String(describing: curve.animation) {
@@ -447,6 +446,23 @@ enum SnapshotContentSwapCheck {
             }
         }
 
+        // 흐린 채 기다리는 중에 내용이 또 바뀌어도 새 내용을 보일 때를 미루지 않는다 (미루면 내용 없는 검은 모양만 계속 남는다)
+        do {
+            cases += 1
+            let state = IslandViewState()
+            let start = ContinuousClock.now
+            _ = state.outgoingContent(current: .working, layout: layout(300), reduceMotion: false)
+            let first = state.beginSwap(to: IslandContentKey(mode: .expanded, layout: layout(620)), reduceMotion: false, now: start)
+            let deadline = state.swapDeadline
+            let second = state.beginSwap(
+                to: IslandContentKey(mode: .idle, layout: layout(120)), reduceMotion: false, now: start + .milliseconds(150)
+            )
+            if first != .fadeOut || second != .fadeOut || deadline == nil || state.swapDeadline != deadline {
+                problems.append("흐린 채 또 바뀜: 새 내용을 보일 때가 미뤄짐")
+            }
+            state.finishSwap()
+            if state.swapDeadline != nil { problems.append("교체 끝에도 새 내용을 보일 때가 남음") }
+        }
         // A → B: 첫 렌더 · onChange 뒤엔 이전 내용(이전 레이아웃), 교체 끝에 새 내용
         do {
             let panel = Panel(.working, width: 300)
@@ -990,6 +1006,30 @@ enum SnapshotShapeCheck {
 
 @MainActor
 enum SnapshotAnimationSheet {
+    /// 전환과 상관없는 검사 결과 (설정 동기화 경고 · 순수 계산 검사). 시트마다 같으므로 프로세스에서 한 번만 돌리고 시트마다 찍는다
+    private static var globalCheckResults: (warnings: [String], checks: [(label: String, cases: Int, problems: [String])])?
+
+    private static func globalChecks() -> (warnings: [String], checks: [(label: String, cases: Int, problems: [String])]) {
+        if let cached = globalCheckResults { return cached }
+        let seamSelfTest = (cases: 5, problems: SnapshotSeamCheck.selfTest())
+        let checks: [(String, (cases: Int, problems: [String]))] = [
+            ("내용 교체 순서", SnapshotContentSwapCheck.run()), ("호버 밝힘 순서", SnapshotHoverCheck.run()),
+            ("겹침 감지", SnapshotOverlapCheck.run()), ("세션 요약 자리", SnapshotSummaryCheck.run()), ("이음매 래스터 자체", seamSelfTest),
+            ("메뉴바 알약 제목", SnapshotPillCheck.run()), ("노치 아래 띠 요소", SnapshotStripCheck.run()),
+            ("메뉴바 창 찾기", SnapshotMenuBarScanCheck.run()),
+            ("승인 대기", SnapshotDecisionCheck.run()), ("배치 이력", SnapshotLayoutHistoryCheck.run()),
+            ("비켜주기", SnapshotDodgeCheck.run()), ("입력 대기 접기", SnapshotInputCollapseCheck.run()),
+            ("앱 안내", SnapshotNoticeCheck.run()),
+            ("클릭 모양 · 숫자 키 · 키 녹화 · 상태 아이템", SnapshotInputCheck.run()),
+        ]
+        let results = (
+            warnings: SnapshotTimeline.syncWarnings(),
+            checks: checks.map { (label: $0.0, cases: $0.1.cases, problems: $0.1.problems) }
+        )
+        globalCheckResults = results
+        return results
+    }
+
     /// 한 줄에 놓을 프레임 수
     static let columns = 4
     /// 접히는 동안 붙잡은 카드 띠를 놓을 시각이 지나도록 표시 상태의 시계를 돌릴 시간 (`IslandMotion.settleSeconds` 보다 조금 더)
@@ -1144,37 +1184,15 @@ enum SnapshotAnimationSheet {
         report.append("   전: \(describe(fromLayout))")
         report.append("   후: \(describe(toLayout))")
         if !sheetNote.isEmpty { report.append("   " + sheetNote) }
-        for warning in SnapshotTimeline.syncWarnings() { report.append("   ⚠︎ \(warning)") }
+        let global = globalChecks()
+        for warning in global.warnings { report.append("   ⚠︎ \(warning)") }
         report.append(contentsOf: report0)
-        let swapCheck = SnapshotContentSwapCheck.run()
-        if swapCheck.problems.isEmpty {
-            report.append("   내용 교체 순서 검사 \(swapCheck.cases)개 통과")
-        } else {
-            report0.append(contentsOf: swapCheck.problems.map { "   ✗ 내용 교체 순서: \($0)" })
-            report.append(contentsOf: swapCheck.problems.map { "   ✗ 내용 교체 순서: \($0)" })
-        }
-        let hoverCheck = SnapshotHoverCheck.run()
-        if hoverCheck.problems.isEmpty {
-            report.append("   호버 밝힘 순서 검사 \(hoverCheck.cases)개 통과")
-        } else {
-            report0.append(contentsOf: hoverCheck.problems.map { "   ✗ 호버 밝힘 순서: \($0)" })
-            report.append(contentsOf: hoverCheck.problems.map { "   ✗ 호버 밝힘 순서: \($0)" })
-        }
-        let seamSelfTest = (cases: 5, problems: SnapshotSeamCheck.selfTest())
-        for (label, check) in [
-            ("겹침 감지", SnapshotOverlapCheck.run()), ("세션 요약 자리", SnapshotSummaryCheck.run()), ("이음매 래스터 자체", seamSelfTest),
-            ("메뉴바 알약 제목", SnapshotPillCheck.run()), ("노치 아래 띠 요소", SnapshotStripCheck.run()),
-            ("메뉴바 창 찾기", SnapshotMenuBarScanCheck.run()),
-            ("승인 대기", SnapshotDecisionCheck.run()), ("배치 이력", SnapshotLayoutHistoryCheck.run()),
-            ("비켜주기", SnapshotDodgeCheck.run()), ("입력 대기 접기", SnapshotInputCollapseCheck.run()),
-            ("앱 안내", SnapshotNoticeCheck.run()),
-            ("클릭 모양 · 숫자 키 · 키 녹화 · 상태 아이템", SnapshotInputCheck.run()),
-        ] {
+        for check in global.checks {
             if check.problems.isEmpty {
-                report.append("   \(label) 검사 \(check.cases)개 통과")
+                report.append("   \(check.label) 검사 \(check.cases)개 통과")
             } else {
-                report0.append(contentsOf: check.problems.map { "   ✗ \(label): \($0)" })
-                report.append(contentsOf: check.problems.map { "   ✗ \(label): \($0)" })
+                report0.append(contentsOf: check.problems.map { "   ✗ \(check.label): \($0)" })
+                report.append(contentsOf: check.problems.map { "   ✗ \(check.label): \($0)" })
             }
         }
         if sameKind, !sameKey { report.append("   같은 종류 · 표시 방식 교체 (이전 내용 제자리 흐림 → 모양이 자리 잡은 뒤 새 내용)") }

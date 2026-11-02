@@ -75,13 +75,15 @@ final class PresentationController {
     /// 아일랜드 뷰가 내용 교체를 끝내 그 요청 카드가 나타날 때 기록하고(`contentDidAppear`), 그 화면 내용이 바뀌기 시작하면 지운다.
     /// 막 보인 요청은 승인하지 않는다 (`acceptsDecision`)
     @ObservationIgnored private var displayedPermission: (id: UUID, screen: ScreenID, since: TimeInterval)?
-    /// 질문 카드에서 고르는 중인 답 (요청 ID → 답). 요청이 대기열에서 빠지면 지운다
-    @ObservationIgnored private var questionDrafts: [UUID: QuestionDraft] = [:]
-    /// 권한 · 질문 카드 내용 (요청 · 카드 폭마다 한 번 계산해 레이아웃 · 뷰 · 단축키가 함께 쓴다). 요청이 대기열에서 빠지면 지운다
-    @ObservationIgnored private var permissionCards: [CardKey: PermissionCardModel] = [:]
-    @ObservationIgnored private var questionCards: [CardKey: QuestionCardModel] = [:]
+    /// 질문 카드에서 고르는 중인 답 (요청마다 하나)
+    @ObservationIgnored private var questionDrafts = RequestCache<UUID, QuestionDraft>(requestID: { $0 })
+    /// 권한 · 질문 카드 내용 (요청 · 카드 폭마다 한 번 계산해 레이아웃 · 뷰 · 단축키가 함께 쓴다)
+    @ObservationIgnored private var permissionCards = RequestCache<CardKey, PermissionCardModel>(requestID: \.request)
+    @ObservationIgnored private var questionCards = RequestCache<CardKey, QuestionCardModel>(requestID: \.request)
     /// 계획 승인 카드 내용 (요청마다 한 번. 계획 전문을 줄로 나누는 계산을 레이아웃 · 뷰가 렌더마다 되풀이하지 않게)
-    @ObservationIgnored private var planCards: [UUID: PlanCardModel] = [:]
+    @ObservationIgnored private var planCards = RequestCache<UUID, PlanCardModel>(requestID: { $0 })
+    /// 입력 대기 · 안내 카드의 본문 줄 수 (마지막으로 잰 메시지 · 카드 폭. 한 번에 하나만 보인다)
+    @ObservationIgnored private var inputLines: (message: String, cardWidth: CGFloat, lines: Int)?
     private struct CardKey: Hashable {
         var request: UUID
         var width: CGFloat
@@ -239,8 +241,12 @@ final class PresentationController {
 
     // MARK: - 외부 상태 갱신 (ScreenManager)
 
+    /// 화면 목록을 바꾼다. 화면 구성이 바뀌는 중에 두 화면이 같은 ID 를 내는 순간이 있어도 앞의 것만 쓴다
+    /// (패널 · 메뉴바 측정 등 이 목록을 쓰는 곳은 화면 ID 가 겹치지 않는다고 본다)
     func updateScreens(_ list: [NotchGeometry]) {
-        let map = Dictionary(list.map { ($0.screenID, $0) }, uniquingKeysWith: { first, _ in first })
+        var seen = Set<ScreenID>()
+        let list = list.filter { seen.insert($0.screenID).inserted }
+        let map = Dictionary(uniqueKeysWithValues: list.map { ($0.screenID, $0) })
         let order = list.map(\.screenID)
         // 사라진 화면의 배치 이력은 다음 커밋이 지운다 (화면 구성을 바꾸면 관찰 패스가 바로 다시 계산 · 커밋한다)
         if map != geometries { geometries = map }
@@ -333,7 +339,7 @@ final class PresentationController {
     // MARK: - 모드 계산
 
     func mode(for id: ScreenID) -> IslandMode {
-        mode(for: id, occluded: isOccluded(id))
+        modes(for: id).shown
     }
 
     /// 알림 · 일시 펼침을 미루는 화면: 열린 메뉴와 겹치면 알림 펼침은 메뉴가 닫힐 때까지 미루고(접힌 상태 + 주황 점),
@@ -344,42 +350,37 @@ final class PresentationController {
 
     /// 열린 메뉴 · 비켜주기 때문에 미뤄 둔 카드 (알림 · 일시 펼침). 미루지 않았으면 nil
     func deferredMode(for id: ScreenID) -> IslandMode? {
-        guard isOccluded(id) else { return nil }
-        let open = mode(for: id, occluded: false)
-        return open.isOpen && open != mode(for: id, occluded: true) ? open : nil
+        modes(for: id).deferred
     }
 
     /// 미뤄 둔 알림(권한 요청 · 질문 · 계획 승인 · 입력 대기)이 있는지
     func hasDeferredAlert(on id: ScreenID) -> Bool {
-        switch deferredMode(for: id) {
-        case .permission?, .needsInput?: return true
-        default: return false
-        }
+        deferredMode(for: id)?.isAlert == true
     }
 
-    private func mode(for id: ScreenID, occluded: Bool) -> IslandMode {
-        guard geometries[id] != nil, isVisible(id) else { return .hidden }
+    /// 화면에 그릴 모드와, 열린 메뉴 · 비켜주기 때문에 미뤄 둔 카드(알림 · 일시 펼침, 없으면 nil)를 한 번에 정한다
+    private func modes(for id: ScreenID) -> (shown: IslandMode, deferred: IslandMode?) {
+        guard geometries[id] != nil, isVisible(id) else { return (.hidden, nil) }
+        let occluded = isOccluded(id)
         let isTarget = id == transientTargetScreenID
         let fullscreen = fullscreenScreenIDs.contains(id)
         let behavior = preferences.fullscreenBehavior
 
         if isTarget, !(fullscreen && behavior == .hide), let alert = alertMode() {
-            return occluded ? compactMode(for: id) : alert
+            return occluded ? (compactMode(for: id), alert) : (alert, nil)
         }
         // 사용자가 직접 연 펼침은 풀스크린 설정보다 우선
-        if expandedScreenID == id { return .expanded }
-        if fullscreen && behavior != .showAll { return .hidden }
-        if isTarget, !occluded, let transient = transientMode() { return transient }
-        return compactMode(for: id)
+        if expandedScreenID == id { return (.expanded, nil) }
+        if fullscreen && behavior != .showAll { return (.hidden, nil) }
+        if isTarget, let transient = transientMode() {
+            return occluded ? (compactMode(for: id), transient) : (transient, nil)
+        }
+        return (compactMode(for: id), nil)
     }
 
     /// 접힌 상태를 투명하게 숨기는 중인지: 마우스를 올려 두어 비킴, 또는 열린 메뉴가 접힌 아일랜드에 닿음 (알림이 대기 중이면 숨기지 않음).
-    /// 비킨 동안은 알림이 대기 중이어도 숨긴다 (마우스가 비킨 자리를 떠나면 바로 보인다)
-    func isConcealed(_ id: ScreenID) -> Bool {
-        isConcealed(id, mode: mode(for: id))
-    }
-
-    private func isConcealed(_ id: ScreenID, mode: IslandMode) -> Bool {
+    /// 비킨 동안은 알림이 대기 중이어도 숨긴다 (마우스가 비킨 자리를 떠나면 바로 보인다). `mode` 는 그 화면에 그릴 모드
+    func isConcealed(_ id: ScreenID, mode: IslandMode) -> Bool {
         guard mode.isCompact else { return false }
         if dodgedScreenIDs.contains(id) { return true }
         guard concealedScreenIDs.contains(id) else { return false }
@@ -579,6 +580,8 @@ final class PresentationController {
         let measuredCompact: CompactMeasurement?
         /// 피크 카드 본문 높이 (커밋이 붙잡는다)
         let peekBody: CGFloat?
+        /// 열린 메뉴 · 비켜주기 때문에 미뤄 둔 카드 (겹침 감시가 그 자리까지 지켜보고, 비킨 동안 온 알림을 오래 미루지 않는다)
+        let deferred: IslandMode?
     }
 
     /// 접힌 상태가 보여주는 세션의 폭 측정값 (안정화 전)
@@ -589,11 +592,11 @@ final class PresentationController {
 
     /// 화면 하나를 지금 상태로 계산한다 (상태를 바꾸지 않는다)
     func frame(for id: ScreenID) -> ScreenFrame {
-        let mode = mode(for: id)
+        let (mode, deferred) = modes(for: id)
         guard let resolved = resolve(id, mode: mode, now: uptime()) else {
             return ScreenFrame(
                 mode: mode, layout: Self.emptyLayout, concealed: false, history: LayoutHistory(),
-                placement: nil, startsCollapseHold: false, measuredCompact: nil, peekBody: nil
+                placement: nil, startsCollapseHold: false, measuredCompact: nil, peekBody: nil, deferred: deferred
             )
         }
         return ScreenFrame(
@@ -604,7 +607,8 @@ final class PresentationController {
             placement: resolved.placement,
             startsCollapseHold: resolved.startsCollapseHold,
             measuredCompact: resolved.measuredCompact,
-            peekBody: resolved.peekBody
+            peekBody: resolved.peekBody,
+            deferred: deferred
         )
     }
 
@@ -809,7 +813,6 @@ final class PresentationController {
         measured: CompactMeasurement?, peekBody: CGFloat?
     ) {
         typealias M = IslandMetrics
-        let contentWidth: (CGFloat) -> CGFloat = { $0 - M.bodyPadding * 2 }
 
         func card(
             _ width: CGFloat, radius: CGFloat, peekBody: CGFloat? = nil, body: @escaping (CGFloat) -> CGFloat
@@ -865,10 +868,7 @@ final class PresentationController {
 
         case let .needsInput(_, message, _):
             return card(M.needsInputWidth, radius: 22) { width in
-                let lines = TextMeasure.lineCount(
-                    message, font: IslandFont.bodyNS, lineHeight: M.bodyLineHeight,
-                    width: contentWidth(width), maxLines: 2
-                )
+                let lines = self.inputMessageLines(message, cardWidth: width)
                 return M.bodyTop + CGFloat(lines) * M.lineHeight + 10 + M.buttonHeight + 14
             }
 
@@ -894,9 +894,10 @@ final class PresentationController {
     /// - island: 지금 아일랜드 + 그 아래 메뉴바 끝까지 6pt 더 (메뉴바 아이템에서 내려온 메뉴 · 팝오버).
     ///   여기와 겹칠 때만 접힌 상태를 숨긴다 (카드 자리 아래쪽에 뜬 다른 앱 팝업 · 툴팁엔 숨지 않는다)
     /// 아일랜드를 숨겼으면 미뤄 둔 카드가 있을 때만 감시한다 (그때 숨길 접힌 모양은 없다)
-    func overlapZones(for id: ScreenID, mode: IslandMode, layout: IslandLayout) -> (zone: CGRect, island: CGRect)? {
+    func overlapZones(
+        for id: ScreenID, mode: IslandMode, deferred: IslandMode?, layout: IslandLayout
+    ) -> (zone: CGRect, island: CGRect)? {
         guard let engine = layoutEngine(for: id) else { return nil }
-        let deferred = deferredMode(for: id)
         guard mode != .hidden || deferred != nil else { return nil }
         var zone = engine.cardZone()
         if let deferred { zone = zone.union(self.layout(for: id, mode: deferred).panelRect) }
@@ -940,13 +941,12 @@ final class PresentationController {
         // 알림이 이 화면을 차지하는 동안(보이는 중 · 열린 메뉴나 비켜주기로 미룬 중)엔 펼침을 걸어 두지 않는다.
         // 걸어 두면 알림을 처리하는 순간 큰 펼침이 저절로 열리고, 펼침은 키 윈도우라 다른 앱으로 갈 키 입력을 삼킨다.
         // 보이는 알림이면 키만 받아 단축키로 결정하게 한다 (전역 단축키 · 메뉴바 메뉴의 "펼치기")
-        switch mode(for: id) {
-        case .permission, .needsInput:
+        let (shown, deferred) = modes(for: id)
+        if shown.isAlert {
             onRequestKey?(id)
             return
-        default:
-            if hasDeferredAlert(on: id) { return }
         }
+        if deferred?.isAlert == true { return }
         expandedScreenID = id
         if let focused = store.focusedSession, focused.hasUnseenCompletion {
             store.markSeen(sessionID: focused.id)
@@ -1052,48 +1052,46 @@ final class PresentationController {
         onRequestKey?(id)
     }
 
-    /// 권한 카드 내용 (요청 · 카드 폭마다 한 번 계산한다)
     /// 계획 승인 카드 내용 (요청마다 한 번 계산한다)
     func planCard(for request: PermissionRequestInfo, plan: PlanInfo) -> PlanCardModel {
-        if let card = planCards[request.id] { return card }
-        if !planCards.isEmpty { planCards = planCards.filter { isPending($0.key) } }
-        let card = PlanCardModel(plan: plan)
-        planCards[request.id] = card
-        return card
+        planCards.value(for: request.id, pending: pendingRequestIDs) { PlanCardModel(plan: plan) }
     }
 
+    /// 권한 카드 내용 (요청 · 카드 폭마다 한 번 계산한다)
     func permissionCard(for request: PermissionRequestInfo, width: CGFloat) -> PermissionCardModel {
-        let key = CardKey(request: request.id, width: width)
-        if let card = permissionCards[key] { return card }
-        if !permissionCards.isEmpty { permissionCards = permissionCards.filter { isPending($0.key.request) } }
-        let card = PermissionCardModel(request: request, cardWidth: width)
-        permissionCards[key] = card
-        return card
+        permissionCards.value(for: CardKey(request: request.id, width: width), pending: pendingRequestIDs) {
+            PermissionCardModel(request: request, cardWidth: width)
+        }
     }
 
     /// 질문 카드 내용 (요청 · 카드 폭마다 한 번 계산한다)
     func questionCard(for request: PermissionRequestInfo, questions: [QuestionItem], width: CGFloat) -> QuestionCardModel {
-        let key = CardKey(request: request.id, width: width)
-        if let card = questionCards[key] { return card }
-        if !questionCards.isEmpty { questionCards = questionCards.filter { isPending($0.key.request) } }
-        let card = QuestionCardModel(questions: questions, cardWidth: width)
-        questionCards[key] = card
-        return card
+        questionCards.value(for: CardKey(request: request.id, width: width), pending: pendingRequestIDs) {
+            QuestionCardModel(questions: questions, cardWidth: width)
+        }
     }
 
-    private func isPending(_ requestID: UUID) -> Bool {
-        store.pendingPermissions.contains { $0.id == requestID }
+    /// 입력 대기 · 안내 카드 본문 줄 수 (최대 2줄). 레이아웃(카드 높이)과 카드 뷰가 같이 쓴다:
+    /// 같은 메시지 · 폭이면 다시 재지 않는다 (줄 나눔 측정을 레이아웃과 뷰가 렌더마다 되풀이하지 않게)
+    func inputMessageLines(_ message: String, cardWidth: CGFloat) -> Int {
+        if let last = inputLines, last.cardWidth == cardWidth, last.message == message { return last.lines }
+        let lines = TextMeasure.lineCount(
+            message, font: IslandFont.bodyNS, lineHeight: IslandMetrics.bodyLineHeight,
+            width: cardWidth - IslandMetrics.bodyPadding * 2, maxLines: 2
+        )
+        inputLines = (message, cardWidth, lines)
+        return lines
+    }
+
+    /// 대기 중인 요청 ID (카드 캐시가 대기열에서 빠진 요청을 지울 때)
+    private func pendingRequestIDs() -> Set<UUID> {
+        Set(store.pendingPermissions.map(\.id))
     }
 
     /// 질문 카드의 답 (요청마다 하나, 처음 부를 때 만든다). 질문이 아니면 nil
     func questionDraft(for request: PermissionRequestInfo) -> QuestionDraft? {
         guard case let .question(questions) = request.kind else { return nil }
-        if let draft = questionDrafts[request.id] { return draft }
-        let pendingIDs = Set(store.pendingPermissions.map(\.id))
-        questionDrafts = questionDrafts.filter { pendingIDs.contains($0.key) }
-        let draft = QuestionDraft(questions: questions)
-        questionDrafts[request.id] = draft
-        return draft
+        return questionDrafts.value(for: request.id, pending: pendingRequestIDs) { QuestionDraft(questions: questions) }
     }
 
     /// 선택지를 고름 (클릭 · 숫자 키). 한 개만 고르는 질문이면 그 질문의 답이 되어 다음 쪽으로 넘어가고
@@ -1365,13 +1363,11 @@ final class PresentationController {
         }
         let stale = inputMessages.keys.filter { store.sessions[$0]?.phase != .waitingInput }
         for key in stale { inputMessages.removeValue(forKey: key) }
-        if !questionDrafts.isEmpty || !permissionCards.isEmpty || !questionCards.isEmpty || !planCards.isEmpty {
-            let pendingIDs = Set(store.pendingPermissions.map(\.id))
-            questionDrafts = questionDrafts.filter { pendingIDs.contains($0.key) }
-            permissionCards = permissionCards.filter { pendingIDs.contains($0.key.request) }
-            questionCards = questionCards.filter { pendingIDs.contains($0.key.request) }
-            planCards = planCards.filter { pendingIDs.contains($0.key) }
-        }
+        let pendingIDs = pendingRequestIDs()
+        questionDrafts.prune(keeping: pendingIDs)
+        permissionCards.prune(keeping: pendingIDs)
+        questionCards.prune(keeping: pendingIDs)
+        planCards.prune(keeping: pendingIDs)
     }
 }
 
@@ -1427,5 +1423,33 @@ struct PermissionCardModel {
         let note = isClipped ? M.permissionNoteGap + M.permissionNoteHeight : 0
         let scope = scopeLines.isEmpty ? 0 : M.permissionNoteGap + CGFloat(scopeLines.count) * M.scopeLineHeight
         return M.bodyTop + M.lineHeight + 6 + box + note + scope + 12 + M.buttonHeight + 14
+    }
+}
+
+// MARK: - 요청별 캐시
+
+/// 대기 중인 요청마다 한 번 만든 값 (카드 내용 · 질문 답). 요청이 대기열에서 빠지면 지운다
+struct RequestCache<Key: Hashable, Value> {
+    private var values: [Key: Value] = [:]
+    /// 키가 가리키는 요청 ID
+    private let requestID: (Key) -> UUID
+
+    init(requestID: @escaping (Key) -> UUID) {
+        self.requestID = requestID
+    }
+
+    /// 있으면 그 값, 없으면 대기열에서 빠진 요청 값을 지우고 새로 만들어 넣는다
+    mutating func value(for key: Key, pending: () -> Set<UUID>, make: () -> Value) -> Value {
+        if let value = values[key] { return value }
+        if !values.isEmpty { prune(keeping: pending()) }
+        let value = make()
+        values[key] = value
+        return value
+    }
+
+    mutating func prune(keeping pending: Set<UUID>) {
+        guard !values.isEmpty else { return }
+        let kept = values.filter { pending.contains(requestID($0.key)) }
+        if kept.count != values.count { values = kept }
     }
 }

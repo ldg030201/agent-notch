@@ -116,15 +116,14 @@ enum IslandMotion {
     /// 노치에 딱 맞춘 치수(접힌 높이 = 노치 높이, 카드 목 = 노치 폭)를 넘치지 않게 거의 오버슈트 없는 스프링 (최대 약 0.15%).
     /// 넘쳐도 `IslandShape` 가 노치는 늘 덮는다. 동작 줄이기 설정이면 오버슈트 없는 스프링
     static func resize(reduceMotion: Bool) -> Animation {
-        reduceMotion ? adjustSpring : .spring(response: resizeResponse, dampingFraction: resizeDamping)
+        reduceMotion ? adjust : .spring(response: resizeResponse, dampingFraction: resizeDamping)
     }
 
     static let resizeResponse = 0.4
     static let resizeDamping = 0.9
 
-    /// 같은 종류 안의 크기 변화(접힌 폭 · 비켜주기 · 피크 높이 등): 출렁이지 않게 임계 감쇠
-    static func adjust(reduceMotion: Bool) -> Animation { adjustSpring }
-    private static let adjustSpring = Animation.spring(response: adjustResponse, dampingFraction: 1.0)
+    /// 같은 종류 안의 크기 변화(접힌 폭 · 비켜주기 · 피크 높이 등): 출렁이지 않게 임계 감쇠 (동작 줄이기 설정이어도 같다)
+    static let adjust = Animation.spring(response: adjustResponse, dampingFraction: 1.0)
     static let adjustResponse = 0.32
 
     /// 크기 변경 후 내용이 다시 나타나기까지의 지연 (모양이 약 90% 자리 잡은 시점)
@@ -135,10 +134,7 @@ enum IslandMotion {
     /// 크기 · 위치가 바뀐 뒤 모양이 다 자리 잡았다고 보는 시간 (두 스프링 모두 99.8% 이상). 그 전엔 호버 밝힘을 시작하지 않는다
     static let settleDelay: Duration = .milliseconds(450)
     /// `settleDelay` (초). 부팅 후 초로 시각을 재는 곳이 쓴다 (접히는 동안 카드 띠 붙잡기 · 접힌 상태 새로 숨기기 미루기)
-    static let settleSeconds: TimeInterval = {
-        let parts = settleDelay.components
-        return Double(parts.seconds) + Double(parts.attoseconds) / 1e18
-    }()
+    static let settleSeconds: TimeInterval = settleDelay / .seconds(1)
     /// 접힌 상태가 보여주는 세션을 넘길 때 내용이 옆으로 들고 나는 움직임 (모양 폭은 `adjust` 로 함께 바뀐다)
     static let carousel = Animation.easeInOut(duration: 0.36)
     /// 펼친 세션 목록에서 상태 묶음이 바뀐 세션이 위아래로 미끄러지듯 자리를 옮기는 움직임 (출렁이지 않게 임계 감쇠)

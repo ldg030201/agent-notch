@@ -353,12 +353,25 @@ struct UpgradeOverlay: View {
         .font(.system(size: 13))
     }
 
+    /// 로그 뒤쪽 `count` 줄 (`split(separator: "\n", omittingEmptySubsequences: false).suffix(count)` 와 같다).
+    /// 끝에서부터 줄바꿈만 찾는다: brew 출력 조각이 올 때마다 로그 전체(최대 4만 자)를 줄로 나누지 않게
+    static func lastLines(_ log: String, count: Int) -> Substring {
+        var start = log.endIndex
+        var found = 0
+        while start > log.startIndex {
+            let previous = log.index(before: start)
+            if log[previous] == "\n" {
+                found += 1
+                if found == count { break }
+            }
+            start = previous
+        }
+        return log[start...]
+    }
+
     /// 진행 로그 뒤쪽 몇 줄 (스크롤 없이 마지막 줄이 보이게)
     private func log(_ palette: SettingsPalette) -> some View {
-        let lines = provider.upgradeLog
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .suffix(9)
-            .joined(separator: "\n")
+        let lines = Self.lastLines(provider.upgradeLog, count: 9)
         return Text(lines.isEmpty ? " " : lines)
             .font(.system(size: 11, design: .monospaced))
             .foregroundStyle(.secondary)
