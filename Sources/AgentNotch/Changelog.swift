@@ -21,7 +21,7 @@ enum Changelog {
 
     /// 최신이 위로 온다
     static let entries: [ChangelogEntry] = [
-        ChangelogEntry(version: "1.2.0", date: nil, groups: [
+        ChangelogEntry(version: "1.2.0", date: "2026-11-02", groups: [
             ChangelogGroup(title: "노치 아일랜드", icon: "rectangle.topthird.inset.filled", notes: [
                 .fix("메뉴 · 팝업이 카드를 가리면 카드가 열렸다 닫혔다 깜빡이던 문제"),
                 .fix("해상도를 바꿀 때 검은 띠가 메뉴바를 덮던 문제"),
