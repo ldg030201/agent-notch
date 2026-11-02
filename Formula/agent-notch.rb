@@ -8,16 +8,12 @@
 class AgentNotch < Formula
   desc "Claude Code · Codex 세션을 맥북 노치에 다이나믹 아일랜드처럼 보여주는 메뉴바 앱"
   homepage "https://github.com/ldg030201/agent-notch"
-  url "https://github.com/ldg030201/agent-notch/archive/refs/tags/v1.1.0.tar.gz"
+  url "https://github.com/ldg030201/agent-notch/archive/refs/tags/v1.2.0.tar.gz"
   # 첫 릴리스 전 자리표시자. scripts/release.sh 가 태그를 올린 뒤 tarball 해시로 채운다.
-  sha256 "eda90cc6454bf3a12255e47e821207c89fc8c8392961da1702407a6f8128605d"
+  sha256 "790371aa7424aaf4858d5c28a2e317293e98c6ab381c2b45fc277f25de5714b4"
   license "MIT"
   head "https://github.com/ldg030201/agent-notch.git", branch: "main"
 
-  bottle do
-    root_url "https://github.com/ldg030201/agent-notch/releases/download/v1.1.0"
-    sha256 arm64_sequoia: "a2919709bc54533cf77a6c07236b2efade300ddedfa63f49918bc64fdfa98d8d"
-  end
 
 
   # Xcode 는 필요 없다. Command Line Tools 의 Swift 만으로 빌드된다 (depends_on xcode 를 넣지 않는다).
