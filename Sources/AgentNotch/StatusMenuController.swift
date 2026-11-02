@@ -7,11 +7,7 @@ import NotchUI
 /// 메뉴바 메뉴에서 App 에 요청하는 동작
 @MainActor
 protocol StatusMenuHost: AnyObject {
-    var isDemoRunning: Bool { get }
-    var hasDemoSessions: Bool { get }
     func toggleIsland()
-    func toggleDemo()
-    func clearDemoSessions()
     func installHooksFromMenu(for agent: AgentKind)
     func uninstallHooksFromMenu(for agent: AgentKind)
     func openSettings()
@@ -71,16 +67,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             keyEquivalent: combo?.key ?? "",
             modifiers: combo?.modifiers ?? []
         ) { [weak self] in self?.host?.toggleIsland() })
-
-        let demoRunning = host?.isDemoRunning ?? false
-        menu.addItem(ClosureMenuItem(title: demoRunning ? "데모 중지" : "데모 재생") { [weak self] in
-            self?.host?.toggleDemo()
-        })
-        if !demoRunning, host?.hasDemoSessions == true {
-            menu.addItem(ClosureMenuItem(title: "데모 세션 지우기") { [weak self] in
-                self?.host?.clearDemoSessions()
-            })
-        }
+        // 데모는 메뉴에 두지 않는다 (사용자에게는 가짜 세션이 헷갈리기만 한다). 개발용으로 `--demo` 실행 인자만 남긴다
         menu.addItem(.separator())
 
         addHookItems()

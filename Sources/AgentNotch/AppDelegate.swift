@@ -191,7 +191,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
             Self.log.error("소켓 서버 시작 실패: \(error.localizedDescription, privacy: .public)")
             showAlert(
                 title: "Claude Code 이벤트를 받을 수 없어요",
-                message: "\(error.localizedDescription)\n\n노치 UI 와 데모는 그대로 쓸 수 있어요."
+                message: "\(error.localizedDescription)\n\n노치 UI 는 그대로 떠 있어요."
             )
             return true
         }
@@ -317,25 +317,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuHost {
 
     // MARK: - StatusMenuHost
 
-    var isDemoRunning: Bool { demo.isRunning }
-
-    var hasDemoSessions: Bool { demo.hasSessions }
-
     func toggleIsland() {
         uiController.toggleExpanded()
-    }
-
-    func toggleDemo() {
-        if demo.isRunning {
-            demo.stop()
-        } else {
-            demo.start()
-        }
-    }
-
-    func clearDemoSessions() {
-        demo.stop()
-        demo.clearSessions()
     }
 
     @objc func openSettings() {

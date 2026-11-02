@@ -34,13 +34,6 @@ final class DemoScenario {
         self.store = store
     }
 
-    var isRunning: Bool { !tasks.isEmpty }
-
-    /// 스토어에 데모 세션이 남아 있는지
-    var hasSessions: Bool {
-        Self.all.contains { store.sessions[$0.id] != nil }
-    }
-
     /// 처음부터 다시 재생 (남아 있는 데모 세션은 먼저 지운다)
     func start() {
         stop()
@@ -69,7 +62,7 @@ final class DemoScenario {
     }
 
     /// 데모 세션 제거 (남은 권한 요청도 함께 정리됨)
-    func clearSessions() {
+    private func clearSessions() {
         for session in Self.all where store.sessions[session.id] != nil {
             send("SessionEnd", session, ["reason": "other"])
         }
